@@ -111,7 +111,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 HumanMessage(
                     content=f"{context}\n\nBu varlık için yükseliş tezini sun. Somut verilerle destekle."
                 ),
-            ]
+            ],
+            max_tokens=400,
+            response_format={"type": "json_object"},
         )
         bull_args = bull_resp.content
     except Exception as e:
@@ -126,15 +128,21 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 HumanMessage(
                     content=f"{context}\n\nBu varlık için düşüş risklerini sun. Somut verilerle destekle."
                 ),
-            ]
+            ],
+            max_tokens=400,
+            response_format={"type": "json_object"},
         )
         bear_args = bear_resp.content
     except Exception as e:
         logger.error("Bear ajan hatası: %s", e)
         bear_args = "Bear argümanları oluşturulamadı."
 
-    debate_log.append(f"BULL (Tur 1): {bull_args[:300]}")
-    debate_log.append(f"BEAR (Tur 1): {bear_args[:300]}")
+    debate_log.append(
+        f"BULL (Tur 1): {bull_args[: params.limits.debate_truncate_chars]}"
+    )
+    debate_log.append(
+        f"BEAR (Tur 1): {bear_args[: params.limits.debate_truncate_chars]}"
+    )
 
     # ── Tur 2: Karşılıklı yanıtlar (max_rounds > 1 ise) ──
     if max_rounds >= 2:
@@ -146,7 +154,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                         content=f"{context}\n\nBear tarafının argümanları:\n{bear_args}\n\n"
                         "Bu argümanlara yanıt ver ve yükseliş tezini güçlendir."
                     ),
-                ]
+                ],
+                max_tokens=400,
+                response_format={"type": "json_object"},
             )
             bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
         except Exception:
@@ -157,10 +167,12 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 [
                     SystemMessage(content=BEAR_SYSTEM),
                     HumanMessage(
-                        content=f"{context}\n\nBull tarafının argümanları:\n{bull_args[:1500]}\n\n"
+                        content=f"{context}\n\nBull tarafının argümanları:\n{bull_args[: params.limits.debate_rebuttal_truncate_chars]}\n\n"
                         "Bu argümanlara yanıt ver ve düşüş risklerini güçlendir."
                     ),
-                ]
+                ],
+                max_tokens=400,
+                response_format={"type": "json_object"},
             )
             bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
         except Exception:
@@ -170,10 +182,10 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     moderator_input = f"""{context}
 
 ## Bull Tarafının Argümanları
-{bull_args[:2000]}
+{bull_args[: params.limits.moderator_truncate_chars]}
 
 ## Bear Tarafının Argümanları
-{bear_args[:2000]}
+{bear_args[: params.limits.moderator_truncate_chars]}
 
 Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
 
@@ -182,7 +194,9 @@ Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
             [
                 SystemMessage(content=MODERATOR_SYSTEM),
                 HumanMessage(content=moderator_input),
-            ]
+            ],
+            max_tokens=400,
+            response_format={"type": "json_object"},
         )
         debate_result = extract_json(mod_resp.content)
     except Exception as e:

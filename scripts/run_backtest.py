@@ -129,7 +129,7 @@ def run_simple_backtest(
         console.print("[red]Test set is empty[/red]")
         return calculate_metrics([], params.backtest.initial_cash)
 
-    window = 30
+    window = params.limits.backtest_lookback_window
     trades: list[dict] = []
 
     for i in range(window, len(test_df)):
@@ -143,32 +143,42 @@ def run_simple_backtest(
         if has_position:
             pos = portfolio.positions[0]
             pos.update_price(current_price)
-            new_stop = stop_loss_mgr.update_trailing_stop(
-                pos.stop_loss, current_price, atr, pos.side
-            )
-            pos.stop_loss = new_stop
 
-            if stop_loss_mgr.should_exit(current_price, pos.stop_loss, pos.side):
-                trade = portfolio.close_position(pos.symbol, current_price)
+            high_price = float(test_df["high"].iloc[i])
+            low_price = float(test_df["low"].iloc[i])
+
+            sl_test_price = low_price
+            tp_test_price = high_price
+
+            # 1. Stop-Loss Kontrolü (Mum içi ilk öncelik)
+            if stop_loss_mgr.should_exit(sl_test_price, pos.stop_loss):
+                trade = portfolio.close_position(pos.symbol, pos.stop_loss)
                 if trade:
                     trade["exit_reason"] = "stop_loss"
                     trades.append(trade)
                 continue
 
-            if pos.should_take_profit(current_price):
-                trade = portfolio.close_position(pos.symbol, current_price)
+            # 2. Take-Profit Kontrolü (Mum içi)
+            if pos.should_take_profit(tp_test_price):
+                trade = portfolio.close_position(pos.symbol, pos.take_profit)
                 if trade:
                     trade["exit_reason"] = "take_profit"
                     trades.append(trade)
                 continue
 
-            if (pos.side == "long" and signals.signal == "sell") or (
-                pos.side == "short" and signals.signal == "buy"
-            ):
+            # 3. Kapanışta Sinyal Tersine Dönme İhtimali
+            if pos.side == "long" and signals.signal == "sell":
                 trade = portfolio.close_position(pos.symbol, current_price)
                 if trade:
                     trade["exit_reason"] = "signal_reversal"
                     trades.append(trade)
+                continue
+
+            # 4. Trailing Stop Güncellemesi
+            new_stop = stop_loss_mgr.update_trailing_stop(
+                pos.stop_loss, current_price, atr
+            )
+            pos.stop_loss = new_stop
         else:
             if signals.signal == "buy" and signals.trend_strength > 0.3:
                 amount = portfolio.calculate_position_size(current_price)
@@ -202,7 +212,9 @@ def run_simple_backtest(
     # -- Stress Test -----------------------------------------
     console.print("\n[bold yellow]6. Monte Carlo stress test...[/bold yellow]")
     returns = df["close"].pct_change().dropna()
-    stress = stress_test_monte_carlo(returns, n_simulations=5000, n_days=30)
+    stress = stress_test_monte_carlo(
+        returns, n_simulations=params.limits.monte_carlo_simulations, n_days=30
+    )
 
     # -- Result Table ----------------------------------------
     table = Table(title="Backtest Results", border_style="green")
@@ -287,7 +299,7 @@ def run_walkforward_backtest(
             cash=params.backtest.initial_cash,
         )
 
-        window = 30
+        window = params.limits.backtest_lookback_window
         trades: list[dict] = []
 
         for i in range(window, len(test_df)):
@@ -301,30 +313,42 @@ def run_walkforward_backtest(
             if has_position:
                 pos = portfolio.positions[0]
                 pos.update_price(current_price)
-                new_stop = stop_loss_mgr.update_trailing_stop(
-                    pos.stop_loss, current_price, atr, pos.side
-                )
-                pos.stop_loss = new_stop
 
-                if stop_loss_mgr.should_exit(current_price, pos.stop_loss, pos.side):
-                    trade = portfolio.close_position(pos.symbol, current_price)
+                high_price = float(test_df["high"].iloc[i])
+                low_price = float(test_df["low"].iloc[i])
+
+                sl_test_price = low_price
+                tp_test_price = high_price
+
+                # 1. Stop-Loss Kontrolü (Mum içi ilk öncelik)
+                if stop_loss_mgr.should_exit(sl_test_price, pos.stop_loss):
+                    trade = portfolio.close_position(pos.symbol, pos.stop_loss)
                     if trade:
                         trade["exit_reason"] = "stop_loss"
                         trades.append(trade)
                     continue
 
-                if pos.should_take_profit(current_price):
-                    trade = portfolio.close_position(pos.symbol, current_price)
+                # 2. Take-Profit Kontrolü (Mum içi)
+                if pos.should_take_profit(tp_test_price):
+                    trade = portfolio.close_position(pos.symbol, pos.take_profit)
                     if trade:
                         trade["exit_reason"] = "take_profit"
                         trades.append(trade)
                     continue
 
+                # 3. Kapanışta Sinyal Tersine Dönme İhtimali
                 if pos.side == "long" and signals.signal == "sell":
                     trade = portfolio.close_position(pos.symbol, current_price)
                     if trade:
                         trade["exit_reason"] = "signal_reversal"
                         trades.append(trade)
+                    continue
+
+                # 4. Trailing Stop Güncellemesi
+                new_stop = stop_loss_mgr.update_trailing_stop(
+                    pos.stop_loss, current_price, atr
+                )
+                pos.stop_loss = new_stop
             else:
                 if signals.signal == "buy" and signals.trend_strength > 0.3:
                     amount = portfolio.calculate_position_size(current_price)

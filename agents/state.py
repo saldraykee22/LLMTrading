@@ -9,42 +9,31 @@ from __future__ import annotations
 
 import operator
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 
 class TradingState(TypedDict):
-    """
-    Çoklu ajan sistemi için merkezi durum nesnesi.
-    LangGraph StateGraph'ın paylaşımlı belleği olarak kullanılır.
-    """
+    messages: Annotated[list[dict], operator.add]
+    symbol: str
 
-    # ── İletişim ───────────────────────────────────────────
-    messages: Annotated[list[dict], operator.add]  # Ajan mesaj geçmişi
+    market_data: NotRequired[dict[str, Any]]
+    news_data: NotRequired[list[dict[str, Any]]]
+    technical_signals: NotRequired[dict[str, Any]]
 
-    # ── Girdi Verileri ─────────────────────────────────────
-    symbol: str  # Analiz edilen sembol
-    market_data: dict[str, Any]  # OHLCV özeti
-    news_data: list[dict[str, Any]]  # Haberler (serialized)
-    technical_signals: dict[str, Any]  # Teknik göstergeler
+    sentiment: NotRequired[dict[str, Any]]
+    research_report: NotRequired[dict[str, Any]]
+    debate_result: NotRequired[dict[str, Any]]
 
-    # ── Analiz Sonuçları ───────────────────────────────────
-    sentiment: dict[str, Any]  # LLM duyarlılık analizi
-    research_report: dict[str, Any]  # Araştırmacı raporu
-    debate_result: dict[str, Any]  # Bull vs Bear tartışma sonucu
+    risk_assessment: NotRequired[dict[str, Any]]
+    risk_approved: NotRequired[bool]
+    trade_decision: NotRequired[dict[str, Any]]
 
-    # ── Risk ve Karar ──────────────────────────────────────
-    risk_assessment: dict[str, Any]  # Risk değerlendirmesi
-    risk_approved: bool  # Risk onayı
-    trade_decision: dict[str, Any]  # Nihai alım/satım kararı
+    portfolio_state: NotRequired[dict[str, Any]]
 
-    # ── Portföy ────────────────────────────────────────────
-    portfolio_state: dict[str, Any]  # Mevcut portföy durumu
-
-    # ── Kontrol ────────────────────────────────────────────
-    iteration: int  # Döngü sayacı
-    error: str  # Hata mesajı (varsa)
-    phase: str  # Mevcut aşama adı
-    provider: str  # LLM sağlayıcı override (opsiyonel)
+    iteration: NotRequired[int]
+    error: NotRequired[str]
+    phase: NotRequired[str]
+    provider: NotRequired[str]
 
 
 def create_initial_state(

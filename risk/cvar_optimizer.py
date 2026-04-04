@@ -53,7 +53,7 @@ def calculate_var(
 def optimize_portfolio_cvar(
     returns: pd.DataFrame,
     confidence: float | None = None,
-    max_weight: float = 0.3,
+    max_weight: float | None = None,
 ) -> dict:
     """
     CVaR'ı minimize eden portföy ağırlıklarını bulur.
@@ -73,6 +73,7 @@ def optimize_portfolio_cvar(
     """
     params = get_trading_params()
     conf = confidence or params.risk.cvar_confidence
+    mw = max_weight if max_weight is not None else params.risk.cvar.max_weight
     n_assets = returns.shape[1]
 
     if n_assets == 0:
@@ -98,7 +99,7 @@ def optimize_portfolio_cvar(
     ]
 
     # Sınırlar: 0 ≤ weight ≤ max_weight
-    bounds = [(0.0, max_weight) for _ in range(n_assets)]
+    bounds = [(0.0, mw) for _ in range(n_assets)]
 
     # Başlangıç: eşit dağılım
     w0 = np.ones(n_assets) / n_assets
@@ -116,7 +117,9 @@ def optimize_portfolio_cvar(
         if result.success:
             optimal_weights = result.x
         else:
-            logger.warning("CVaR optimizasyonu yakınsayamadı, eşit dağılım kullanılıyor")
+            logger.warning(
+                "CVaR optimizasyonu yakınsayamadı, eşit dağılım kullanılıyor"
+            )
             optimal_weights = w0
 
     except Exception as e:
@@ -175,14 +178,16 @@ def stress_test_monte_carlo(
     std_return = np.std(returns)
 
     # Simüle edilmiş kümülatif getiriler
-    simulated = np.random.normal(
-        mean_return, std_return, (n_simulations, n_days)
-    )
+    simulated = np.random.normal(mean_return, std_return, (n_simulations, n_days))
     cumulative = np.cumprod(1 + simulated, axis=1)
     final_values = cumulative[:, -1]
 
     var = float(np.percentile(final_values - 1, (1 - confidence) * 100))
-    cvar = float(final_values[final_values - 1 <= var].mean() - 1) if np.any(final_values - 1 <= var) else var
+    cvar = (
+        float(final_values[final_values - 1 <= var].mean() - 1)
+        if np.any(final_values - 1 <= var)
+        else var
+    )
     max_drawdown = float(np.min(final_values) - 1)
     median_return = float(np.median(final_values) - 1)
 

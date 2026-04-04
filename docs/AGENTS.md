@@ -4,7 +4,7 @@ Bu proje **LangGraph** kullanilarak gelistirilmis bir Durum Grafigi (StateGraph)
 
 Durum nesnesi (State), `agents/state.py` icinde tanimlanan `TradingState` adli bir `TypedDict` sinifidir.
 
-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
+> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
 
 ---
 
@@ -40,7 +40,7 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 
 - **Input:** Islem yapilacak sembol ve toplanmis raw data
 - **Output:** Surec baslangic onay/ret, iterasyon sayaci
-- **Not:** Veriler eksik veya limitin altindaysa sistemi bir sonraki adima aktarir ya da hatayla sonlandirir
+- **Not:** Veriler eksikse loglar ve bir sonraki adıma geçer, sistemi bloklamaz
 
 ---
 
@@ -57,6 +57,8 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 **Faz 3 guncellemes:** `extract_json` artik `utils.json_utils`'ten import ediliyor (merkezi ayristirici)
 
 **Faz 4 guncellemesi:** `provider` parametresi state'ten okunuyor, paralel analiz destekleniyor
+
+**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=300, JSON mode aktif, cache kontrolu LLM oncesi yapiliyor
 
 ---
 
@@ -116,6 +118,8 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
 
 **Cikti (Payload):** `risk_assessment`, `risk_approved`
 
+**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=400, JSON mode aktif
+
 ---
 
 ## 5. Trader (Islemci / Yurutucuajan)
@@ -141,6 +145,8 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
 ```
 
 Bu cikti LangGraph dongusu disina cikarak `execution/order_manager.py` modulu uzerinden `ExchangeClient.execute_order()`'a beslenir.
+
+**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=250, JSON mode aktif
 
 ---
 
@@ -235,6 +241,44 @@ python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT,AVAX/USDT -
     },
     "cvar_info": {"cvar": -0.0156, "var": -0.0098, "expected_return": -0.037}
 }
+```
+
+---
+
+## Ajan Spesifikasyonlari [FAZ 5 GUNCELLEME]
+
+### max_tokens ve JSON Mode
+
+Tum LLM cagrilar artik `max_tokens` siniri ve `response_format={"type": "json_object"}` ile yapilir.
+
+| Ajan | max_tokens | JSON Mode | Aciklama |
+|------|-----------|-----------|----------|
+| Sentiment | 300 | Evet | Haber duyarlilik analizi |
+| Research | 500 | Evet | Kapsamli arastirma raporu |
+| Debate (Bull/Bear) | 400 | Evet | Karsit argumanlar |
+| Moderator | 400 | Evet | Konsensus degerlendirmesi |
+| Risk Manager | 400 | Evet | Risk analizi ve oneriler |
+| Trader | 250 | Evet | Nihai islem emri |
+
+### Prompt Sikistirma
+
+Tum prompt dosyalari ~%40-50 oraninda kucultulmustur:
+- Gereksiz aciklamalar kaldirildi
+- "be concise" kurali eklendi
+- "ONLY return JSON" kurali eklendi
+- Ornek ciktilar korundu, aciklamalar kisaltildi
+
+### Yapilandirma (`config/trading_params.yaml`)
+
+```yaml
+limits:
+  sentiment_max_tokens: 300
+  research_max_tokens: 500
+  debate_max_tokens: 400
+  moderator_max_tokens: 400
+  risk_max_tokens: 400
+  trader_max_tokens: 250
+  sentiment_cache_minutes: 30
 ```
 
 ---

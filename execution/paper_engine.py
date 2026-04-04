@@ -25,19 +25,17 @@ class PaperPosition:
     """Paper trading pozisyonu."""
 
     symbol: str
-    side: str
     entry_price: float
     amount: float
     entry_time: str
+    side: str = "buy"
     stop_loss: float = 0.0
     take_profit: float = 0.0
     current_price: float = 0.0
 
     @property
     def unrealized_pnl(self) -> float:
-        if self.side == "buy":
-            return (self.current_price - self.entry_price) * self.amount
-        return (self.entry_price - self.current_price) * self.amount
+        return (self.current_price - self.entry_price) * self.amount
 
     @property
     def unrealized_pnl_pct(self) -> float:
@@ -229,7 +227,7 @@ class PaperTradingEngine:
             "amount": sell_amount,
             "price": round(exec_price, 6),
             "commission": round(commission, 6),
-            "cost": round(net_revenue, 6),
+            "revenue": round(net_revenue, 6),
             "pnl": round(pnl, 6),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "mode": "paper",
@@ -262,16 +260,7 @@ class PaperTradingEngine:
 
         # Stop-loss kontrolü
         if pos.stop_loss > 0:
-            if pos.side == "buy" and current_price <= pos.stop_loss:
-                logger.warning(
-                    "Paper STOP-LOSS tetiklendi: %s @ %.4f (stop: %.4f)",
-                    symbol,
-                    current_price,
-                    pos.stop_loss,
-                )
-                return self._create_auto_sell_order(pos, "stop_loss")
-
-            if pos.side == "sell" and current_price >= pos.stop_loss:
+            if current_price <= pos.stop_loss:
                 logger.warning(
                     "Paper STOP-LOSS tetiklendi: %s @ %.4f (stop: %.4f)",
                     symbol,
@@ -282,16 +271,7 @@ class PaperTradingEngine:
 
         # Take-profit kontrolü
         if pos.take_profit > 0:
-            if pos.side == "buy" and current_price >= pos.take_profit:
-                logger.info(
-                    "Paper TAKE-PROFIT tetiklendi: %s @ %.4f (tp: %.4f)",
-                    symbol,
-                    current_price,
-                    pos.take_profit,
-                )
-                return self._create_auto_sell_order(pos, "take_profit")
-
-            if pos.side == "sell" and current_price <= pos.take_profit:
+            if current_price >= pos.take_profit:
                 logger.info(
                     "Paper TAKE-PROFIT tetiklendi: %s @ %.4f (tp: %.4f)",
                     symbol,

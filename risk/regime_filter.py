@@ -53,11 +53,14 @@ class RegimeFilter:
         threshold = self._vix_sma * self._params.regime.vix_threshold_multiplier
 
         # Rejim belirleme
-        if self._vix_current > 40:
+        if self._vix_current > self._params.limits.vix_crisis_threshold:
             self._current_regime = RegimeState.CRISIS
         elif self._vix_current > threshold:
             self._current_regime = RegimeState.HIGH_VOL
-        elif self._vix_current < self._vix_sma * 0.8:
+        elif (
+            self._vix_current
+            < self._vix_sma * self._params.limits.vix_low_vol_multiplier
+        ):
             self._current_regime = RegimeState.LOW_VOL
         else:
             self._current_regime = RegimeState.NORMAL
@@ -130,9 +133,7 @@ class CryptoFearGreedFilter:
         else:
             self._classification = "extreme_greed"
 
-        logger.info(
-            "Kripto Fear & Greed: %d (%s)", index_value, self._classification
-        )
+        logger.info("Kripto Fear & Greed: %d (%s)", index_value, self._classification)
         return self._classification
 
     def should_reduce_exposure(self) -> bool:

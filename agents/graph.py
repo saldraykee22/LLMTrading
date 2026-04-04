@@ -29,6 +29,15 @@ from config.settings import get_trading_params
 
 logger = logging.getLogger(__name__)
 
+_cached_app = None
+
+
+def get_compiled_graph():
+    global _cached_app
+    if _cached_app is None:
+        _cached_app = compile_trading_graph()
+    return _cached_app
+
 
 def _should_continue_after_risk(state: TradingState) -> str:
     """
@@ -172,7 +181,7 @@ def run_analysis(
         provider=provider,
     )
 
-    app = compile_trading_graph()
+    app = get_compiled_graph()
     result = app.invoke(initial)
 
     return result

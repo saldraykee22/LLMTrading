@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from config.settings import DATA_DIR, get_trading_params
 
 logger = logging.getLogger(__name__)
@@ -27,23 +29,24 @@ class Position:
     """Tek bir açık pozisyon."""
 
     symbol: str
-    side: str  # long | short
     entry_price: float
     amount: float
     entry_time: str
+    side: str = "long"
     stop_loss: float = 0.0
     take_profit: float = 0.0
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
 
+    def __post_init__(self) -> None:
+        if self.side != "long":
+            raise ValueError(f"SPOT only supports long positions, got: {self.side}")
+
     def update_price(self, price: float) -> None:
         """Güncel fiyatı günceller ve P&L hesaplar."""
         self.current_price = price
-        if self.side == "long":
-            self.unrealized_pnl = (price - self.entry_price) * self.amount
-        else:
-            self.unrealized_pnl = (self.entry_price - price) * self.amount
+        self.unrealized_pnl = (price - self.entry_price) * self.amount
         if self.entry_price > 0 and self.amount > 0:
             self.unrealized_pnl_pct = self.unrealized_pnl / (
                 self.entry_price * self.amount
@@ -53,17 +56,13 @@ class Position:
         """Stop-loss kontrolü."""
         if self.stop_loss <= 0:
             return False
-        if self.side == "long":
-            return price <= self.stop_loss
-        return price >= self.stop_loss
+        return price <= self.stop_loss
 
     def should_take_profit(self, price: float) -> bool:
         """Take-profit kontrolü."""
         if self.take_profit <= 0:
             return False
-        if self.side == "long":
-            return price >= self.take_profit
-        return price <= self.take_profit
+        return price >= self.take_profit
 
 
 def _position_from_dict(d: dict) -> Position:
@@ -95,6 +94,9 @@ class PortfolioState:
     total_pnl: float = 0.0
     max_equity: float = 10000.0
     current_drawdown: float = 0.0
+    benchmark_symbol: str = "BTC/USDT"
+    benchmark_return: float = 0.0
+    alpha: float = 0.0
 
     def __post_init__(self) -> None:
         """daily_pnl_date boşsa bugünün tarihini ata."""
@@ -117,8 +119,13 @@ class PortfolioState:
             "total_pnl": self.total_pnl,
             "max_equity": self.max_equity,
             "current_drawdown": self.current_drawdown,
+            "benchmark_symbol": self.benchmark_symbol,
+            "benchmark_return": self.benchmark_return,
+            "alpha": self.alpha,
         }
-        filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path = filepath.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(filepath)
         logger.info("Portföy kaydedildi: %s (equity: %.2f)", filepath, self.equity)
 
     @classmethod
@@ -142,6 +149,9 @@ class PortfolioState:
                 total_pnl=data.get("total_pnl", 0.0),
                 max_equity=data.get("max_equity", 10000.0),
                 current_drawdown=data.get("current_drawdown", 0.0),
+                benchmark_symbol=data.get("benchmark_symbol", "BTC/USDT"),
+                benchmark_return=data.get("benchmark_return", 0.0),
+                alpha=data.get("alpha", 0.0),
             )
             state.reset_daily_pnl_if_needed()
             logger.info(
@@ -177,12 +187,7 @@ class PortfolioState:
     @property
     def equity(self) -> float:
         """Toplam özvarlık (nakit + açık pozisyonlar)."""
-        position_value = 0.0
-        for p in self.positions:
-            if p.side == "long":
-                position_value += p.current_price * p.amount
-            else:
-                position_value -= p.current_price * p.amount
+        position_value = sum(p.current_price * p.amount for p in self.positions)
         return self.cash + position_value
 
     @property
@@ -196,6 +201,32 @@ class PortfolioState:
             self.max_equity = eq
         if self.max_equity > 0:
             self.current_drawdown = (self.max_equity - eq) / self.max_equity
+
+    def update_benchmark(
+        self, market_data: pd.DataFrame, benchmark_symbol: str | None = None
+    ) -> float:
+        """Benchmark getirisini ve alpha'yı hesaplar."""
+        sym = benchmark_symbol or self.benchmark_symbol
+        if sym != self.benchmark_symbol:
+            self.benchmark_symbol = sym
+        if (
+            market_data is None
+            or market_data.empty
+            or "close" not in market_data.columns
+        ):
+            return 0.0
+        first_close = float(market_data["close"].iloc[0])
+        last_close = float(market_data["close"].iloc[-1])
+        if first_close <= 0:
+            return 0.0
+        self.benchmark_return = (last_close - first_close) / first_close
+        portfolio_return = (
+            (self.equity - self.initial_cash) / self.initial_cash
+            if self.initial_cash > 0
+            else 0.0
+        )
+        self.alpha = portfolio_return - self.benchmark_return
+        return self.benchmark_return
 
     # ── Position Sizing ────────────────────────────────────
 
@@ -236,6 +267,9 @@ class PortfolioState:
             "daily_pnl_date": self.daily_pnl_date,
             "current_drawdown": round(self.current_drawdown, 4),
             "max_equity": round(self.max_equity, 2),
+            "benchmark_symbol": self.benchmark_symbol,
+            "benchmark_return": round(self.benchmark_return, 4),
+            "alpha": round(self.alpha, 4),
             "positions": [
                 {
                     "symbol": p.symbol,
@@ -258,11 +292,14 @@ class PortfolioState:
         amount: float,
         stop_loss: float = 0.0,
         take_profit: float = 0.0,
+        max_correlation: float | None = None,
+        market_data: dict[str, Any] | None = None,
     ) -> Position | None:
         """Yeni pozisyon açar."""
+        if side != "long":
+            raise ValueError(f"SPOT only supports long positions, got: {side}")
         params = get_trading_params()
 
-        # Limit kontrolü
         if self.open_position_count >= params.risk.max_open_positions:
             logger.warning("Max pozisyon limiti aşıldı")
             return None
@@ -272,11 +309,31 @@ class PortfolioState:
             logger.warning("Yetersiz bakiye: %.2f > %.2f", cost, self.cash)
             return None
 
-        # Drawdown kontrolü
         self.update_drawdown()
         if self.current_drawdown >= params.risk.max_drawdown_pct:
             logger.warning("Max drawdown aşıldı: %.2f%%", self.current_drawdown * 100)
             return None
+
+        if max_correlation is not None and market_data is not None and self.positions:
+            from risk.correlation_checker import CorrelationChecker
+
+            checker = CorrelationChecker([], market_data)
+            symbols_to_check = [p.symbol for p in self.positions] + [symbol]
+            available = {
+                s: market_data[s] for s in symbols_to_check if s in market_data
+            }
+            if len(available) >= 2:
+                check_result = checker.check_positions(
+                    self.positions,
+                    market_data,
+                    max_correlation=max_correlation,
+                )
+                if not check_result["is_safe"]:
+                    logger.warning(
+                        "Pozisyon reddedildi: yüksek korelasyon tespit edildi. %s",
+                        check_result["correlated_pairs"],
+                    )
+                    return None
 
         position = Position(
             symbol=symbol,
@@ -313,10 +370,7 @@ class PortfolioState:
         pos.update_price(price)
         pnl = pos.unrealized_pnl
 
-        if pos.side == "long":
-            self.cash += price * pos.amount
-        else:
-            self.cash -= price * pos.amount
+        self.cash += price * pos.amount
 
         self.total_pnl += pnl
         self.daily_pnl += pnl

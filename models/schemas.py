@@ -1,3 +1,4 @@
+# DEPRECATED: Not used, consider removing
 """
 Pydantic Schemas for LLM Output Validation
 =============================================

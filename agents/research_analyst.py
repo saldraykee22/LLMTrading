@@ -117,7 +117,9 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
-            ]
+            ],
+            max_tokens=500,
+            response_format={"type": "json_object"},
         )
         research_result = extract_json(response.content)
     except Exception as e:

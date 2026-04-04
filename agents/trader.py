@@ -101,12 +101,15 @@ def trader_node(state: TradingState) -> dict[str, Any]:
 - Emir tipi: {params.execution.default_order_type}
 - Komisyon: %{params.execution.commission_pct * 100}
 - Kayma (slippage): %{params.execution.slippage_pct * 100}
-- Min risk/ödül: 1.5
+- Min risk/ödül: {params.limits.min_risk_reward}
 
 Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
 
     llm = create_agent_llm(
-        provider=provider, model=params.agents.trader_model, temperature=0.1
+        provider=provider,
+        model=params.agents.trader_model,
+        temperature=0.1,
+        max_tokens=params.limits.max_tokens_trader,
     )
 
     try:
@@ -114,7 +117,9 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
-            ]
+            ],
+            max_tokens=params.limits.max_tokens_trader,
+            response_format={"type": "json_object"},
         )
         trade_decision = extract_json(response.content)
     except Exception as e:
@@ -123,6 +128,7 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
             "action": "hold",
             "symbol": symbol,
             "reasoning": f"İşlem emri oluşturulamadı: {e}",
+            "error": f"LLM Timeout veya API Hatası: {e}",
         }
 
     # Varsayılanları doldur
@@ -149,8 +155,13 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
 
     logger.info(trade_msg)
 
-    return {
+    result = {
         "messages": [{"role": "trader", "content": trade_msg}],
         "trade_decision": trade_decision,
         "phase": "complete",
     }
+
+    if "error" in trade_decision:
+        result["error"] = trade_decision["error"]
+
+    return result

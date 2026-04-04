@@ -20,8 +20,11 @@ risk:
   cvar_confidence: 0.95           # CVaR güven düzeyi
   max_open_positions: 5           # Max eşzamanlı açık pozisyon
   max_correlated_positions: 3     # Max ilişkili pozisyon sayısı
+  max_correlation_threshold: 0.70 # Korelasyon eşiği (üzeri reddedilir)
   max_consecutive_losses: 5       # Art arda 5 kayıp → durdur
   max_consecutive_llm_errors: 10  # Art arda 10 LLM hatası → durdur
+  cvar:
+    max_weight: 0.40              # Tek varlık max ağırlık %40
 
 # ── Volatilite / Rejim Filtresi ────────────────────────────
 regime:
@@ -83,3 +86,32 @@ data:
   news_lookback_hours: 24         # Haber geriye dönük bakış (saat)
   cache_enabled: true
   cache_ttl_minutes: 15           # Önbellek yaşam süresi
+
+# ── Limitler ──────────────────────────────────────────────
+limits:
+  max_news_items: 20              # Maksimum haber sayısı
+  debate_truncate_chars: 300      # Tartışma argüman kısaltma
+  debate_rebuttal_truncate_chars: 1500  # Karşılıklı yanıt kısaltma
+  moderator_truncate_chars: 2000  # Moderatör giriş kısaltma
+  min_risk_reward: 1.5            # Minimum risk/ödül oranı
+  vix_crisis_threshold: 40        # VIX kriz eşiği
+  vix_low_vol_multiplier: 0.8     # Düşük volatilite çarpanı
+  backtest_lookback_window: 30    # Backtest geriye bakış penceresi
+  monte_carlo_simulations: 5000   # Monte Carlo simülasyon sayısı
+  sentiment_cache_minutes: 30     # Duyarlılık önbellek süresi (dakika)
+  news_rate_limit_delay: 0.5      # Haber API istekleri arası bekleme (saniye)
+  max_tokens_sentiment: 300
+  max_tokens_research: 500
+  max_tokens_debate: 400
+  max_tokens_moderator: 400
+  max_tokens_risk: 400
+  max_tokens_trader: 250
+  max_tokens_coordinator: 200
+
+# ── Watchdog (Flash Crash Protection) ──────────────────────
+watchdog:
+  enabled: false
+  check_interval_seconds: 30
+  crash_1m_pct: 0.03
+  crash_5m_pct: 0.05
+  alert_5m_pct: 0.02

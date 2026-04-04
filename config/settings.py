@@ -82,8 +82,23 @@ class Settings(BaseSettings):
     trading_mode: TradingMode = TradingMode.PAPER
     confirm_live_trade: bool = False  # Safety lock for LIVE trading
 
+    # Dashboard
+    dashboard_api_key: str | None = None
+
+    @property
+    def masked_openrouter_key(self) -> str:
+        return mask_api_key(self.openrouter_api_key)
+
+    @property
+    def masked_binance_key(self) -> str:
+        return mask_api_key(self.binance_api_key)
+
 
 # ── YAML Trading Parameters ───────────────────────────────
+class CvarParams(BaseModel):
+    max_weight: float = 0.40
+
+
 class RiskParams(BaseModel):
     max_position_pct: float = 0.05
     max_portfolio_risk_pct: float = 0.20
@@ -94,6 +109,7 @@ class RiskParams(BaseModel):
     max_correlated_positions: int = 3
     max_consecutive_losses: int = 5
     max_consecutive_llm_errors: int = 10
+    cvar: CvarParams = CvarParams()
 
 
 class RegimeParams(BaseModel):
@@ -157,6 +173,35 @@ class DataParams(BaseModel):
     cache_ttl_minutes: int = 15
 
 
+class LimitsParams(BaseModel):
+    max_news_items: int = 20
+    debate_truncate_chars: int = 300
+    debate_rebuttal_truncate_chars: int = 1500
+    moderator_truncate_chars: int = 2000
+    min_risk_reward: float = 1.5
+    vix_crisis_threshold: float = 40
+    vix_low_vol_multiplier: float = 0.8
+    backtest_lookback_window: int = 30
+    monte_carlo_simulations: int = 5000
+    sentiment_cache_minutes: int = 30
+    news_rate_limit_delay: float = 0.5
+    max_tokens_sentiment: int = 300
+    max_tokens_research: int = 500
+    max_tokens_debate: int = 400
+    max_tokens_moderator: int = 400
+    max_tokens_risk: int = 400
+    max_tokens_trader: int = 250
+    max_tokens_coordinator: int = 200
+
+
+class WatchdogParams(BaseModel):
+    enabled: bool = False
+    check_interval_seconds: int = 30
+    crash_1m_pct: float = 0.03
+    crash_5m_pct: float = 0.05
+    alert_5m_pct: float = 0.02
+
+
 class TradingParams(BaseModel):
     """trading_params.yaml'dan yüklenen strateji parametreleri."""
 
@@ -168,6 +213,8 @@ class TradingParams(BaseModel):
     agents: AgentParams = AgentParams()
     backtest: BacktestParams = BacktestParams()
     data: DataParams = DataParams()
+    limits: LimitsParams = LimitsParams()
+    watchdog: WatchdogParams = WatchdogParams()
 
 
 def load_trading_params(path: Path | None = None) -> TradingParams:
@@ -178,6 +225,14 @@ def load_trading_params(path: Path | None = None) -> TradingParams:
             raw: dict[str, Any] = yaml.safe_load(f) or {}
         return TradingParams(**raw)
     return TradingParams()
+
+
+def mask_api_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "****"
+    return key[:6] + "****" + key[-4:]
 
 
 # ── Singleton Helpers ──────────────────────────────────────

@@ -25,13 +25,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NewsItem:
     """Standartlaştırılmış haber öğesi."""
+
     title: str
     summary: str
     source: str
     url: str
     published_at: datetime
     symbols: list[str] = field(default_factory=list)
-    category: str = "general"       # general, crypto, earnings, macro
+    category: str = "general"  # general, crypto, earnings, macro
     raw_sentiment: str | None = None  # Kaynağın kendi sentiment'i (varsa)
 
 
@@ -43,7 +44,7 @@ class NewsClient:
         self._params = get_trading_params()
         self._http = httpx.Client(timeout=15.0)
         self._last_request_time: float = 0
-        self._rate_limit_delay: float = 0.5  # saniye
+        self._rate_limit_delay: float = self._params.limits.news_rate_limit_delay
 
     def _rate_limit(self) -> None:
         """Basit rate limiting — istekler arası bekleme."""
@@ -116,9 +117,7 @@ class NewsClient:
         logger.info("Finnhub: %s → %d haber", clean_symbol, len(items))
         return items
 
-    def fetch_finnhub_general_news(
-        self, category: str = "general"
-    ) -> list[NewsItem]:
+    def fetch_finnhub_general_news(self, category: str = "general") -> list[NewsItem]:
         """Finnhub'dan genel piyasa haberlerini çeker."""
         api_key = self._settings.finnhub_api_key
         if not api_key:
@@ -249,13 +248,9 @@ class NewsClient:
 
             resolved = resolve_symbol(symbol)
             if resolved.asset_class == AssetClass.CRYPTO:
-                all_news.extend(
-                    self.fetch_crypto_news(currencies=[resolved.base])
-                )
+                all_news.extend(self.fetch_crypto_news(currencies=[resolved.base]))
             else:
-                all_news.extend(
-                    self.fetch_finnhub_company_news(resolved.base)
-                )
+                all_news.extend(self.fetch_finnhub_company_news(resolved.base))
         else:
             # Genel kripto haberleri
             all_news.extend(self.fetch_crypto_news())

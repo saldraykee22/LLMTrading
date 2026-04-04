@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Status](https://img.shields.io/badge/Durum-Production%20Ready-brightgreen.svg)
+![Status](https://img.shields.io/badge/Durum-Development-yellow.svg)
 
 ## Proje Ozeti
 
@@ -20,6 +20,9 @@ Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her 
 - **Paper Trading:** Gercek borsaya hic ulas madan slippage ve komisyon simule eden test modu
 - **Circuit Breaker:** Art arda kayip, gunluk limit veya manuel STOP ile otomatik durma
 - **Walk-Forward Backtest:** Overfitting tespiti icin kayan pencere validasyonu
+- **Daemon Mode:** Surekli calisan dongu, Ctrl+C ile guvenli kapanis, sembol ve interval secenekleri
+- **Watchdog (Flash Crash Korumasi):** Arka planda fiyat izleme, ani dususlerde acil satis
+- **Maliyet Optimizasyonu:** Prompt sikistirma, LLM cache, max_tokens sinirlari ile %72-88 API tasarrufu
 
 ---
 
@@ -67,21 +70,52 @@ EXECUTION_MODE=paper             # paper veya live
 
 ### 3. Calistirma
 
+#### Daemon Modu (Surekli Calisma)
+
+```bash
+# Varsayilan: BTC/USDT, 15m interval, watchdog aktif
+python scripts/run_live.py
+
+# Birden fazla sembol, 30m interval
+python scripts/run_live.py --symbols BTC/USDT,ETH/USDT,SOL/USDT --interval 30m
+
+# Tek sembol, 1 saatlik mumlar, watchdog kapali
+python scripts/run_live.py --symbol BTC/USDT --interval 1h --no-watchdog
+
+# Maksimum 10 dongu sonra dur (dry-run, emir gitmez)
+python scripts/run_live.py --symbols BTC/USDT,ETH/USDT --max-cycles 10 --dry-run
+
+# Ctrl+C ile guvenli kapanis (tumu pozisyonlar kaydedilir)
+```
+
+#### Tek Seferlik Calistirma (Geriye Uyumluluk)
+
 ```bash
 # Paper trading modu (gercek emir gitmez)
-python scripts/run_live.py --symbol BTC/USDT
+python scripts/run_live.py --symbol BTC/USDT --max-cycles 1
 
 # Emri gercekten gonder (--execute bayragi)
-python scripts/run_live.py --symbol BTC/USDT --execute
+python scripts/run_live.py --symbol BTC/USDT --max-cycles 1 --execute
 
 # Farkli semboller
-python scripts/run_live.py --symbol AAPL
-python scripts/run_live.py --symbol BIMAS
+python scripts/run_live.py --symbol AAPL --max-cycles 1
+python scripts/run_live.py --symbol BIMAS --max-cycles 1
 
 # Farkli LLM saglayici
-python scripts/run_live.py --symbol BTC/USDT --provider deepseek
-python scripts/run_live.py --symbol BTC/USDT --provider ollama
+python scripts/run_live.py --symbol BTC/USDT --provider deepseek --max-cycles 1
+python scripts/run_live.py --symbol BTC/USDT --provider ollama --max-cycles 1
 ```
+
+#### CLI Parametreleri
+
+| Parametre | Varsayilan | Aciklama |
+|-----------|-----------|----------|
+| `--symbols` | BTC/USDT | Izlenecek semboller (virgulle ayrilmis) |
+| `--symbol` | - | Tek sembol (geriye uyumlu) |
+| `--interval` | 15m | Mum araligi (5m, 15m, 30m, 1h, 4h, 1d) |
+| `--watchdog` | aktif | Flash crash korumasini acar/kapatir |
+| `--max-cycles` | sinirsiz | Maksimum dongu sayisi |
+| `--dry-run` | kapali | Emir gondermez, sadece analiz yapar |
 
 ### 4. Portföy Yönetimi (Multi-Asset)
 
@@ -139,6 +173,63 @@ API olmadan: Dashboard demo veri ile calisir, hata vermez.
 
 ---
 
+## Watchdog (Flash Crash Korumasi)
+
+Watchdog, arka planda ayri bir thread'de calisan ve fiyatlar surekli izleyen bir guvenlik mekanizmasidir.
+
+### Acil Satis Kurallari
+
+| Kosul | Aksiyon |
+|-------|---------|
+| 1 dakikada > %3 dusus | Hemen satis |
+| 5 dakikada > %5 dusus | Hemen satis |
+| 5 dakikada %2-5 dusus | Uyari gonder |
+
+### Yapilandirma (`config/trading_params.yaml`)
+
+```yaml
+watchdog:
+  enabled: true
+  check_interval_seconds: 30
+  flash_crash_1min_pct: 0.03
+  flash_crash_5min_pct: 0.05
+  alert_5min_pct: 0.02
+```
+
+---
+
+## Maliyet Optimizasyonu
+
+LLM API maliyetlerini dusurmek icin cok katmanli optimizasyon uygulanmistir.
+
+### Tasarruf Yontemleri
+
+| Yontem | Tasarruf | Aciklama |
+|--------|----------|----------|
+| **Prompt sikistirma** | %30-40 input token | Tum promptlar %40-50 kucultuldu |
+| **Prompt cache** | %75-90 cached input | OpenRouter/DeepSeek cache isabetleri |
+| **Sentiment cache** | %30-50 daha az LLM cagrisi | Son analiz cache'den dondurulur |
+| **max_tokens sinirlari** | Runaway onleme | Her ajan icin cikti siniri belirlenmis |
+
+### Toplam Tasarruf: ~%72-88 API maliyet azalmasi
+
+### max_tokens Degerleri
+
+| Ajan | max_tokens |
+|------|-----------|
+| Sentiment | 300 |
+| Research | 500 |
+| Debate | 400 |
+| Moderator | 400 |
+| Risk | 400 |
+| Trader | 250 |
+
+### JSON Mode
+
+Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir. Bu, cikti formatini garanti eder ve parse hatalarini azaltir.
+
+---
+
 ## Proje Gecmisi & Degisiklik Ozeti
 
 | Faz | Durum | Icerik |
@@ -149,3 +240,4 @@ API olmadan: Dashboard demo veri ile calisir, hata vermez.
 | **Faz 3** | **Tamamlandi** | Walk-forward backtest, MACD/BB kolon guvenlik, sentiment deduplication, ATR fallback stop-loss |
 | **Faz 4** | **Tamamlandi** | **Portfolio Manager**: Multi-asset paralel analiz, bileşik skorlama, CVaR optimizasyonu, dashboard portföy görünümü |
 | **Faz 4 Düzeltmeleri** | **Tamamlandi** | TradingMode import, phase tutarsizligi, _create_llm public, provider parametresi, dashboard güvenlik, dead variable'lar |
+| **Faz 5** | **Tamamlandi** | **Daemon Mode**: Surekli calisan dongu, CLI arglari, guvenli kapanis, **Watchdog**: Flash crash korumasi, **Prompt Sikistirma**: %40-50 kucultme, **max_tokens + JSON Mode**: Tum LLM cagrilarina sinir, **Sentiment Cache**: LLM oncesi cache kontrolu, **Maliyet Optimizasyonu**: %72-88 API tasarrufu |

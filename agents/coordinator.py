@@ -31,7 +31,6 @@ def coordinator_node(state: TradingState) -> dict[str, Any]:
     logger.info("Koordinatör başlatıldı: %s (iterasyon #%d)", symbol, iteration)
     logger.info("═" * 60)
 
-    # Veri kontrolü
     has_market = bool(state.get("market_data"))
     has_news = bool(state.get("news_data"))
     has_technical = bool(state.get("technical_signals"))

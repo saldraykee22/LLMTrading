@@ -32,6 +32,7 @@ class TechnicalSignals:
     # Göstergeler
     rsi_14: float = 50.0
     macd_signal: str = "neutral"  # bullish_cross | bearish_cross | neutral
+    macd_trend: str = "neutral"   # positive | negative | neutral
     macd_histogram: float = 0.0
     bb_position: str = "middle"  # above_upper | middle | below_lower
     atr_14: float = 0.0
@@ -53,6 +54,7 @@ class TechnicalSignals:
             "signal": self.signal,
             "rsi_14": round(self.rsi_14, 2),
             "macd_signal": self.macd_signal,
+            "macd_trend": self.macd_trend,
             "macd_histogram": round(self.macd_histogram, 4),
             "bb_position": self.bb_position,
             "atr_14": round(self.atr_14, 4),
@@ -113,6 +115,7 @@ class TechnicalAnalyzer:
                 )
 
                 if not np.isnan(macd_line) and not np.isnan(signal_line):
+                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
                     if len(macd_df) >= 2:
                         prev_macd = macd_df[macd_col].iloc[-2]
                         prev_signal = macd_df[signal_col].iloc[-2]
@@ -127,6 +130,7 @@ class TechnicalAnalyzer:
                 hist = macd_df.iloc[-1, 1]
                 signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
                 if not np.isnan(macd_line) and not np.isnan(signal_line):
+                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
                     if len(macd_df) >= 2:
                         prev_macd = macd_df.iloc[-2, 0]
                         prev_signal = macd_df.iloc[-2, 2]

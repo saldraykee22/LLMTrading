@@ -28,7 +28,6 @@ class DynamicStopLoss:
         self,
         entry_price: float,
         atr_value: float,
-        side: str = "long",
         multiplier: float | None = None,
     ) -> float:
         """
@@ -37,7 +36,6 @@ class DynamicStopLoss:
         Args:
             entry_price: Giriş fiyatı
             atr_value: Güncel ATR değeri
-            side: "long" veya "short"
             multiplier: ATR çarpanı (varsayılan: YAML'den)
 
         Returns:
@@ -45,34 +43,30 @@ class DynamicStopLoss:
         """
         mult = multiplier or self._params.stop_loss.atr_multiplier
 
-        if side == "long":
-            stop = entry_price - (atr_value * mult)
-        else:
-            stop = entry_price + (atr_value * mult)
+        stop = entry_price - (atr_value * mult)
 
         logger.debug(
-            "Stop-loss: %s @ %.4f, ATR=%.4f, mult=%.1f → stop=%.4f",
-            side, entry_price, atr_value, mult, stop,
+            "Stop-loss long @ %.4f, ATR=%.4f, mult=%.1f → stop=%.4f",
+            entry_price,
+            atr_value,
+            mult,
+            stop,
         )
         return max(stop, 0.0)
 
     def calculate_hard_stop(
         self,
         entry_price: float,
-        side: str = "long",
     ) -> float:
         """Sabit yüzdelik zarar-kes (son savunma hattı)."""
         pct = self._params.stop_loss.hard_stop_pct
-        if side == "long":
-            return entry_price * (1 - pct)
-        return entry_price * (1 + pct)
+        return entry_price * (1 - pct)
 
     def update_trailing_stop(
         self,
         current_stop: float,
         current_price: float,
         atr_value: float,
-        side: str = "long",
         multiplier: float | None = None,
     ) -> float:
         """
@@ -83,7 +77,6 @@ class DynamicStopLoss:
             current_stop: Mevcut stop seviyesi
             current_price: Güncel fiyat
             atr_value: Güncel ATR değeri
-            side: "long" veya "short"
             multiplier: ATR çarpanı
 
         Returns:
@@ -94,19 +87,15 @@ class DynamicStopLoss:
 
         mult = multiplier or self._params.stop_loss.atr_multiplier
 
-        if side == "long":
-            new_stop = current_price - (atr_value * mult)
-            # Stop sadece yukarı hareket edebilir
-            updated = max(current_stop, new_stop)
-        else:
-            new_stop = current_price + (atr_value * mult)
-            # Short'ta stop sadece aşağı hareket edebilir
-            updated = min(current_stop, new_stop) if current_stop > 0 else new_stop
+        new_stop = current_price - (atr_value * mult)
+        updated = max(current_stop, new_stop)
 
         if updated != current_stop:
             logger.debug(
                 "Trailing stop güncellendi: %.4f → %.4f (fiyat: %.4f)",
-                current_stop, updated, current_price,
+                current_stop,
+                updated,
+                current_price,
             )
 
         return updated
@@ -135,20 +124,17 @@ class DynamicStopLoss:
         self,
         current_price: float,
         stop_level: float,
-        side: str = "long",
     ) -> bool:
         """Zarar-kes tetiklendi mi kontrol eder."""
         if stop_level <= 0:
             return False
 
-        if side == "long":
-            triggered = current_price <= stop_level
-        else:
-            triggered = current_price >= stop_level
+        triggered = current_price <= stop_level
 
         if triggered:
             logger.warning(
-                "STOP-LOSS TETİKLENDİ: fiyat=%.4f, stop=%.4f, side=%s",
-                current_price, stop_level, side,
+                "STOP-LOSS TETİKLENDİ: fiyat=%.4f, stop=%.4f",
+                current_price,
+                stop_level,
             )
         return triggered

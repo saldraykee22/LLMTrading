@@ -20,6 +20,11 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.globals import set_llm_cache
+from langchain_core.caches import InMemoryCache
+
+# Bellek içi AI caching (Özellikle Walk-Forward benzer pencerelerde API israfını önlemek için)
+set_llm_cache(InMemoryCache())
 
 from config.settings import (
     LLMProvider,
@@ -93,13 +98,6 @@ def create_llm(
         raise ValueError(f"Bilinmeyen LLM sağlayıcı: {prov}")
 
 
-def _extract_json(text: str) -> dict[str, Any]:
-    """Geriye uyumlu alias — utils.json_utils.extract_json kullanır."""
-    from utils.json_utils import extract_json as _ej
-
-    return _ej(text)
-
-
 class SentimentAnalyzer:
     """LLM tabanlı duyarlılık analizi motoru."""
 
@@ -132,6 +130,20 @@ class SentimentAnalyzer:
         Returns:
             SentimentRecord: Duyarlılık kaydı
         """
+        # Check cache BEFORE calling LLM
+        cached = self._store.get_latest(symbol)
+        if cached:
+            last_time = datetime.fromisoformat(cached.timestamp)
+            now = datetime.now(timezone.utc)
+            min_interval = self._params.limits.sentiment_cache_minutes
+            if (now - last_time).total_seconds() < min_interval * 60:
+                logger.debug(
+                    "Sentiment cache hit for %s (%.0f min old)",
+                    symbol,
+                    (now - last_time).total_seconds() / 60,
+                )
+                return cached
+
         # ── Kullanıcı mesajını hazırla ─────────────────────
         news_text = self._format_news(news)
         tech_text = self._format_technical(technical_data) if technical_data else ""
@@ -154,18 +166,26 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
         ]
 
         try:
-            response = self._llm.invoke(messages)
+            response = self._llm.invoke(
+                messages,
+                max_tokens=self._params.limits.max_tokens_sentiment,
+                response_format={"type": "json_object"},
+            )
             raw_text = response.content
         except Exception as e:
             logger.error("LLM sentiment hatası (%s): %s", symbol, e)
             return self._fallback_record(symbol, str(e))
 
         # ── JSON çıkar ────────────────────────────────────
-        result = _extract_json(raw_text)
+        result = extract_json(raw_text)
         if not result:
             return self._fallback_record(symbol, "JSON parse hatası")
 
         # ── Record oluştur ─────────────────────────────────
+        current_price = 0.0
+        if technical_data and "current_price" in technical_data:
+            current_price = float(technical_data["current_price"])
+
         record = SentimentRecord(
             symbol=symbol,
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -178,6 +198,7 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
             news_count=len(news),
             model_used=self._llm.model_name,
             provider=self._params.sentiment.provider.value,
+            price=current_price,
         )
 
         # Skor sınırlandırma
@@ -203,7 +224,7 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
             return "Haber bulunamadı."
 
         lines: list[str] = []
-        for i, item in enumerate(news[:15], 1):  # Max 15 haber
+        for i, item in enumerate(news[: self._params.limits.max_news_items], 1):
             lines.append(
                 f"{i}. [{item.published_at.strftime('%Y-%m-%d %H:%M')}] "
                 f"**{item.title}**\n"

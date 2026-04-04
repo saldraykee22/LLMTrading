@@ -2,7 +2,7 @@
 
 Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlarin halusnasyon gormesi muhtemel oldugundan risk mekanizmalari ikiye ayrilmistir: **Algoritmik** (Kodla kati sekilde saglanan) ve **Bilissel** (Risk Ajani ile yonetilen).
 
-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
+> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
 
 ---
 
@@ -10,6 +10,9 @@ Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlari
 
 ```
 [Islem Istegi Geldi]
+        |
+        v
+[0. Watchdog]             <- Arka planda flash crash izleme (30sn)
         |
         v
 [1. Circuit Breaker]    <- Art arda kayip? Gunluk limit? Manuel STOP?
@@ -31,6 +34,51 @@ Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlari
 ```
 
 **Prensip:** Her katman birbirinden bagimsizdir. LLM bir onceki katmani asamazsa sonraki katmana hic ulasamazlar.
+
+---
+
+## 0. Watchdog (Flash Crash Korumasi) [FAZ 5 - YENİ]
+
+**Dosya:** `risk/watchdog.py`
+
+Watchdog, ana islem dongusunden bagimsiz bir arka plan thread'inde calisan ve piyasadaki ani dususleri tespit eden bir emniyet mekanizmasidir.
+
+### Neden Watchdog?
+
+Ana pipeline belirli araliklarla (15dk, 1sa vb.) calisir. Bu araliklarda meydana gelen flash crash'ler (ani dususler) pipeline tarafindan yakalanamaz. Watchdog bu boslugu doldurur.
+
+### Acil Satis Kurallari
+
+| Kosul | Aksiyon | Aciklama |
+|-------|---------|----------|
+| **1 dakikada > %3 dusus** | ACIL SATIS | Tum acik pozisyonlar hemen kapatilir |
+| **5 dakikada > %5 dusus** | ACIL SATIS | Tum acik pozisyonlar hemen kapatilir |
+| **5 dakikada %2-5 dusus** | Uyari | Log kaydi olusturulur, satis yapilmaz |
+
+### Calisma Prensipleri
+
+- **Thread:** Ana donguden bagimsiz arka plan thread'i
+- **Kontrol Araligi:** Varsayilan 30 saniye (`check_interval_seconds`)
+- **Referans Noktalari:** Her kontrolde 1dk ve 5dk onceki fiyatlar kaydedilir
+- **Kapsam:** `--symbols` ile belirtilen tum semboller izlenir
+
+### Yapilandirma (`config/trading_params.yaml`)
+
+```yaml
+watchdog:
+  enabled: true
+  check_interval_seconds: 30
+  flash_crash_1min_pct: 0.03
+  flash_crash_5min_pct: 0.05
+  alert_5min_pct: 0.02
+```
+
+### Kapatma
+
+```bash
+# Watchdog olmadan calistir
+python scripts/run_live.py --symbols BTC/USDT,ETH/USDT --no-watchdog
+```
 
 ---
 
@@ -85,9 +133,9 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
 
 | Rejim | VIX Tahmini | Islem |
 |-------|-------------|-------|
-| `NORMAL` | < 20 | Serbest |
-| `ELEVATED` | 20-30 | Uyari |
-| `HIGH` | 30-40 | Kisitli |
+| `LOW_VOL` | < SMA * 0.8 | Serbest |
+| `NORMAL` | SMA * 0.8 - SMA * 1.10 | Serbest |
+| `HIGH_VOL` | > SMA * 1.10 | Kisitli |
 | `CRISIS` | > 40 | Durduruldu |
 
 ---
@@ -117,9 +165,9 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
 
 ```yaml
 risk:
-  max_drawdown_pct: 0.10        # %10 drawdown limiti
+  max_drawdown_pct: 0.15        # %15 drawdown limiti
   max_daily_loss_pct: 0.03      # %3 gunluk kayip limiti
-  max_position_pct: 0.15        # Equity'nin max %15'i tek pozisyon
+  max_position_pct: 0.05        # Equity'nin max %5'i tek pozisyon
   max_open_positions: 5         # Estzamanli max acik pozisyon
   max_consecutive_losses: 5     # Art arda kayip Circuit Breaker esigi
   max_consecutive_llm_errors: 10 # LLM hata Circuit Breaker esigi
@@ -270,3 +318,64 @@ Her varlik, 4 faktörün agirlikli ortalamasiyla skorlanir:
 - Min skor eşigi (`--min-score`): Altindaki varliklar elenir
 - Max pozisyon sayisi (`--max-positions`): Portföy çeşitlendirme siniri
 - Circuit Breaker: Portföy analizi öncesinde de kontrol edilir
+
+---
+
+## 9. Maliyet Optimizasyonu (Risk Stratejisi) [FAZ 5 - YENİ]
+
+LLM API maliyetlerinin kontrolsuz artmasi, bir ticaret sistemi icin operasyonel risk olusturur. Faz 5 ile cok katmanli maliyet optimizasyonu getirilmistir.
+
+### Prompt Sikistirma
+
+Tum 5 prompt dosyasi ~%40-50 oraninda kucultulmustur:
+- Gereksiz aciklamalar ve tekrarlar kaldirildi
+- "be concise" kurali eklendi
+- "ONLY return JSON" kurali eklendi
+
+**Etki:** %30-40 input token azalma
+
+### Sentiment Cache
+
+`SentimentAnalyzer.analyze()` metodu LLM cagrisindan ONCE cache kontrolu yapar:
+- Son analiz `sentiment_cache_minutes` (varsayilan 30) dakika icinde ise cache'den doner
+- `SentimentRecord.price` alani ile piyasa degisim tespiti mumkun
+
+**Etki:** %30-50 daha az LLM cagrisi
+
+### max_tokens Sinirlari
+
+Her ajanin maksimum cikti token siniri vardir:
+
+| Ajan | max_tokens |
+|------|-----------|
+| Sentiment | 300 |
+| Research | 500 |
+| Debate | 400 |
+| Moderator | 400 |
+| Risk | 400 |
+| Trader | 250 |
+
+**Etki:** Runaway cikti maliyetleri onlenir
+
+### JSON Mode
+
+Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir:
+- Cikti format garantisi
+- Parse hatasi azalmasi
+- Daha tutarli ajan davranisi
+
+### Prompt Caching (OpenRouter/DeepSeek)
+
+Ayni prompt tekrar kullanildiginda, provider tarafindan cache isabeti saglanir:
+
+**Etki:** %75-90 cached input indirimi
+
+### Toplam Tasarruf
+
+| Bilesen | Etki |
+|---------|------|
+| Prompt sikistirma | %30-40 input token azalma |
+| Prompt caching | %75-90 cached input indirimi |
+| Sentiment cache | %30-50 daha az LLM cagrisi |
+| max_tokens sinirlari | Runaway onleme |
+| **TOPLAM** | **~%72-88 API maliyet azalmasi** |

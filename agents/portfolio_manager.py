@@ -238,7 +238,7 @@ class PortfolioManager:
             cvar_result = optimize_portfolio_cvar(
                 returns_df,
                 confidence=params.risk.cvar_confidence,
-                max_weight=0.4,  # Tek varlık max %40
+                max_weight=params.risk.cvar.max_weight,
             )
             allocations = cvar_result.get("weights", {})
             cvar_info = {
@@ -335,23 +335,25 @@ class PortfolioManager:
             from data.news_data import NewsClient
 
             client = NewsClient()
-            items = client.fetch_all_news(symbol)
-            result = []
-            for item in items[:20]:
-                result.append(
-                    {
-                        "title": item.title,
-                        "summary": item.summary[:300],
-                        "source": item.source,
-                        "url": item.url,
-                        "published_at": item.published_at.isoformat(),
-                        "symbols": item.symbols,
-                        "category": item.category,
-                        "raw_sentiment": item.raw_sentiment,
-                    }
-                )
-            client.close()
-            return result
+            try:
+                items = client.fetch_all_news(symbol)
+                result = []
+                for item in items[: params.limits.max_news_items]:
+                    result.append(
+                        {
+                            "title": item.title,
+                            "summary": item.summary[:300],
+                            "source": item.source,
+                            "url": item.url,
+                            "published_at": item.published_at.isoformat(),
+                            "symbols": item.symbols,
+                            "category": item.category,
+                            "raw_sentiment": item.raw_sentiment,
+                        }
+                    )
+                return result
+            finally:
+                client.close()
         except Exception as e:
             logger.warning("Haber hatası (%s): %s", symbol, e)
             return []

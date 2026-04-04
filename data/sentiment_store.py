@@ -36,6 +36,7 @@ class SentimentRecord:
     news_count: int = 0
     model_used: str = ""
     provider: str = ""
+    price: float = 0.0
 
 
 class SentimentStore:
@@ -50,7 +51,9 @@ class SentimentStore:
         clean = symbol.replace("/", "_").replace(".", "_").upper()
         return self._dir / f"{clean}_sentiment.jsonl"
 
-    def save(self, record: SentimentRecord, min_interval_minutes: int = 30) -> bool:
+    def save(
+        self, record: SentimentRecord, min_interval_minutes: int | None = None
+    ) -> bool:
         """
         Yeni kaydı dosyaya ekler (append).
         Son N dakika içinde aynı sembol için kayıt varsa atlar.
@@ -62,6 +65,11 @@ class SentimentStore:
         Returns:
             True: Kayıt eklendi, False: Atladı (duplicate)
         """
+        from config.settings import get_trading_params
+
+        if min_interval_minutes is None:
+            min_interval_minutes = get_trading_params().limits.sentiment_cache_minutes
+
         # Duplicate kontrolü
         latest = self.get_latest(record.symbol)
         if latest:

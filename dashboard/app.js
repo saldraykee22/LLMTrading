@@ -22,6 +22,11 @@ const state = {
         state: 'normal',
         vix: 0,
     },
+    benchmark: {
+        symbol: 'BTC/USDT',
+        return: 0,
+        alpha: 0,
+    },
     trades: [],
     logs: [],
 };
@@ -44,11 +49,12 @@ updateTime();
 // ── Data Loading ──────────────────────────────────────────
 async function loadLatestAnalysis() {
     try {
-        const [portfolioRes, statusRes, tradesRes, allocRes] = await Promise.all([
+        const [portfolioRes, statusRes, tradesRes, allocRes, benchRes] = await Promise.all([
             fetch('/api/portfolio'),
             fetch('/api/status'),
             fetch('/api/trades?limit=10'),
             fetch('/api/portfolio_allocation'),
+            fetch('/api/benchmark'),
         ]);
 
         if (portfolioRes.ok) {
@@ -73,6 +79,11 @@ async function loadLatestAnalysis() {
         if (allocRes.ok) {
             const allocData = await allocRes.json();
             updatePortfolioAllocation(allocData);
+        }
+
+        if (benchRes.ok) {
+            const benchData = await benchRes.json();
+            updateBenchmark(benchData);
         }
     } catch (e) {
         console.log('API bağlantısı yok, demo verisi kullanılıyor');
@@ -364,6 +375,26 @@ function updatePortfolioAllocation(data) {
     }
 
     content.innerHTML = html;
+}
+
+function updateBenchmark(data) {
+    const symbolEl = document.getElementById('benchmarkSymbol');
+    const returnEl = document.getElementById('benchmarkReturn');
+    const alphaEl = document.getElementById('alphaValue');
+
+    if (symbolEl) symbolEl.textContent = data.benchmark_symbol || 'BTC/USDT';
+
+    if (returnEl) {
+        const benchRet = (data.benchmark_return || 0) * 100;
+        returnEl.textContent = benchRet.toFixed(2) + '%';
+        returnEl.style.color = benchRet >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    }
+
+    if (alphaEl) {
+        const alpha = (data.alpha || 0) * 100;
+        alphaEl.textContent = (alpha >= 0 ? '+' : '') + alpha.toFixed(2) + '%';
+        alphaEl.style.color = alpha >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    }
 }
 
 // ── Activity Log ──────────────────────────────────────────

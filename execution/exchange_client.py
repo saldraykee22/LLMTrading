@@ -105,6 +105,12 @@ class ExchangeClient:
 
         # Güvenlik kontrolü — live mode'da ekstra onay
         if self._params.execution.mode == TradingMode.LIVE:
+            if not self._settings.confirm_live_trade:
+                logger.error("LIVE trading rejected: confirm_live_trade is not enabled")
+                return {
+                    "status": "rejected",
+                    "message": "Live trading confirmation not enabled in settings",
+                }
             logger.warning(
                 "⚠ CANLI İŞLEM: %s %s %.6f %s",
                 order.action.upper(),

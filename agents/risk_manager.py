@@ -167,7 +167,10 @@ Uyarılar: {json.dumps(warnings, ensure_ascii=False)}
 Deterministik kontrol sonuçlarını ve araştırma raporunu dikkate al ve nihai risk değerlendirmesini yap."""
 
     llm = create_agent_llm(
-        provider=provider, model=params.agents.risk_model, temperature=0.1
+        provider=provider,
+        model=params.agents.risk_model,
+        temperature=0.1,
+        max_tokens=params.limits.max_tokens_risk,
     )
 
     try:
@@ -175,7 +178,9 @@ Deterministik kontrol sonuçlarını ve araştırma raporunu dikkate al ve nihai
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
-            ]
+            ],
+            max_tokens=params.limits.max_tokens_risk,
+            response_format={"type": "json_object"},
         )
         llm_assessment = extract_json(response.content)
     except Exception as e:

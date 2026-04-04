@@ -11,32 +11,19 @@ from utils.json_utils import extract_json
 class TestDynamicStopLoss:
     def test_calculate_initial_stop_long(self):
         sl = DynamicStopLoss()
-        stop = sl.calculate_initial_stop(100.0, 5.0, "long", multiplier=2.0)
+        stop = sl.calculate_initial_stop(100.0, 5.0, multiplier=2.0)
         assert stop == 90.0
-
-    def test_calculate_initial_stop_short(self):
-        sl = DynamicStopLoss()
-        stop = sl.calculate_initial_stop(100.0, 5.0, "short", multiplier=2.0)
-        assert stop == 110.0
 
     def test_trailing_stop_only_moves_favorable(self):
         sl = DynamicStopLoss()
         current_stop = 90.0
-        # Price goes up, trailing stop should move up
-        new_stop = sl.update_trailing_stop(
-            current_stop, 105.0, 5.0, "long", multiplier=2.0
-        )
+        new_stop = sl.update_trailing_stop(current_stop, 105.0, 5.0, multiplier=2.0)
         assert new_stop >= current_stop
 
     def test_should_exit_long(self):
         sl = DynamicStopLoss()
-        assert sl.should_exit(89.0, 90.0, "long") is True
-        assert sl.should_exit(91.0, 90.0, "long") is False
-
-    def test_should_exit_short(self):
-        sl = DynamicStopLoss()
-        assert sl.should_exit(111.0, 110.0, "short") is True
-        assert sl.should_exit(109.0, 110.0, "short") is False
+        assert sl.should_exit(89.0, 90.0) is True
+        assert sl.should_exit(91.0, 90.0) is False
 
 
 class TestTradeOrder:
