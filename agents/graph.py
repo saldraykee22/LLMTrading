@@ -33,32 +33,55 @@ logger = logging.getLogger(__name__)
 def _should_continue_after_risk(state: TradingState) -> str:
     """
     Risk yöneticisi kararından sonra yönlendirme.
-    - Onaylandıysa → trader
-    - Reddedildiyse ve iterasyon limiti aşılmadıysa → coordinator (yeniden analiz)
-    - Max iterasyona ulaşıldıysa → trader (hold kararıyla)
+
+    Akış mantığı:
+    - Risk onaylandıysa → trader (emir oluştur)
+    - Risk reddedildiyse → direkt hold kararı ile bitir (END)
+      (Aynı veriyle yeniden analiz anlamsız — veri değişmiyor)
     """
-    params = get_trading_params()
     risk_approved = state.get("risk_approved", False)
-    iteration = state.get("iteration", 0)
-    max_iter = params.agents.max_retry_iterations
 
     if risk_approved:
         logger.info("Risk onaylandı → Trader'a yönlendiriliyor")
         return "trader"
 
-    if iteration >= max_iter:
-        logger.warning(
-            "Max iterasyon (%d) aşıldı → Trader'a yönlendiriliyor (hold)",
-            max_iter,
-        )
-        return "trader"
-
-    logger.info(
-        "Risk reddedildi → Yeniden analiz (iterasyon %d/%d)",
-        iteration,
-        max_iter,
+    # Red → hold kararı ile sonlandır
+    risk_data = state.get("risk_assessment", {})
+    failed_checks = risk_data.get("checks_failed", [])
+    logger.warning(
+        "Risk reddedildi → HOLD kararı ile sonlandırılıyor. Nedenler: %s",
+        failed_checks,
     )
-    return "coordinator"
+    return "hold_decision"
+
+
+def _hold_decision_node(state: TradingState) -> dict[str, Any]:
+    """
+    Risk reddettiğinde hold kararı oluşturan düğüm.
+    Retry loop'u kaldırır — aynı veriyle tekrar analiz mantıksız.
+    """
+    risk_data = state.get("risk_assessment", {})
+    symbol = state["symbol"]
+
+    hold_decision = {
+        "action": "hold",
+        "symbol": symbol,
+        "reason": "Risk yönetimi tarafından reddedildi",
+        "risk_checks_failed": risk_data.get("checks_failed", []),
+        "risk_warnings": risk_data.get("warnings", []),
+    }
+
+    msg = (
+        f"[Risk → Hold] {symbol} — risk kontrolleri başarısız, "
+        f"işlem yapılmıyor. Başarısız: {len(risk_data.get('checks_failed', []))} kontrol"
+    )
+    logger.info(msg)
+
+    return {
+        "messages": [{"role": "risk_manager", "content": msg}],
+        "trade_decision": hold_decision,
+        "phase": "completed",
+    }
 
 
 def build_trading_graph() -> StateGraph:
@@ -81,6 +104,7 @@ def build_trading_graph() -> StateGraph:
     graph.add_node("debate", debate_node)
     graph.add_node("risk_manager", risk_manager_node)
     graph.add_node("trader", trader_node)
+    graph.add_node("hold_decision", _hold_decision_node)
 
     # ── Kenarları tanımla ─────────────────────────────────
     graph.set_entry_point("coordinator")
@@ -95,11 +119,12 @@ def build_trading_graph() -> StateGraph:
         _should_continue_after_risk,
         {
             "trader": "trader",
-            "coordinator": "coordinator",
+            "hold_decision": "hold_decision",
         },
     )
 
     graph.add_edge("trader", END)
+    graph.add_edge("hold_decision", END)
 
     return graph
 

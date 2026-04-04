@@ -15,7 +15,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
-from models.sentiment_analyzer import _extract_json, create_agent_llm
+from models.sentiment_analyzer import create_agent_llm
+from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -68,32 +69,32 @@ def trader_node(state: TradingState) -> dict[str, Any]:
     user_msg = f"""## Varlık: {symbol}
 
 ## Duyarlılık Analizi
-- Sinyal: {sentiment.get('signal', 'neutral')}
-- Skor: {sentiment.get('sentiment_score', 0):.2f}
-- Güven: {sentiment.get('confidence', 0):.2f}
+- Sinyal: {sentiment.get("signal", "neutral")}
+- Skor: {sentiment.get("sentiment_score", 0):.2f}
+- Güven: {sentiment.get("confidence", 0):.2f}
 
 ## Araştırma Raporu
-- Öneri: {research.get('recommendation', 'hold')}
-- Trend: {research.get('trend', 'neutral')}
+- Öneri: {research.get("recommendation", "hold")}
+- Trend: {research.get("trend", "neutral")}
 
 ## Tartışma Sonucu
-- Konsensüs: {debate.get('consensus_score', 0):.2f}
-- Düzeltilmiş sinyal: {debate.get('adjusted_signal', 'neutral')}
+- Konsensüs: {debate.get("consensus_score", 0):.2f}
+- Düzeltilmiş sinyal: {debate.get("adjusted_signal", "neutral")}
 
 ## Risk Onayı
-- Karar: {risk.get('decision', 'N/A')}
-- Önerilen boyut: {risk.get('approved_size', 0)}
-- Stop-loss: {risk.get('stop_loss_level', 0)}
-- Take-profit: {risk.get('take_profit_level', 0)}
+- Karar: {risk.get("decision", "N/A")}
+- Önerilen boyut: {risk.get("approved_size", 0)}
+- Stop-loss: {risk.get("stop_loss_level", 0)}
+- Take-profit: {risk.get("take_profit_level", 0)}
 
 ## Teknik Göstergeler
-- Güncel fiyat: {tech.get('current_price', 0)}
-- ATR: {tech.get('atr_14', 0)}
-- RSI: {tech.get('rsi_14', 50)}
-- Trend: {tech.get('trend', 'neutral')}
+- Güncel fiyat: {tech.get("current_price", 0)}
+- ATR: {tech.get("atr_14", 0)}
+- RSI: {tech.get("rsi_14", 50)}
+- Trend: {tech.get("trend", "neutral")}
 
 ## Portföy
-{json.dumps(portfolio, indent=2, ensure_ascii=False) if portfolio else 'Bilgi yok'}
+{json.dumps(portfolio, indent=2, ensure_ascii=False) if portfolio else "Bilgi yok"}
 
 ## İşlem Parametreleri
 - Emir tipi: {params.execution.default_order_type}
@@ -106,11 +107,13 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
     llm = create_agent_llm(model=params.agents.trader_model, temperature=0.1)
 
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_msg),
-        ])
-        trade_decision = _extract_json(response.content)
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_msg),
+            ]
+        )
+        trade_decision = extract_json(response.content)
     except Exception as e:
         logger.error("İşlemci LLM hatası: %s", e)
         trade_decision = {

@@ -1,0 +1,11 @@
+{
+  "initial_cash": 10000.0,
+  "cash": 10000.0,
+  "positions": [],
+  "closed_trades": [],
+  "daily_pnl": 0.0,
+  "daily_pnl_date": "2026-04-04",
+  "total_pnl": 0.0,
+  "max_equity": 10000.0,
+  "current_drawdown": 0.0
+}

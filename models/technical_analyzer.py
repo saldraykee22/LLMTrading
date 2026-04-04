@@ -23,22 +23,23 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TechnicalSignals:
     """Teknik analiz sonuçları."""
+
     symbol: str
-    trend: str = "neutral"           # bullish | bearish | neutral
-    trend_strength: float = 0.0      # 0.0 → 1.0
-    signal: str = "hold"             # buy | sell | hold
+    trend: str = "neutral"  # bullish | bearish | neutral
+    trend_strength: float = 0.0  # 0.0 → 1.0
+    signal: str = "hold"  # buy | sell | hold
 
     # Göstergeler
     rsi_14: float = 50.0
-    macd_signal: str = "neutral"     # bullish_cross | bearish_cross | neutral
+    macd_signal: str = "neutral"  # bullish_cross | bearish_cross | neutral
     macd_histogram: float = 0.0
-    bb_position: str = "middle"      # above_upper | middle | below_lower
+    bb_position: str = "middle"  # above_upper | middle | below_lower
     atr_14: float = 0.0
     ema_20: float = 0.0
     ema_50: float = 0.0
     sma_200: float = 0.0
     current_price: float = 0.0
-    volume_sma_ratio: float = 1.0    # Güncel hacim / 20-günlük ort. hacim
+    volume_sma_ratio: float = 1.0  # Güncel hacim / 20-günlük ort. hacim
 
     # Seviyeler
     support_levels: list[float] = field(default_factory=list)
@@ -94,28 +95,60 @@ class TechnicalAnalyzer:
         # ── MACD ──────────────────────────────────────────
         macd_df = ta.macd(df["close"], fast=12, slow=26, signal=9)
         if macd_df is not None and not macd_df.empty:
-            macd_line = macd_df.iloc[-1, 0]  # MACD line
-            signal_line = macd_df.iloc[-1, 2]  # Signal line
-            hist = macd_df.iloc[-1, 1]  # Histogram
+            macd_col = "MACD_12_26_9"
+            signal_col = "MACDs_12_26_9"
+            hist_col = "MACDh_12_26_9"
 
-            signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
+            if macd_col in macd_df.columns and signal_col in macd_df.columns:
+                macd_line = macd_df[macd_col].iloc[-1]
+                signal_line = macd_df[signal_col].iloc[-1]
+                hist_val = (
+                    macd_df[hist_col].iloc[-1]
+                    if hist_col in macd_df.columns
+                    else macd_line - signal_line
+                )
 
-            if not np.isnan(macd_line) and not np.isnan(signal_line):
-                # Son 2 mumu kontrol et — çapraz var mı
-                if len(macd_df) >= 2:
-                    prev_macd = macd_df.iloc[-2, 0]
-                    prev_signal = macd_df.iloc[-2, 2]
-                    if not np.isnan(prev_macd) and not np.isnan(prev_signal):
-                        if prev_macd <= prev_signal and macd_line > signal_line:
-                            signals.macd_signal = "bullish_cross"
-                        elif prev_macd >= prev_signal and macd_line < signal_line:
-                            signals.macd_signal = "bearish_cross"
+                signals.macd_histogram = (
+                    float(hist_val) if not np.isnan(hist_val) else 0.0
+                )
+
+                if not np.isnan(macd_line) and not np.isnan(signal_line):
+                    if len(macd_df) >= 2:
+                        prev_macd = macd_df[macd_col].iloc[-2]
+                        prev_signal = macd_df[signal_col].iloc[-2]
+                        if not np.isnan(prev_macd) and not np.isnan(prev_signal):
+                            if prev_macd <= prev_signal and macd_line > signal_line:
+                                signals.macd_signal = "bullish_cross"
+                            elif prev_macd >= prev_signal and macd_line < signal_line:
+                                signals.macd_signal = "bearish_cross"
+            else:
+                macd_line = macd_df.iloc[-1, 0]
+                signal_line = macd_df.iloc[-1, 2]
+                hist = macd_df.iloc[-1, 1]
+                signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
+                if not np.isnan(macd_line) and not np.isnan(signal_line):
+                    if len(macd_df) >= 2:
+                        prev_macd = macd_df.iloc[-2, 0]
+                        prev_signal = macd_df.iloc[-2, 2]
+                        if not np.isnan(prev_macd) and not np.isnan(prev_signal):
+                            if prev_macd <= prev_signal and macd_line > signal_line:
+                                signals.macd_signal = "bullish_cross"
+                            elif prev_macd >= prev_signal and macd_line < signal_line:
+                                signals.macd_signal = "bearish_cross"
 
         # ── Bollinger Bands ───────────────────────────────
         bbands = ta.bbands(df["close"], length=20, std=2.0)
         if bbands is not None and not bbands.empty:
-            upper = bbands.iloc[-1, 0]   # Upper band
-            lower = bbands.iloc[-1, 2]   # Lower band
+            upper_col = f"BBU_20_2.0"
+            lower_col = f"BBL_20_2.0"
+
+            if upper_col in bbands.columns and lower_col in bbands.columns:
+                upper = bbands[upper_col].iloc[-1]
+                lower = bbands[lower_col].iloc[-1]
+            else:
+                upper = bbands.iloc[-1, 0]
+                lower = bbands.iloc[-1, 2]
+
             if not np.isnan(upper) and not np.isnan(lower):
                 price = signals.current_price
                 if price > upper:
@@ -136,11 +169,17 @@ class TechnicalAnalyzer:
         sma200 = ta.sma(df["close"], length=200)
 
         if ema20 is not None and not ema20.empty:
-            signals.ema_20 = float(ema20.iloc[-1]) if not np.isnan(ema20.iloc[-1]) else 0.0
+            signals.ema_20 = (
+                float(ema20.iloc[-1]) if not np.isnan(ema20.iloc[-1]) else 0.0
+            )
         if ema50 is not None and not ema50.empty:
-            signals.ema_50 = float(ema50.iloc[-1]) if not np.isnan(ema50.iloc[-1]) else 0.0
+            signals.ema_50 = (
+                float(ema50.iloc[-1]) if not np.isnan(ema50.iloc[-1]) else 0.0
+            )
         if sma200 is not None and not sma200.empty and len(df) >= 200:
-            signals.sma_200 = float(sma200.iloc[-1]) if not np.isnan(sma200.iloc[-1]) else 0.0
+            signals.sma_200 = (
+                float(sma200.iloc[-1]) if not np.isnan(sma200.iloc[-1]) else 0.0
+            )
 
         # ── Hacim Analizi ─────────────────────────────────
         vol_sma = ta.sma(df["volume"], length=20)

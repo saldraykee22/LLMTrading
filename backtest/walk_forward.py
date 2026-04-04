@@ -132,9 +132,9 @@ def rolling_walk_forward(
 
         def _range_str(d: pd.DataFrame) -> str:
             if d.empty:
-                return "boş"
+                return "empty"
             dt_col = "datetime" if "datetime" in d.columns else d.columns[0]
-            return f"{d[dt_col].iloc[0]} → {d[dt_col].iloc[-1]}"
+            return f"{d[dt_col].iloc[0]} -> {d[dt_col].iloc[-1]}"
 
         splits.append(
             DataSplit(

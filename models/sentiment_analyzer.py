@@ -29,6 +29,7 @@ from config.settings import (
 )
 from data.news_data import NewsItem
 from data.sentiment_store import SentimentRecord, SentimentStore
+from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ def _create_llm(
             openai_api_key=settings.openrouter_api_key,
             openai_api_base=settings.openrouter_base_url,
             temperature=temperature,
+            request_timeout=60,
+            max_retries=2,
             model_kwargs={
                 "extra_headers": {
                     "HTTP-Referer": "https://llmtrading.local",
@@ -74,6 +77,8 @@ def _create_llm(
             openai_api_key=settings.deepseek_api_key,
             openai_api_base=settings.deepseek_base_url,
             temperature=temperature,
+            request_timeout=60,
+            max_retries=2,
         )
     elif prov == LLMProvider.OLLAMA:
         return ChatOpenAI(
@@ -81,37 +86,18 @@ def _create_llm(
             openai_api_key="ollama",
             openai_api_base=f"{settings.ollama_base_url}/v1",
             temperature=temperature,
+            request_timeout=120,
+            max_retries=2,
         )
     else:
         raise ValueError(f"Bilinmeyen LLM sağlayıcı: {prov}")
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    """LLM yanıtından JSON bloğunu çıkarır."""
-    # ```json ... ``` bloğunu ara
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
+    """Geriye uyumlu alias — utils.json_utils.extract_json kullanır."""
+    from utils.json_utils import extract_json as _ej
 
-    # Düz JSON dene
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # { ... } bloğunu bul
-    brace_match = re.search(r"\{.*\}", text, re.DOTALL)
-    if brace_match:
-        try:
-            return json.loads(brace_match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    logger.warning("JSON çıkarılamadı, ham yanıt: %s", text[:200])
-    return {}
+    return _ej(text)
 
 
 class SentimentAnalyzer:

@@ -16,8 +16,9 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
-from config.settings import get_trading_params
-from models.sentiment_analyzer import _extract_json, create_agent_llm
+from config.settings import PROMPTS_DIR, get_trading_params
+from models.sentiment_analyzer import create_agent_llm
+from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +86,13 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     context = f"""## Varlık: {symbol}
 
 ## Araştırma Raporu Özeti
-- Duyarlılık skoru: {sentiment.get('sentiment_score', 0):.2f}
-- Sinyal: {sentiment.get('signal', 'neutral')}
-- Öneri: {research.get('recommendation', 'hold')}
-- Anahtar faktörler: {sentiment.get('key_factors', [])}
+- Duyarlılık skoru: {sentiment.get("sentiment_score", 0):.2f}
+- Sinyal: {sentiment.get("signal", "neutral")}
+- Öneri: {research.get("recommendation", "hold")}
+- Anahtar faktörler: {sentiment.get("key_factors", [])}
 
 ## Teknik Göstergeler
-{json.dumps(tech, indent=2, ensure_ascii=False) if tech else 'Mevcut değil'}
+{json.dumps(tech, indent=2, ensure_ascii=False) if tech else "Mevcut değil"}
 """
 
     llm = create_agent_llm(model=params.agents.analyst_model, temperature=0.3)
@@ -101,10 +102,14 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     # ── Tur 1: İlk argümanlar ────────────────────────────
     # Bull
     try:
-        bull_resp = llm.invoke([
-            SystemMessage(content=BULL_SYSTEM),
-            HumanMessage(content=f"{context}\n\nBu varlık için yükseliş tezini sun. Somut verilerle destekle."),
-        ])
+        bull_resp = llm.invoke(
+            [
+                SystemMessage(content=BULL_SYSTEM),
+                HumanMessage(
+                    content=f"{context}\n\nBu varlık için yükseliş tezini sun. Somut verilerle destekle."
+                ),
+            ]
+        )
         bull_args = bull_resp.content
     except Exception as e:
         logger.error("Bull ajan hatası: %s", e)
@@ -112,10 +117,14 @@ def debate_node(state: TradingState) -> dict[str, Any]:
 
     # Bear
     try:
-        bear_resp = llm.invoke([
-            SystemMessage(content=BEAR_SYSTEM),
-            HumanMessage(content=f"{context}\n\nBu varlık için düşüş risklerini sun. Somut verilerle destekle."),
-        ])
+        bear_resp = llm.invoke(
+            [
+                SystemMessage(content=BEAR_SYSTEM),
+                HumanMessage(
+                    content=f"{context}\n\nBu varlık için düşüş risklerini sun. Somut verilerle destekle."
+                ),
+            ]
+        )
         bear_args = bear_resp.content
     except Exception as e:
         logger.error("Bear ajan hatası: %s", e)
@@ -127,25 +136,29 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     # ── Tur 2: Karşılıklı yanıtlar (max_rounds > 1 ise) ──
     if max_rounds >= 2:
         try:
-            bull_rebuttal = llm.invoke([
-                SystemMessage(content=BULL_SYSTEM),
-                HumanMessage(
-                    content=f"{context}\n\nBear tarafının argümanları:\n{bear_args}\n\n"
-                    "Bu argümanlara yanıt ver ve yükseliş tezini güçlendir."
-                ),
-            ])
+            bull_rebuttal = llm.invoke(
+                [
+                    SystemMessage(content=BULL_SYSTEM),
+                    HumanMessage(
+                        content=f"{context}\n\nBear tarafının argümanları:\n{bear_args}\n\n"
+                        "Bu argümanlara yanıt ver ve yükseliş tezini güçlendir."
+                    ),
+                ]
+            )
             bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
         except Exception:
             pass
 
         try:
-            bear_rebuttal = llm.invoke([
-                SystemMessage(content=BEAR_SYSTEM),
-                HumanMessage(
-                    content=f"{context}\n\nBull tarafının argümanları:\n{bull_args[:1500]}\n\n"
-                    "Bu argümanlara yanıt ver ve düşüş risklerini güçlendir."
-                ),
-            ])
+            bear_rebuttal = llm.invoke(
+                [
+                    SystemMessage(content=BEAR_SYSTEM),
+                    HumanMessage(
+                        content=f"{context}\n\nBull tarafının argümanları:\n{bull_args[:1500]}\n\n"
+                        "Bu argümanlara yanıt ver ve düşüş risklerini güçlendir."
+                    ),
+                ]
+            )
             bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
         except Exception:
             pass
@@ -162,11 +175,13 @@ def debate_node(state: TradingState) -> dict[str, Any]:
 Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
 
     try:
-        mod_resp = llm.invoke([
-            SystemMessage(content=MODERATOR_SYSTEM),
-            HumanMessage(content=moderator_input),
-        ])
-        debate_result = _extract_json(mod_resp.content)
+        mod_resp = llm.invoke(
+            [
+                SystemMessage(content=MODERATOR_SYSTEM),
+                HumanMessage(content=moderator_input),
+            ]
+        )
+        debate_result = extract_json(mod_resp.content)
     except Exception as e:
         logger.error("Moderator hatası: %s", e)
         debate_result = {

@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # Binance
     binance_api_key: str = ""
     binance_api_secret: str = ""
-    binance_testnet: bool = True
+    binance_testnet: bool = False  # Mainnet by default (unless sandbox keys are used)
 
     # News APIs
     finnhub_api_key: str = ""
@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     # System
     log_level: str = "INFO"
     trading_mode: TradingMode = TradingMode.PAPER
+    confirm_live_trade: bool = False  # Safety lock for LIVE trading
 
 
 # ── YAML Trading Parameters ───────────────────────────────
@@ -91,6 +92,8 @@ class RiskParams(BaseModel):
     cvar_confidence: float = 0.95
     max_open_positions: int = 5
     max_correlated_positions: int = 3
+    max_consecutive_losses: int = 5
+    max_consecutive_llm_errors: int = 10
 
 
 class RegimeParams(BaseModel):

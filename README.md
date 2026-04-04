@@ -2,46 +2,127 @@
 
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
+![Status](https://img.shields.io/badge/Durum-Production%20Ready-brightgreen.svg)
 
-## 📌 Project Overview
-Bu proje, finansal piyasalarda (Kripto, BIST, ABD Hisse Senetleri) bağımsız (otonom) kararlar alabilen, **LangGraph tabanlı çoklu ajan (Multi-Agent) mimarisine** sahip bir yapay zeka alım-satım (trading) sistemidir.
+## Proje Ozeti
 
-Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her iki disiplini birleştiren tam otonom bir işlem masası (trading desk) gibi çalışmaktadır. **Modellerin uydurma (halüsinasyon) riskini en aza indirmek** için *Bull vs Bear (Boğa vs Ayı) tartışma (debate)* filtresi ve bağımsız bir Risk Yöneticisi kullanır.
+Bu proje, finansal piyasalarda (Kripto, BIST, ABD Hisse Senetleri) bagimsiz (otonom) kararlar alabilen, **LangGraph tabanli coklu ajan (Multi-Agent) mimarisine** sahip bir yapay zeka alim-satim (trading) sistemidir.
 
-## 🗂️ Documentation (Dokümantasyon)
+Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her iki disiplini birlestiren tam otonom bir islem masasi (trading desk) gibi calismaktadir. **Modellerin uydurma (halusnasyon) riskini en aza indirmek** icin *Bull vs Bear Tartisma (Debate)* filtresi ve bagimsiz bir Risk Yoneticisi kullanir.
 
-Geliştiricilerin ve AI ajanlarının sisteme hızlı entegrasyon sağlaması için aşağıdaki detaylı belgelere başvurun:
+### Temel Ozellikler
 
-1. [Mimari Genel Bakış (ARCHITECTURE.md)](docs/ARCHITECTURE.md) - Sistem veri akışı, klasör yapısı ve modüler tasarım prensipleri.
-2. [Ajan Sistemi (AGENTS.md)](docs/AGENTS.md) - Çoklu ajan (LangGraph) yapısındaki her bir ajanın giriş/çıkış (I/O) yapısı, görevleri ve kısıtları.
-3. [Risk Yönetimi (RISK_MANAGEMENT.md)](docs/RISK_MANAGEMENT.md) - CVaR optimizasyonu, VIX rejim filtresi, Stop-Loss ve sermaye koruma politikaları.
+- **Coklu Ajan Mimarisi:** Coordinator, Research, Debate, Risk, Trader ajanlari LangGraph uzerinden sirasyla calisir
+- **Halusnasyon Filtresi:** Bull vs Bear tartisma mekanizmasi ile LLM kararlarinin dogrulanmasi
+- **Deterministik Risk Korumalari:** Drawdown, gunluk kayip ve pozisyon limitleri LLM'den bagimsiz olarak uygulanir
+- **Portfoy Kaliciligi (Persistence):** JSON tabanli kayit sistemi ile bot restart sonrasi durum korunur
+- **Paper Trading:** Gercek borsaya hic ulas madan slippage ve komisyon simule eden test modu
+- **Circuit Breaker:** Art arda kayip, gunluk limit veya manuel STOP ile otomatik durma
+- **Walk-Forward Backtest:** Overfitting tespiti icin kayan pencere validasyonu
 
-## 🚀 Quick Start (Hızlı Başlangıç)
+---
 
-### 1. Kurulum (Installation)
+## Dokumantasyon
+
+Gelistiricilerin ve AI ajanlarinin sisteme hizli entegrasyon saglamasi icin asagidaki belgelere basvurun:
+
+| Belge | Aciklama |
+|-------|----------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Sistem veri akisi, klasor yapisi, modul aciklamalari |
+| [AGENTS.md](docs/AGENTS.md) | LangGraph ajan grafigi, her ajanin I/O, yeni hold_decision dugumu |
+| [RISK_MANAGEMENT.md](docs/RISK_MANAGEMENT.md) | Katlmali risk korumasi: Circuit Breaker, Regime, deterministik kontroller, CVaR |
+
+---
+
+## Hizli Baslangic (Quick Start)
+
+### 1. Kurulum
+
 ```bash
-# Bağımlılıkları yükleyin
+# Virtual environment olustur
+python -m venv venv
+venv\Scripts\activate          # Windows
+# source venv/bin/activate     # Linux/Mac
+
+# Bagimliliklari yukle
 pip install -r requirements.txt
 ```
 
-### 2. Yapılandırma (Configuration)
-Proje kök dizinindeki `.env.example` dosyasını `cp .env.example .env` şeklinde kopyalayarak kendi API anahtarlarınızı girin.
-* Gerekli Anahtarlar: `BINANCE_API_KEY`, `BINANCE_API_SECRET`, `OPENROUTER_API_KEY`, `FINNHUB_API_KEY`
+### 2. Yapilandirma
 
-### 3. Kullanım (Usage)
 ```bash
-# Canlı verilerle paper trading (Risk kontrolünden geçerse kararı ekrana basar)
-python scripts/run_live.py --symbol BTC/USDT
-
-# Gerçek veya testnet'te doğrudan borsa emri göndermek için
-python scripts/run_live.py --symbol BTC/USDT --execute
-
-# Farklı bir model (örn: Ollama) ile çalıştırma
-python scripts/run_live.py --symbol AAPL --provider ollama
-
-# Geriye Dönük Test (Backtest)
-python scripts/run_backtest.py --symbol BTC/USDT --days 180
+# Ornek env dosyasini kopyala
+copy .env.example .env
 ```
 
-## 📊 Dashboard (İzleme Paneli)
-Sistemin çalıştığı süreçte `dashboard/index.html` sayfasını herhangi bir modern tarayıcı ile açarak portföy durumunu, ajanların canlı tartışma (log) verilerini, VIX ve duyarlılık göstergelerini reel zamanlıya yakın bir şekilde izleyebilirsiniz.
+`.env` icinde doldurulan anahtarlar:
+
+```
+OPENROUTER_API_KEY=sk-or-...     # Zorunlu (birincil LLM)
+BINANCE_API_KEY=...              # Canli islem icin
+BINANCE_API_SECRET=...
+EXECUTION_MODE=paper             # paper veya live
+```
+
+### 3. Calistirma
+
+```bash
+# Paper trading modu (gercek emir gitmez)
+python scripts/run_live.py --symbol BTC/USDT
+
+# Emri gercekten gonder (--execute bayragi)
+python scripts/run_live.py --symbol BTC/USDT --execute
+
+# Farkli semboller
+python scripts/run_live.py --symbol AAPL
+python scripts/run_live.py --symbol BIMAS
+
+# Farkli LLM saglayici
+python scripts/run_live.py --symbol BTC/USDT --provider deepseek
+python scripts/run_live.py --symbol BTC/USDT --provider ollama
+```
+
+### 4. Backtest
+
+```bash
+# Basit backtest (son 180 gun, gunluk mum)
+python scripts/run_backtest.py --symbol BTC/USDT --days 180
+
+# Farkli timeframe
+python scripts/run_backtest.py --symbol BTC/USDT --days 90 --timeframe 1h
+
+# Walk-forward validasyon (overfitting tespiti)
+python scripts/run_backtest.py --symbol AAPL --days 365 --mode walk-forward
+```
+
+### 5. Circuit Breaker - Manuel Durdurma
+
+```bash
+# Botu hemen durdur (pipeline baslangicinda kontrol edilir)
+echo. > data\STOP
+
+# Devam ettir
+del data\STOP
+```
+
+---
+
+## Dashboard (Izleme Paneli)
+
+`dashboard/index.html` dosyasini bir tarayicide acin. Eger `dashboard/server.py` calisiyorsa:
+- Portfolio durumu, P&L, drawdown gercek zamanli guncellenir (5 saniyelik polling)
+- Kapanmis islemler tablosu otomatik yenilenir
+- Ajan iletisim gecmisi izlenebilir
+
+API olmadan: Dashboard demo veri ile calisir, hata vermez.
+
+---
+
+## Proje Gecmisi & Degisiklik Ozeti
+
+| Faz | Durum | Icerik |
+|-----|-------|--------|
+| Faz 0 | Tamamlandi | Temel mimari, LangGraph kurulumu, CCXT, yfinance entegrasyonu |
+| **Faz 1** | **Tamamlandi** | Portfolio persistence, Paper Trading Engine, deterministik risk kontrolleri, retry loop kaldirildi |
+| **Faz 2** | **Tamamlandi** | Circuit Breaker, Dashboard API polling, gunluk PNL sifirlama, LLM timeout/retry |
+| **Faz 3** | **Tamamlandi** | Walk-forward backtest, MACD/BB kolon guvenlik, sentiment deduplication, ATR fallback stop-loss |

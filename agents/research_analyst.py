@@ -15,7 +15,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
-from models.sentiment_analyzer import SentimentAnalyzer, _extract_json, create_agent_llm
+from models.sentiment_analyzer import SentimentAnalyzer, create_agent_llm
+from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
     for nd in state.get("news_data", []):
         try:
             from datetime import datetime, timezone
+
             published = nd.get("published_at", "")
             if isinstance(published, str):
                 try:
@@ -93,28 +95,30 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
     user_msg = f"""## Varlık: {symbol}
 
 ## Duyarlılık Analizi Sonuçları
-- Skor: {sentiment_data['sentiment_score']:.2f}
-- Sinyal: {sentiment_data['signal']}
-- Güven: {sentiment_data['confidence']:.2f}
-- Risk: {sentiment_data['risk_score']:.2f}
-- Anahtar faktörler: {', '.join(sentiment_data.get('key_factors', []))}
-- Gerekçe: {sentiment_data.get('reasoning', 'N/A')}
+- Skor: {sentiment_data["sentiment_score"]:.2f}
+- Sinyal: {sentiment_data["signal"]}
+- Güven: {sentiment_data["confidence"]:.2f}
+- Risk: {sentiment_data["risk_score"]:.2f}
+- Anahtar faktörler: {", ".join(sentiment_data.get("key_factors", []))}
+- Gerekçe: {sentiment_data.get("reasoning", "N/A")}
 
 ## Teknik Göstergeler
-{json.dumps(tech, indent=2, ensure_ascii=False) if tech else 'Mevcut değil'}
+{json.dumps(tech, indent=2, ensure_ascii=False) if tech else "Mevcut değil"}
 
 ## Piyasa Verisi Özeti
-{json.dumps(market, indent=2, ensure_ascii=False) if market else 'Mevcut değil'}
+{json.dumps(market, indent=2, ensure_ascii=False) if market else "Mevcut değil"}
 
 Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla."""
 
     llm = create_agent_llm(model=params.agents.analyst_model)
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_msg),
-        ])
-        research_result = _extract_json(response.content)
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_msg),
+            ]
+        )
+        research_result = extract_json(response.content)
     except Exception as e:
         logger.error("Araştırma raporu hatası: %s", e)
         research_result = {

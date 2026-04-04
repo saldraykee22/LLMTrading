@@ -44,11 +44,32 @@ updateTime();
 // ── Data Loading ──────────────────────────────────────────
 async function loadLatestAnalysis() {
     try {
-        // data/exports dizininden en son analiz dosyasını yüklemeye çalış
-        // Statik dashboard için demo verisi kullanılıyor
-        updateDashboard(getDemoData());
+        const [portfolioRes, statusRes, tradesRes] = await Promise.all([
+            fetch('/api/portfolio'),
+            fetch('/api/status'),
+            fetch('/api/trades?limit=10'),
+        ]);
+
+        if (portfolioRes.ok) {
+            const portfolio = await portfolioRes.json();
+            updateDashboard(portfolio);
+        }
+
+        if (tradesRes.ok) {
+            const tradesData = await tradesRes.json();
+            updateTradesTable(tradesData.trades || []);
+        }
+
+        if (statusRes.ok) {
+            const status = await statusRes.json();
+            const statusEl = document.getElementById('systemStatus');
+            if (statusEl) {
+                statusEl.querySelector('span:last-child').textContent =
+                    status.portfolio_loaded ? 'Aktif' : 'Bekleniyor';
+            }
+        }
     } catch (e) {
-        console.log('Veri yüklenemedi, demo verisi kullanılıyor');
+        console.log('API bağlantısı yok, demo verisi kullanılıyor');
         updateDashboard(getDemoData());
     }
 }
@@ -194,7 +215,7 @@ function updateSentiment(sentiment) {
     const position = ((score + 1) / 2) * 100; // -1..1 → 0..100%
 
     const fill = document.getElementById('gaugeFill');
-    const value = document.getElementById('gaugeValue');
+    const value = document.getElementById('sentimentValue');
     if (fill) fill.style.left = position + '%';
     if (value) {
         value.style.left = position + '%';
@@ -202,6 +223,45 @@ function updateSentiment(sentiment) {
         value.style.color = score > 0.3 ? 'var(--accent-green)' :
                             score < -0.3 ? 'var(--accent-red)' : 'var(--text-primary)';
     }
+
+    const signalEl = document.getElementById('sentimentSignal');
+    if (signalEl) {
+        signalEl.textContent = (sentiment.signal || 'neutral').toUpperCase();
+        signalEl.className = 'signal-badge ' + (sentiment.signal || 'neutral');
+    }
+
+    updateElement('sentimentConfidence', ((sentiment.confidence || 0) * 100).toFixed(0) + '%');
+    updateElement('sentimentRisk', ((sentiment.risk_score || 0) * 100).toFixed(0) + '%');
+}
+
+function updateTradesTable(trades) {
+    const tbody = document.getElementById('tradesBody');
+    if (!tbody) return;
+
+    if (!trades || trades.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Henüz işlem yok</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = trades.slice(-10).reverse().map(trade => {
+        const pnl = trade.pnl || 0;
+        const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+        const sideClass = trade.side === 'long' ? 'pos-long' : 'pos-short';
+        const time = trade.exit_time ? new Date(trade.exit_time).toLocaleTimeString('tr-TR', {
+            hour: '2-digit', minute: '2-digit'
+        }) : '—';
+        return `
+            <tr>
+                <td>${time}</td>
+                <td>${trade.symbol || '—'}</td>
+                <td><span class="pos-side ${sideClass}">${trade.side || '—'}</span></td>
+                <td>${trade.entry_price ? trade.entry_price.toFixed(2) : '—'}</td>
+                <td>${trade.exit_price ? trade.exit_price.toFixed(2) : '—'}</td>
+                <td class="pos-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+            </tr>
+        `;
+    }).join('');
+}
 
     const signalEl = document.getElementById('sentimentSignal');
     if (signalEl) {
@@ -280,4 +340,5 @@ function escapeHtml(str) {
 // ── Initialize ────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     loadLatestAnalysis();
+    setInterval(loadLatestAnalysis, 5000); // 5 saniyede bir güncelle
 });

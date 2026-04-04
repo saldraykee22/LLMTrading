@@ -24,12 +24,13 @@ STORE_DIR = DATA_DIR / "sentiment_cache"
 @dataclass
 class SentimentRecord:
     """Tek bir duyarlılık analizi kaydı."""
+
     symbol: str
-    timestamp: str                  # ISO format
-    sentiment_score: float          # -1.0 → 1.0
-    confidence: float               # 0.0 → 1.0
-    risk_score: float               # 0.0 → 1.0
-    signal: str                     # bullish | bearish | neutral
+    timestamp: str  # ISO format
+    sentiment_score: float  # -1.0 → 1.0
+    confidence: float  # 0.0 → 1.0
+    risk_score: float  # 0.0 → 1.0
+    signal: str  # bullish | bearish | neutral
     reasoning: str = ""
     key_factors: list[str] = field(default_factory=list)
     news_count: int = 0
@@ -49,12 +50,38 @@ class SentimentStore:
         clean = symbol.replace("/", "_").replace(".", "_").upper()
         return self._dir / f"{clean}_sentiment.jsonl"
 
-    def save(self, record: SentimentRecord) -> None:
-        """Yeni kaydı dosyaya ekler (append)."""
+    def save(self, record: SentimentRecord, min_interval_minutes: int = 30) -> bool:
+        """
+        Yeni kaydı dosyaya ekler (append).
+        Son N dakika içinde aynı sembol için kayıt varsa atlar.
+
+        Args:
+            record: Kaydedilecek duyarlılık kaydı
+            min_interval_minutes: Minimum tekrar aralığı (dakika)
+
+        Returns:
+            True: Kayıt eklendi, False: Atladı (duplicate)
+        """
+        # Duplicate kontrolü
+        latest = self.get_latest(record.symbol)
+        if latest:
+            last_time = datetime.fromisoformat(latest.timestamp)
+            now = datetime.now(timezone.utc)
+            if (now - last_time).total_seconds() < min_interval_minutes * 60:
+                logger.debug(
+                    "Sentiment çok yakın, atlanıyor (%s, son: %s)",
+                    record.symbol,
+                    latest.timestamp,
+                )
+                return False
+
         path = self._file_path(record.symbol)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
-        logger.debug("Sentiment kaydedildi: %s → %.2f", record.symbol, record.sentiment_score)
+        logger.debug(
+            "Sentiment kaydedildi: %s → %.2f", record.symbol, record.sentiment_score
+        )
+        return True
 
     def load(
         self,

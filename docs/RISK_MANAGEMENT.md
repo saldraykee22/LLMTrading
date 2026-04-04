@@ -1,25 +1,238 @@
-# Risk Management Systems (Risk Yönetimi Sistemleri)
+# Risk Management Systems (Risk Yonetimi Sistemleri)
 
-Bir ticaret sisteminde kârdan çok zararı (drawdown) yönetmek kritiktir. Ajanların halüsinasyon görmesi muhtemel olduğundan risk mekanizmaları ikiye ayrılmıştır: Algoritmik (Kodla katı şekilde sağlanan) ve Bilişsel (Risk Ajanı ile yönetilen).
+Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlarin halusnasyon gormesi muhtemel oldugundan risk mekanizmalari ikiye ayrilmistir: **Algoritmik** (Kodla kati sekilde saglanan) ve **Bilissel** (Risk Ajani ile yonetilen).
 
-Bu belgede Algoritmik sistemlerin altyapısı mevcuttur.
+> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3 tamamlandi)
 
-## 📉 1. Regime Filter (Piyasa Rejimi Filtresi) & VIX
-Yapay zeka modelleri ekstrem kriz koşullarını (Siyah Kuğu / Black Swan) öngöremez. Bu yüzden `risk/regime_filter.py` modülü sürekli olarak VIX endeksini (Volatility Index) tarar.
-- **İşleyiş**: VIX'in SMA (Hararet) değeri izlenir. 
-- Eğer VIX anlık olarak belli bir eşik değerin üzerine fırlar veya sabit olarak 40'ı geçerse, sistem rejimi `CRISIS` olarak işaretlenir.
-- `halt_trading = True` döndürülür ve yapay zeka ne derse desin, **tüm işlemler koordinatör katmanında reddedilir**.
+---
 
-## 🛡️ 2. Trailing Stop Loss (Dinamik/İzleyen Zarar-Kes - ATR Bazlı)
-Ortalama Gerçek Aralık (ATR - Average True Range), `risk/stop_loss.py` içerisinde kullanılır. Yapay zeka statik bir fiyat girerse bu fiyat genellikle piyasa spekülasyonu ile kolay temizlenen volatil bir noktaya denk gelebilir.
-- **Dinamik**: Varlık lehe gittiğinde, stop price adım adım yukarı taşınır (long için).
-- Aleyhe döndüğünde stop rakamı ASLA geri çekilmez.
-- `Hard Stop Pct` özelliği ile her durumda portföy sermayesinin %x'inden fazlasını tek bir işlemde yakmayacak katı bir yüzde sınırlandırılması mevcuttur (Örn: %2).
+## Risk Katmanlari (Defense in Depth)
 
-## 🧮 3. Conditional Value at Risk (CVaR)
-Mean-Variance (Markowitz) portföy teorilerinin yerine daha gelişmiş bir kuyruk (tail-risk) yönetimi için `risk/cvar_optimizer.py` kullanılır.
-- **Neden CVaR**: Basit Value at Risk (VaR), yatırımın %95 ihtimalle en fazla kaybedeceği oranı verir ancak o %5'in sonrasında batışın ne kadar derin olduğunu bilmez. CVaR ise "Eğer batarsak, bu dibin ortalaması ne olacak" sorusunu baz alarak çoklu varlık ağırlık dağıtımlarını gerçekleştirir.
+```
+[Islem Istegi Geldi]
+        |
+        v
+[1. Circuit Breaker]    <- Art arda kayip? Gunluk limit? Manuel STOP?
+        |
+        v
+[2. Regime Filter]      <- VIX kriz? Piyasa volatile? Halt?
+        |
+        v
+[3. Risk Manager]       <- Deterministik kontroller (kod)
+        |
+        v
+[4. Risk Manager LLM]   <- Derin analiz, stop/tp seviyesi
+        |
+        v
+[5. order_manager]      <- Tip dogrulama, ATR fallback stop
+        |
+        v
+[ISLEM GERCEKLESTI]
+```
 
-## 🎒 4. Portfolio State (Portföy Takibi)
-`risk/portfolio.py` tüm Unrealized PNL ve Equity (Özvarlık) bilgilerini tutar.
-Eğer algoritmik bot sistemin kârlı olduğu halde sürekli Drawdown (Max tepe değerden geri çekim) limitini aşıyorsa (`config/trading_params.yaml` içinde tanımlalı) yeni pozisyon kapatana kadar `open_position` eylemi iptal edilir.
+**Prensip:** Her katman birbirinden bagimsizdir. LLM bir onceki katmani asamazsa sonraki katmana hic ulasamazlar.
+
+---
+
+## 1. Circuit Breaker (Acil Durdurma) [FAZ 2 - YENİ]
+
+**Dosya:** `risk/circuit_breaker.py`
+
+Bot'u beklenmedik durumlarda otomatik veya manuel olarak durduran emniyet mekanizmasi.
+
+### Tetikleyiciler
+
+| Tetikleyici | Kosul | Parametre |
+|-------------|-------|-----------|
+| **Manuel STOP** | `data/STOP` dosyasi varsa | - |
+| **Art arda kayip** | Ust uste N kayip | `max_consecutive_losses` (varsayilan: 5) |
+| **Gunluk kayip** | daily_loss/equity >= esik | `max_daily_loss_pct` |
+| **LLM hata zinciri** | Ust uste N LLM hatasi | `max_consecutive_llm_errors` (varsayilan: 10) |
+
+### Manuel Durdurma
+
+```bash
+# Botu durdur
+echo. > data/STOP
+
+# Botu yeniden baslat (STOP dosyasini sil)
+del data\STOP
+```
+
+### Kullanim
+
+```python
+cb = CircuitBreaker()
+should_halt, reason = cb.should_halt(equity=portfolio.equity, daily_pnl=portfolio.daily_pnl)
+if should_halt:
+    console.print(f"CIRCUIT BREAKER: {reason}")
+    return {"status": "halted", "reason": reason}
+```
+
+---
+
+## 2. Regime Filter (Piyasa Rejimi Filtresi) & VIX
+
+**Dosya:** `risk/regime_filter.py`
+
+Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoremez. Bu yuzden `regime_filter.py` modulu surekli olarak VIX endeksini (Volatility Index) tarar.
+
+- **Isleyis:** VIX'in SMA (Hareket Ortalamasi) deger izlenir.
+- Eger VIX anlik olarak belli bir esik degerinin ustune firlarsa veya sabit olarak 40'i gecerse, sistem rejimi `CRISIS` olarak isaretlenir.
+- `halt_trading = True` donduruler ve yapay zeka ne derse desin, tum islemler reddedilir.
+
+### Rejim Seviyeleri
+
+| Rejim | VIX Tahmini | Islem |
+|-------|-------------|-------|
+| `NORMAL` | < 20 | Serbest |
+| `ELEVATED` | 20-30 | Uyari |
+| `HIGH` | 30-40 | Kisitli |
+| `CRISIS` | > 40 | Durduruldu |
+
+---
+
+## 3. Risk Manager - Deterministik Kontroller [FAZ 1 GUNCELLEME]
+
+**Dosya:** `agents/risk_manager.py`
+
+### Mevcut Kontroller
+
+| # | Kontrol | Tip | Aciklama |
+|---|---------|-----|----------|
+| 1 | Guven skoru | Deterministik | sentiment.confidence < min_confidence |
+| 2 | Halusnasyon | Deterministik | debate.hallucinations_detected > 2 |
+| 3 | Sentiment-teknik uyum | Deterministik | Bullish sentiment + sell sinyal uyumsuzlugu |
+| 4 | Acik pozisyon limiti | Deterministik | >= max_open_positions |
+| 5 | **Drawdown limiti** | **Deterministik** | current_drawdown >= max_drawdown_pct **[Faz 1]** |
+| 6 | **Gunluk kayip limiti** | **Deterministik** | daily_loss/equity >= max_daily_loss_pct **[Faz 1]** |
+| 7 | **Pozisyon boyutu** | **Deterministik** | llm_size > equity * max_position_pct **[Faz 1]** |
+
+> **Faz 1 oncesi:** 5, 6, 7 sadece LLM prompt'undaydi, kod tarafindan zorlanmiyordu.
+> **Faz 1 sonrasi:** Bu kontroller LLM cagrisindan bagimsiiz sekilde cod tarafindan uygulanir.
+> Kontrol 7, LLM ciktisini alip *sonrasinda* uygulanir (once LLM, sonra validate).
+
+### Kontrol Parametreleri (`config/trading_params.yaml`)
+
+```yaml
+risk:
+  max_drawdown_pct: 0.10        # %10 drawdown limiti
+  max_daily_loss_pct: 0.03      # %3 gunluk kayip limiti
+  max_position_pct: 0.15        # Equity'nin max %15'i tek pozisyon
+  max_open_positions: 5         # Estzamanli max acik pozisyon
+  max_consecutive_losses: 5     # Art arda kayip Circuit Breaker esigi
+  max_consecutive_llm_errors: 10 # LLM hata Circuit Breaker esigi
+```
+
+---
+
+## 4. Trailing Stop Loss (Dinamik/Izleyen Zarar-Kes - ATR Bazli)
+
+**Dosya:** `risk/stop_loss.py`
+
+Ortalama Gercek Aralik (ATR - Average True Range) kullanilir. Yapay zeka statik bir fiyat girerse bu fiyat genellikle piyasa spekulasyonu ile kolay temizlenen volatile bir noktaya denk gelebilir.
+
+- **Dinamik:** Varlik lehe gittiginde, stop price adim adim yukari tasinir (long icin)
+- Aleyhe dondugunde stop rakami ASLA geri cekilmez
+- `Hard Stop Pct` ozelligi ile her durumda portfoy sermayesinin %x'inden fazlasini tek bir islemde yakmayacak kati bir yuzde sinirlama mevcuttur (Ornegin: %2)
+
+### ATR Bazli Fallback Stop [FAZ 3 - YENİ]
+
+**Dosya:** `execution/order_manager.py`
+
+LLM stop-loss belirtmeyi unutursa `parse_trade_decision()` otomatik hesaplar:
+
+```python
+# LLM stop-loss vermezse ATR bazli hesapla
+if stop_loss <= 0 and current_price > 0 and atr_value > 0:
+    mult = params.stop_loss.atr_multiplier
+    if action == "buy":
+        stop_loss = current_price - (atr_value * mult)
+    else:
+        stop_loss = current_price + (atr_value * mult)
+```
+
+---
+
+## 5. Conditional Value at Risk (CVaR)
+
+**Dosya:** `risk/cvar_optimizer.py`
+
+Mean-Variance (Markowitz) portfoy teorilerinin yerine daha gelismis bir kuyruk (tail-risk) yonetimi kullanilir.
+
+- **Neden CVaR:** Basit Value at Risk (VaR), yatirimin %95 ihtimalle en fazla kaybedeceyi orani verir ancak o %5'in sonrasinda batisin ne kadar derin oldugunu bilmez. CVaR ise "Eger batarsak, bu dibin ortalamasi ne olacak" sorusunu baz alarak coklu varlik agirlik dagitimlarini gerceklestirir.
+- Monte Carlo stres testi de mevcuttur (`stress_test_monte_carlo`)
+
+---
+
+## 6. Portfolio State & Persistence (Portfoy Takibi) [FAZ 1 GUNCELLEME]
+
+**Dosya:** `risk/portfolio.py`
+
+Tum Unrealized PNL ve Equity (Ozvarliy) bilgilerini tutar ve artik **diskde kalici olarak saklar**.
+
+### Yeni Ozellikler [Faz 1]
+
+**JSON Persistence:**
+```python
+# Bot baslarken
+portfolio = PortfolioState.load_from_file()  # varsa dosyadan yukle
+
+# Bot bitisinde
+portfolio.save_to_file()  # data/portfolio_state.json'a kaydet
+```
+
+**Gunluk PNL Otomatik Sifirlama:**
+```python
+portfolio.reset_daily_pnl_if_needed()  # Gun degistiyse PNL=0
+```
+
+**Short Pozisyon Duzeltme:**
+- Equity hesabinda short pozisyonun notional degeri artik dogruca cikartiliyor (eklenmiyordu)
+- `close_position()` short kapanisinda dogru nakit akisi uyguluyor
+
+### Kaydedilen Alanlar
+
+```json
+{
+  "initial_cash": 10000.0,
+  "cash": 9850.0,
+  "positions": [...],
+  "closed_trades": [...],
+  "daily_pnl": -32.5,
+  "daily_pnl_date": "2026-04-04",
+  "total_pnl": 142.0,
+  "max_equity": 10250.0,
+  "current_drawdown": 0.039
+}
+```
+
+---
+
+## 7. Paper Trading Engine [FAZ 1 - YENİ]
+
+**Dosya:** `execution/paper_engine.py`
+
+Gercek borsaya hic ulas madan islem simule eder.
+
+### Simulasyon Ozellikleri
+
+| Ozellik | Aciklama |
+|---------|----------|
+| **Slippage** | Alis: fiyat * 1.001, Satis: fiyat * 0.999 |
+| **Komisyon** | %0.1 (ayarlanabilir) |
+| **Pozisyon takibi** | Acik pozisyonlar, P&L, drawdown |
+| **Trade gecmisi** | Her islemin giris/cikis kaydi |
+
+### Aktivasyon
+
+`.env` dosyasinda:
+```
+EXECUTION_MODE=paper
+```
+
+Veya `config/trading_params.yaml`:
+```yaml
+execution:
+  mode: paper
+```

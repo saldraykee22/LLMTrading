@@ -2,25 +2,32 @@
 Portföy Yönetimi Modülü
 =========================
 Pozisyon boyutlandırma, portföy takibi ve P&L hesaplama.
+JSON tabanlı kalıcılık (persistence) desteği ile bot restart sonrası
+pozisyonlar, P&L ve drawdown bilgisi korunur.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from config.settings import get_trading_params
+from config.settings import DATA_DIR, get_trading_params
 
 logger = logging.getLogger(__name__)
+
+PORTFOLIO_FILE = DATA_DIR / "portfolio_state.json"
 
 
 @dataclass
 class Position:
     """Tek bir açık pozisyon."""
+
     symbol: str
-    side: str               # long | short
+    side: str  # long | short
     entry_price: float
     amount: float
     entry_time: str
@@ -37,8 +44,10 @@ class Position:
             self.unrealized_pnl = (price - self.entry_price) * self.amount
         else:
             self.unrealized_pnl = (self.entry_price - price) * self.amount
-        if self.entry_price > 0:
-            self.unrealized_pnl_pct = self.unrealized_pnl / (self.entry_price * self.amount)
+        if self.entry_price > 0 and self.amount > 0:
+            self.unrealized_pnl_pct = self.unrealized_pnl / (
+                self.entry_price * self.amount
+            )
 
     def should_stop_loss(self, price: float) -> bool:
         """Stop-loss kontrolü."""
@@ -57,24 +66,123 @@ class Position:
         return price <= self.take_profit
 
 
+def _position_from_dict(d: dict) -> Position:
+    """Dict'ten Position oluşturur."""
+    return Position(
+        symbol=d["symbol"],
+        side=d["side"],
+        entry_price=d["entry_price"],
+        amount=d["amount"],
+        entry_time=d["entry_time"],
+        stop_loss=d.get("stop_loss", 0.0),
+        take_profit=d.get("take_profit", 0.0),
+        current_price=d.get("current_price", 0.0),
+        unrealized_pnl=d.get("unrealized_pnl", 0.0),
+        unrealized_pnl_pct=d.get("unrealized_pnl_pct", 0.0),
+    )
+
+
 @dataclass
 class PortfolioState:
     """Portföy durumu."""
+
     initial_cash: float = 10000.0
     cash: float = 10000.0
     positions: list[Position] = field(default_factory=list)
     closed_trades: list[dict] = field(default_factory=list)
     daily_pnl: float = 0.0
+    daily_pnl_date: str = ""
     total_pnl: float = 0.0
     max_equity: float = 10000.0
     current_drawdown: float = 0.0
 
+    def __post_init__(self) -> None:
+        """daily_pnl_date boşsa bugünün tarihini ata."""
+        if not self.daily_pnl_date:
+            self.daily_pnl_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # ── Persistence ────────────────────────────────────────
+
+    def save_to_file(self, path: Path | None = None) -> None:
+        """Portföy durumunu JSON dosyasına kaydet."""
+        filepath = path or PORTFOLIO_FILE
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "initial_cash": self.initial_cash,
+            "cash": self.cash,
+            "positions": [asdict(p) for p in self.positions],
+            "closed_trades": self.closed_trades,
+            "daily_pnl": self.daily_pnl,
+            "daily_pnl_date": self.daily_pnl_date,
+            "total_pnl": self.total_pnl,
+            "max_equity": self.max_equity,
+            "current_drawdown": self.current_drawdown,
+        }
+        filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        logger.info("Portföy kaydedildi: %s (equity: %.2f)", filepath, self.equity)
+
+    @classmethod
+    def load_from_file(cls, path: Path | None = None) -> "PortfolioState":
+        """JSON dosyasından portföy durumunu yükle."""
+        filepath = path or PORTFOLIO_FILE
+        if not filepath.exists():
+            logger.info("Portföy dosyası bulunamadı, yeni portföy oluşturuluyor")
+            return cls()
+
+        try:
+            data = json.loads(filepath.read_text(encoding="utf-8"))
+            positions = [_position_from_dict(p) for p in data.get("positions", [])]
+            state = cls(
+                initial_cash=data.get("initial_cash", 10000.0),
+                cash=data.get("cash", 10000.0),
+                positions=positions,
+                closed_trades=data.get("closed_trades", []),
+                daily_pnl=data.get("daily_pnl", 0.0),
+                daily_pnl_date=data.get("daily_pnl_date", ""),
+                total_pnl=data.get("total_pnl", 0.0),
+                max_equity=data.get("max_equity", 10000.0),
+                current_drawdown=data.get("current_drawdown", 0.0),
+            )
+            state.reset_daily_pnl_if_needed()
+            logger.info(
+                "Portföy yüklendi: %s pozisyon, equity=%.2f, daily_pnl=%.2f",
+                len(positions),
+                state.equity,
+                state.daily_pnl,
+            )
+            return state
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.error("Portföy dosyası okunamadı, yeni portföy oluşturuluyor: %s", e)
+            return cls()
+
+    # ── Daily PnL Reset ────────────────────────────────────
+
+    def reset_daily_pnl_if_needed(self) -> bool:
+        """Gün değişmişse günlük P&L'i sıfırlar. Değişiklik varsa True döner."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self.daily_pnl_date != today:
+            logger.info(
+                "Günlük P&L sıfırlandı (%s → %s), önceki: %.2f",
+                self.daily_pnl_date,
+                today,
+                self.daily_pnl,
+            )
+            self.daily_pnl = 0.0
+            self.daily_pnl_date = today
+            return True
+        return False
+
+    # ── Equity & Drawdown ──────────────────────────────────
+
     @property
     def equity(self) -> float:
         """Toplam özvarlık (nakit + açık pozisyonlar)."""
-        position_value = sum(
-            p.current_price * p.amount for p in self.positions
-        )
+        position_value = 0.0
+        for p in self.positions:
+            if p.side == "long":
+                position_value += p.current_price * p.amount
+            else:
+                position_value -= p.current_price * p.amount
         return self.cash + position_value
 
     @property
@@ -88,6 +196,8 @@ class PortfolioState:
             self.max_equity = eq
         if self.max_equity > 0:
             self.current_drawdown = (self.max_equity - eq) / self.max_equity
+
+    # ── Position Sizing ────────────────────────────────────
 
     def calculate_position_size(
         self,
@@ -113,6 +223,8 @@ class PortfolioState:
 
         return max_value / price
 
+    # ── Serialization ──────────────────────────────────────
+
     def to_dict(self) -> dict[str, Any]:
         """Serileştirme (ajan state'e gönderim için)."""
         return {
@@ -121,6 +233,7 @@ class PortfolioState:
             "open_positions": self.open_position_count,
             "total_pnl": round(self.total_pnl, 2),
             "daily_pnl": round(self.daily_pnl, 2),
+            "daily_pnl_date": self.daily_pnl_date,
             "current_drawdown": round(self.current_drawdown, 4),
             "max_equity": round(self.max_equity, 2),
             "positions": [
@@ -134,6 +247,8 @@ class PortfolioState:
                 for p in self.positions
             ],
         }
+
+    # ── Position Management ────────────────────────────────
 
     def open_position(
         self,
@@ -179,7 +294,12 @@ class PortfolioState:
 
         logger.info(
             "Pozisyon açıldı: %s %s %.4f @ %.4f (SL: %.4f, TP: %.4f)",
-            side.upper(), symbol, amount, price, stop_loss, take_profit,
+            side.upper(),
+            symbol,
+            amount,
+            price,
+            stop_loss,
+            take_profit,
         )
         return position
 
@@ -193,7 +313,11 @@ class PortfolioState:
         pos.update_price(price)
         pnl = pos.unrealized_pnl
 
-        self.cash += price * pos.amount
+        if pos.side == "long":
+            self.cash += price * pos.amount
+        else:
+            self.cash -= price * pos.amount
+
         self.total_pnl += pnl
         self.daily_pnl += pnl
         self.positions.remove(pos)
@@ -213,7 +337,9 @@ class PortfolioState:
 
         logger.info(
             "Pozisyon kapatıldı: %s P&L: %.4f (%.2f%%)",
-            symbol, pnl, pos.unrealized_pnl_pct * 100,
+            symbol,
+            pnl,
+            pos.unrealized_pnl_pct * 100,
         )
         self.update_drawdown()
         return trade_record

@@ -1,6 +1,15 @@
 # ============================================================
 # LLM Trading System — Trading Parameters
 # ============================================================
+# Model isimleri merkezi olarak buradan yönetilir.
+# Değiştirmek için sadece aşağıdaki "model" alanlarını güncelleyin.
+# ============================================================
+
+# ── LLM Modelleri (Merkezi) ────────────────────────────────
+llm:
+  default_model: "deepseek/deepseek-chat-v3-0324"
+  reasoning_model: "deepseek/deepseek-reasoner"
+  fallback_providers: ["openrouter", "deepseek", "ollama"]
 
 # ── Risk Yönetimi ──────────────────────────────────────────
 risk:
@@ -11,6 +20,8 @@ risk:
   cvar_confidence: 0.95           # CVaR güven düzeyi
   max_open_positions: 5           # Max eşzamanlı açık pozisyon
   max_correlated_positions: 3     # Max ilişkili pozisyon sayısı
+  max_consecutive_losses: 5       # Art arda 5 kayıp → durdur
+  max_consecutive_llm_errors: 10  # Art arda 10 LLM hatası → durdur
 
 # ── Volatilite / Rejim Filtresi ────────────────────────────
 regime:

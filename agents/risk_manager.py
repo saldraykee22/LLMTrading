@@ -16,7 +16,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
-from models.sentiment_analyzer import _extract_json, create_agent_llm
+from models.sentiment_analyzer import create_agent_llm
+from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     # 2. Halüsinasyon kontrolü
     hallu = debate.get("hallucinations_detected", [])
     if len(hallu) > 2:
-        checks_failed.append(
-            f"Çok fazla halüsinasyon tespit edildi: {len(hallu)} adet"
-        )
+        checks_failed.append(f"Çok fazla halüsinasyon tespit edildi: {len(hallu)} adet")
     elif len(hallu) > 0:
         warnings.append(f"Halüsinasyon uyarısı: {len(hallu)} adet tespit edildi")
     else:
@@ -88,6 +87,28 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
         )
     else:
         checks_passed.append(f"Açık pozisyon sayısı uygun: {open_positions}")
+
+    # 5. Drawdown kontrolü (deterministik)
+    current_dd = portfolio.get("current_drawdown", 0)
+    if current_dd >= params.risk.max_drawdown_pct:
+        checks_failed.append(
+            f"Drawdown limiti aşıldı: {current_dd:.2%} >= {params.risk.max_drawdown_pct:.2%}"
+        )
+    else:
+        checks_passed.append(f"Drawdown limiti içinde: {current_dd:.2%}")
+
+    # 6. Günlük kayıp kontrolü (deterministik)
+    equity = portfolio.get("equity", 10000)
+    daily_pnl = portfolio.get("daily_pnl", 0)
+    daily_loss = abs(min(daily_pnl, 0))
+    if equity > 0 and daily_loss / equity >= params.risk.max_daily_loss_pct:
+        checks_failed.append(
+            f"Günlük kayıp limiti aşıldı: {daily_loss / equity:.2%} >= {params.risk.max_daily_loss_pct:.2%}"
+        )
+    else:
+        checks_passed.append(f"Günlük kayıp limiti içinde: {daily_loss / equity:.2%}")
+
+
 
     # ── Karma veya nötr sinyal → "hold" öner ──────────────
     debate_signal = debate.get("adjusted_signal", "neutral")
@@ -146,14 +167,29 @@ Deterministik kontrol sonuçlarını dikkate al ve nihai risk değerlendirmesini
     llm = create_agent_llm(model=params.agents.risk_model, temperature=0.1)
 
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_msg),
-        ])
-        llm_assessment = _extract_json(response.content)
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_msg),
+            ]
+        )
+        llm_assessment = extract_json(response.content)
     except Exception as e:
         logger.error("Risk LLM hatası: %s", e)
         llm_assessment = {}
+
+    # 7. Pozisyon boyutu limiti (deterministik, LLM sonrasında)
+    proposed_size = llm_assessment.get("approved_size", 0) if llm_assessment else 0
+    if proposed_size > 0:
+        max_allowed = equity * params.risk.max_position_pct
+        if proposed_size > max_allowed:
+            checks_failed.append(
+                f"Önerilen pozisyon boyutu limiti aşıldı: {proposed_size:.2f} > {max_allowed:.2f}"
+            )
+        else:
+            checks_passed.append(
+                f"Pozisyon boyutu uygun: {proposed_size:.2f} <= {max_allowed:.2f}"
+            )
 
     # ── Nihai karar ───────────────────────────────────────
     # Deterministik kontroller LLM kararını geçersiz kılabilir

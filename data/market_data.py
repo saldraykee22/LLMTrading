@@ -8,7 +8,6 @@ OHLCV verisi çekme:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -30,12 +29,13 @@ class MarketDataClient:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._params = get_trading_params()
-        self._exchange: ccxt.Exchange | None = None
+        self._exchange_private: ccxt.Exchange | None = None
+        self._exchange_public: ccxt.Exchange | None = None
 
     # ── Binance CCXT Bağlantısı ────────────────────────────
-    def _get_exchange(self) -> ccxt.Exchange:
-        """Binance exchange nesnesini başlatır (lazy)."""
-        if self._exchange is None:
+    def _get_private_exchange(self) -> ccxt.Exchange:
+        """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar)."""
+        if self._exchange_private is None:
             config: dict = {
                 "apiKey": self._settings.binance_api_key,
                 "secret": self._settings.binance_api_secret,
@@ -45,12 +45,24 @@ class MarketDataClient:
             if self._settings.binance_testnet:
                 config["sandbox"] = True
 
-            self._exchange = ccxt.binance(config)
+            self._exchange_private = ccxt.binance(config)
             logger.info(
-                "Binance bağlantısı kuruldu (testnet=%s)",
+                "Binance private connection established (testnet=%s)",
                 self._settings.binance_testnet,
             )
-        return self._exchange
+        return self._exchange_private
+
+    def _get_public_exchange(self) -> ccxt.Exchange:
+        """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet)."""
+        if self._exchange_public is None:
+            config: dict = {
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            }
+            # Public data için API key gerekmez, sandbox zorunluluğu yok
+            self._exchange_public = ccxt.binance(config)
+            logger.info("Binance public connection established (Mainnet)")
+        return self._exchange_public
 
     # ── Kripto OHLCV ───────────────────────────────────────
     def fetch_crypto_ohlcv(
@@ -74,7 +86,7 @@ class MarketDataClient:
         tf = timeframe or self._params.data.default_timeframe
         d = days or self._params.data.history_days
 
-        exchange = self._get_exchange()
+        exchange = self._get_public_exchange()
         since_ms = int(
             (datetime.now(timezone.utc) - timedelta(days=d)).timestamp() * 1000
         )
@@ -119,7 +131,7 @@ class MarketDataClient:
         df = df.drop_duplicates(subset=["datetime"])
 
         logger.info(
-            "Kripto OHLCV: %s — %d mum (%s → %s)",
+            "Kripto OHLCV: %s - %d mum (%s -> %s)",
             resolved.symbol,
             len(df),
             df["datetime"].iloc[0].strftime("%Y-%m-%d"),
@@ -192,7 +204,7 @@ class MarketDataClient:
         df = df.sort_values("datetime").reset_index(drop=True)
 
         logger.info(
-            "Hisse OHLCV: %s — %d mum (%s → %s)",
+            "Hisse OHLCV: %s - %d mum (%s -> %s)",
             resolved.symbol,
             len(df),
             str(df["datetime"].iloc[0])[:10],
@@ -217,8 +229,14 @@ class MarketDataClient:
         else:
             # yfinance interval mapping
             tf_map = {
-                "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
-                "1h": "1h", "4h": "1h", "1d": "1d", "1w": "1wk",
+                "1m": "1m",
+                "5m": "5m",
+                "15m": "15m",
+                "30m": "30m",
+                "1h": "1h",
+                "4h": "1h",
+                "1d": "1d",
+                "1w": "1wk",
             }
             interval = tf_map.get(timeframe or "1d", "1d")
             return self.fetch_stock_ohlcv(symbol, interval, days)
@@ -231,18 +249,16 @@ class MarketDataClient:
     # ── Binance Hesap Bakiyesi ─────────────────────────────
     def fetch_balance(self) -> dict:
         """Binance hesap bakiyesini çeker."""
-        exchange = self._get_exchange()
+        exchange = self._get_private_exchange()
         try:
             balance = exchange.fetch_balance()
             # Sadece sıfırdan büyük bakiyeleri filtrele
             non_zero = {
-                k: v
-                for k, v in balance.get("total", {}).items()
-                if v and float(v) > 0
+                k: v for k, v in balance.get("total", {}).items() if v and float(v) > 0
             }
             return {"total": non_zero, "free": balance.get("free", {})}
         except ccxt.BaseError as e:
-            logger.error("Bakiye çekme hatası: %s", e)
+            logger.error("Bakiye cekme hatasi: %s", e)
             return {"total": {}, "free": {}}
 
     # ── Güncel Fiyat ───────────────────────────────────────
@@ -252,11 +268,11 @@ class MarketDataClient:
 
         if resolved.asset_class == AssetClass.CRYPTO:
             try:
-                exchange = self._get_exchange()
+                exchange = self._get_public_exchange()
                 ticker = exchange.fetch_ticker(resolved.symbol)
                 return float(ticker.get("last", 0))
             except ccxt.BaseError as e:
-                logger.error("Fiyat hatası (%s): %s", resolved.symbol, e)
+                logger.error("Fiyat hatasi (%s): %s", resolved.symbol, e)
                 return None
         else:
             try:

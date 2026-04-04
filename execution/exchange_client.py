@@ -15,6 +15,7 @@ import ccxt
 
 from config.settings import TradingMode, get_settings, get_trading_params
 from execution.order_manager import TradeOrder
+from execution.paper_engine import PaperTradingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,15 @@ class ExchangeClient:
         self._params = get_trading_params()
         self._exchange: ccxt.Exchange | None = None
         self._last_request_time: float = 0
+        self._paper_engine: PaperTradingEngine | None = None
+
+    def _get_paper_engine(self) -> PaperTradingEngine:
+        """Paper trading engine'i lazy olarak başlatır."""
+        if self._paper_engine is None:
+            self._paper_engine = PaperTradingEngine(
+                initial_cash=self._params.backtest.initial_cash,
+            )
+        return self._paper_engine
 
     def _get_exchange(self) -> ccxt.Exchange:
         """Borsa bağlantısını başlatır (lazy)."""
@@ -47,11 +57,12 @@ class ExchangeClient:
                 raise ValueError(f"CCXT borsa bulunamadı: {exchange_id}")
 
             self._exchange = exchange_class(config)
-            logger.info(
-                "Borsa bağlantısı: %s (testnet=%s, mod=%s)",
+            status = "TESTNET (Sandbox)" if self._settings.binance_testnet else "MAINNET"
+            logger.warning(
+                "CONNECTED TO %s: %s (Mode: %s)",
+                status,
                 exchange_id,
-                self._settings.binance_testnet,
-                self._params.execution.mode.value,
+                self._params.execution.mode.value.upper(),
             )
         return self._exchange
 
@@ -63,22 +74,42 @@ class ExchangeClient:
             time.sleep(delay - elapsed)
         self._last_request_time = time.time()
 
-    def execute_order(self, order: TradeOrder) -> dict[str, Any]:
+    def execute_order(
+        self, order: TradeOrder, current_price: float = 0.0
+    ) -> dict[str, Any]:
         """
-        Emri borsaya gönderir.
+        Emri yürütür (paper veya live).
 
         Args:
             order: Yapılandırılmış alım-satım emri
+            current_price: Güncel piyasa fiyatı (paper mod için gerekli)
 
         Returns:
-            Borsa yanıtı (order ID, durum vb.)
+            Emir sonucu (order ID, durum vb.)
         """
+        # Paper mod — simülasyon
+        if self._params.execution.mode == TradingMode.PAPER:
+            logger.info(
+                "📝 PAPER TRADING: %s %s %.6f %s",
+                order.action.upper(),
+                order.symbol,
+                order.amount,
+                order.order_type,
+            )
+            return self._get_paper_engine().execute_order(order, current_price)
+
+        # Live mod — gerçek borsa
         exchange = self._get_exchange()
 
         # Güvenlik kontrolü — live mode'da ekstra onay
         if self._params.execution.mode == TradingMode.LIVE:
-            logger.warning("⚠ CANLI İŞLEM: %s %s %.6f %s",
-                         order.action.upper(), order.symbol, order.amount, order.order_type)
+            logger.warning(
+                "⚠ CANLI İŞLEM: %s %s %.6f %s",
+                order.action.upper(),
+                order.symbol,
+                order.amount,
+                order.order_type,
+            )
 
         self._rate_limit()
 
@@ -101,10 +132,15 @@ class ExchangeClient:
                     )
                 else:
                     logger.error("Bilinmeyen emir tipi: %s", order.order_type)
-                    return {"status": "error", "message": f"Unknown order type: {order.order_type}"}
+                    return {
+                        "status": "error",
+                        "message": f"Unknown order type: {order.order_type}",
+                    }
 
                 order_info = {
-                    "status": "filled" if result.get("status") == "closed" else result.get("status", "open"),
+                    "status": "filled"
+                    if result.get("status") == "closed"
+                    else result.get("status", "open"),
                     "order_id": result.get("id"),
                     "symbol": result.get("symbol"),
                     "side": result.get("side"),
@@ -135,7 +171,9 @@ class ExchangeClient:
             except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
                 logger.warning(
                     "Ağ hatası (deneme %d/%d): %s",
-                    attempt + 1, self._params.execution.retry_count, e,
+                    attempt + 1,
+                    self._params.execution.retry_count,
+                    e,
                 )
                 if attempt < self._params.execution.retry_count - 1:
                     time.sleep(self._params.execution.retry_delay_ms / 1000.0)
