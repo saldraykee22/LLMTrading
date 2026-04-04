@@ -75,6 +75,7 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     symbol = state["symbol"]
     params = get_trading_params()
     max_rounds = params.agents.max_debate_rounds
+    provider = state.get("provider") or None
 
     logger.info("Bull vs Bear tartışması başlıyor: %s (%d tur)", symbol, max_rounds)
 
@@ -95,7 +96,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
 {json.dumps(tech, indent=2, ensure_ascii=False) if tech else "Mevcut değil"}
 """
 
-    llm = create_agent_llm(model=params.agents.analyst_model, temperature=0.3)
+    llm = create_agent_llm(
+        provider=provider, model=params.agents.analyst_model, temperature=0.3
+    )
 
     debate_log: list[str] = []
 

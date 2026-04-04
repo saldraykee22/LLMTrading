@@ -57,7 +57,9 @@ class ExchangeClient:
                 raise ValueError(f"CCXT borsa bulunamadı: {exchange_id}")
 
             self._exchange = exchange_class(config)
-            status = "TESTNET (Sandbox)" if self._settings.binance_testnet else "MAINNET"
+            status = (
+                "TESTNET (Sandbox)" if self._settings.binance_testnet else "MAINNET"
+            )
             logger.warning(
                 "CONNECTED TO %s: %s (Mode: %s)",
                 status,
@@ -184,6 +186,13 @@ class ExchangeClient:
                 return {"status": "error", "message": str(e)}
 
         return {"status": "error", "message": "Max retry exceeded"}
+
+    def get_paper_status(self) -> dict[str, Any]:
+        """Paper trading engine durumunu döndürür (public API)."""
+        if self._params.execution.mode == TradingMode.PAPER:
+            engine = self._get_paper_engine()
+            return engine.get_status()
+        return {"error": "Not in paper trading mode"}
 
     def cancel_order(self, order_id: str, symbol: str) -> dict:
         """Bekleyen emri iptal eder."""

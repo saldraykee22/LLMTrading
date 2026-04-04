@@ -44,10 +44,11 @@ updateTime();
 // ── Data Loading ──────────────────────────────────────────
 async function loadLatestAnalysis() {
     try {
-        const [portfolioRes, statusRes, tradesRes] = await Promise.all([
+        const [portfolioRes, statusRes, tradesRes, allocRes] = await Promise.all([
             fetch('/api/portfolio'),
             fetch('/api/status'),
             fetch('/api/trades?limit=10'),
+            fetch('/api/portfolio_allocation'),
         ]);
 
         if (portfolioRes.ok) {
@@ -67,6 +68,11 @@ async function loadLatestAnalysis() {
                 statusEl.querySelector('span:last-child').textContent =
                     status.portfolio_loaded ? 'Aktif' : 'Bekleniyor';
             }
+        }
+
+        if (allocRes.ok) {
+            const allocData = await allocRes.json();
+            updatePortfolioAllocation(allocData);
         }
     } catch (e) {
         console.log('API bağlantısı yok, demo verisi kullanılıyor');
@@ -263,14 +269,101 @@ function updateTradesTable(trades) {
     }).join('');
 }
 
-    const signalEl = document.getElementById('sentimentSignal');
-    if (signalEl) {
-        signalEl.textContent = (sentiment.signal || 'neutral').toUpperCase();
-        signalEl.className = 'signal-badge ' + (sentiment.signal || 'neutral');
+// ── Portfolio Allocation ──────────────────────────────────
+function updatePortfolioAllocation(data) {
+    const content = document.getElementById('allocationContent');
+    const statusEl = document.getElementById('allocStatus');
+    if (!content) return;
+
+    if (!data || data.status === 'no_allocation') {
+        content.innerHTML = '<div class="empty-state">Portföy analizi bekleniyor</div>';
+        if (statusEl) statusEl.textContent = '—';
+        return;
     }
 
-    updateElement('sentimentConfidence', ((sentiment.confidence || 0) * 100).toFixed(0) + '%');
-    updateElement('sentimentRisk', ((sentiment.risk_score || 0) * 100).toFixed(0) + '%');
+    if (data.status === 'no_qualified_assets') {
+        content.innerHTML = `<div class="empty-state">Kalifiye varlık bulunamadı<br><small>${data.reason || ''}</small></div>`;
+        if (statusEl) {
+            statusEl.textContent = 'RED';
+            statusEl.style.color = 'var(--accent-red)';
+        }
+        return;
+    }
+
+    if (statusEl) {
+        statusEl.textContent = data.allocations ? Object.keys(data.allocations).length + ' VARLIK' : '—';
+        statusEl.style.color = 'var(--accent-green)';
+    }
+
+    const allocations = data.allocations || {};
+    const details = data.asset_details || {};
+    const allScores = data.all_scores || {};
+
+    let html = '<div class="allocation-bars">';
+
+    for (const [symbol, weight] of Object.entries(allocations)) {
+        const pct = (weight * 100).toFixed(1);
+        const d = details[symbol] || {};
+        const score = d.composite_score || 0;
+        const scoreColor = score > 0.1 ? 'var(--accent-green)' : score < -0.1 ? 'var(--accent-red)' : 'var(--text-secondary)';
+        const trend = d.trend || '—';
+        const confidence = d.sentiment_confidence ? (d.sentiment_confidence * 100).toFixed(0) + '%' : '—';
+
+        html += `
+            <div class="alloc-bar">
+                <div class="alloc-bar-header">
+                    <span class="alloc-symbol">${symbol}</span>
+                    <span class="alloc-weight">${pct}%</span>
+                </div>
+                <div class="alloc-bar-track">
+                    <div class="alloc-bar-fill" style="width: ${pct}%; background: ${scoreColor}"></div>
+                </div>
+                <div class="alloc-bar-details">
+                    <span>Skor: <strong style="color: ${scoreColor}">${score >= 0 ? '+' : ''}${score.toFixed(3)}</strong></span>
+                    <span>Trend: <strong>${trend}</strong></span>
+                    <span>Güven: <strong>${confidence}</strong></span>
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+
+    // CVaR info
+    const cvar = data.cvar_info || {};
+    if (cvar.cvar !== undefined) {
+        html += `
+            <div class="alloc-cvar">
+                <div class="cvar-row">
+                    <span>CVaR</span>
+                    <span>${(cvar.cvar * 100).toFixed(2)}%</span>
+                </div>
+                <div class="cvar-row">
+                    <span>VaR</span>
+                    <span>${(cvar.var * 100).toFixed(2)}%</span>
+                </div>
+                <div class="cvar-row">
+                    <span>Beklenen Getiri</span>
+                    <span style="color: ${cvar.expected_return >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">
+                        ${(cvar.expected_return * 100).toFixed(2)}%
+                    </span>
+                </div>
+            </div>
+        `;
+    }
+
+    // All scores
+    const excluded = Object.keys(allScores).filter(s => !allocations[s]);
+    if (excluded.length > 0) {
+        html += '<div class="alloc-excluded"><strong>Dışlananlar:</strong> ';
+        html += excluded.map(s => {
+            const sc = allScores[s].composite_score;
+            return `<span style="color: ${sc >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'}">${s} (${sc >= 0 ? '+' : ''}${sc.toFixed(3)})</span>`;
+        }).join(', ');
+        html += '</div>';
+    }
+
+    content.innerHTML = html;
 }
 
 // ── Activity Log ──────────────────────────────────────────

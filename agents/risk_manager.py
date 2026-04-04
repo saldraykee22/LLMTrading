@@ -36,6 +36,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     """
     symbol = state["symbol"]
     params = get_trading_params()
+    provider = state.get("provider") or None
 
     logger.info("Risk Yöneticisi çalışıyor: %s", symbol)
 
@@ -108,8 +109,6 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     else:
         checks_passed.append(f"Günlük kayıp limiti içinde: {daily_loss / equity:.2%}")
 
-
-
     # ── Karma veya nötr sinyal → "hold" öner ──────────────
     debate_signal = debate.get("adjusted_signal", "neutral")
     if debate_signal == "neutral" and sent_signal == "neutral":
@@ -144,6 +143,9 @@ Geçen: {json.dumps(checks_passed, ensure_ascii=False)}
 Kalan: {json.dumps(checks_failed, ensure_ascii=False)}
 Uyarılar: {json.dumps(warnings, ensure_ascii=False)}
 
+## Araştırma Raporu
+{json.dumps(research, indent=2, ensure_ascii=False)}
+
 ## Duyarlılık Analizi
 {json.dumps(sentiment, indent=2, ensure_ascii=False)}
 
@@ -162,9 +164,11 @@ Uyarılar: {json.dumps(warnings, ensure_ascii=False)}
 - ATR çarpanı (stop-loss): {params.stop_loss.atr_multiplier}
 - Başlangıç sermayesi: {params.backtest.initial_cash} USDT
 
-Deterministik kontrol sonuçlarını dikkate al ve nihai risk değerlendirmesini yap."""
+Deterministik kontrol sonuçlarını ve araştırma raporunu dikkate al ve nihai risk değerlendirmesini yap."""
 
-    llm = create_agent_llm(model=params.agents.risk_model, temperature=0.1)
+    llm = create_agent_llm(
+        provider=provider, model=params.agents.risk_model, temperature=0.1
+    )
 
     try:
         response = llm.invoke(
@@ -227,5 +231,5 @@ Deterministik kontrol sonuçlarını dikkate al ve nihai risk değerlendirmesini
         "messages": [{"role": "risk_manager", "content": risk_msg}],
         "risk_assessment": risk_data,
         "risk_approved": risk_approved,
-        "phase": "trade" if risk_approved else "retry",
+        "phase": "trade" if risk_approved else "analysis",
     }

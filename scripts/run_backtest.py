@@ -84,12 +84,23 @@ def run_simple_backtest(
     df = market.fetch_ohlcv(symbol, timeframe=timeframe, days=days)
 
     if df.empty or len(df) < 50:
-        console.print(f"[red]Insufficient data ({len(df)} candles) - backtest aborted[/red]")
+        console.print(
+            f"[red]Insufficient data ({len(df)} candles) - backtest aborted[/red]"
+        )
         return BacktestResult(
-            period=0, total_return=0, sharpe_ratio=0, max_drawdown=0,
-            win_rate=0, total_trades=0, profitable_trades=0, losing_trades=0,
-            avg_win=0, avg_loss=0, profit_factor=0,
-            train_range="", test_range="",
+            period=0,
+            total_return=0,
+            sharpe_ratio=0,
+            max_drawdown=0,
+            win_rate=0,
+            total_trades=0,
+            profitable_trades=0,
+            losing_trades=0,
+            avg_win=0,
+            avg_loss=0,
+            profit_factor=0,
+            train_range="",
+            test_range="",
         )
 
     console.print(f"  {len(df)} candles loaded ({timeframe})")
@@ -162,11 +173,17 @@ def run_simple_backtest(
             if signals.signal == "buy" and signals.trend_strength > 0.3:
                 amount = portfolio.calculate_position_size(current_price)
                 if amount > 0:
-                    stop = stop_loss_mgr.calculate_initial_stop(current_price, atr, "long")
+                    stop = stop_loss_mgr.calculate_initial_stop(
+                        current_price, atr, "long"
+                    )
                     tp = current_price + (current_price - stop) * 2
                     portfolio.open_position(
-                        symbol=resolved.symbol, side="long", price=current_price,
-                        amount=amount, stop_loss=stop, take_profit=tp
+                        symbol=resolved.symbol,
+                        side="long",
+                        price=current_price,
+                        amount=amount,
+                        stop_loss=stop,
+                        take_profit=tp,
                     )
 
     # Close open positions
@@ -235,7 +252,9 @@ def run_walkforward_backtest(
     df = market.fetch_ohlcv(symbol, timeframe=timeframe, days=days)
 
     if df.empty or len(df) < 100:
-        console.print(f"[red]Insufficient data ({len(df)} candles) - min 100 required for walk-forward[/red]")
+        console.print(
+            f"[red]Insufficient data ({len(df)} candles) - min 100 required for walk-forward[/red]"
+        )
         return []
 
     console.print(f"  {len(df)} candles loaded ({timeframe})")
@@ -282,7 +301,9 @@ def run_walkforward_backtest(
             if has_position:
                 pos = portfolio.positions[0]
                 pos.update_price(current_price)
-                new_stop = stop_loss_mgr.update_trailing_stop(pos.stop_loss, current_price, atr, pos.side)
+                new_stop = stop_loss_mgr.update_trailing_stop(
+                    pos.stop_loss, current_price, atr, pos.side
+                )
                 pos.stop_loss = new_stop
 
                 if stop_loss_mgr.should_exit(current_price, pos.stop_loss, pos.side):
@@ -308,22 +329,31 @@ def run_walkforward_backtest(
                 if signals.signal == "buy" and signals.trend_strength > 0.3:
                     amount = portfolio.calculate_position_size(current_price)
                     if amount > 0:
-                        stop = stop_loss_mgr.calculate_initial_stop(current_price, atr, "long")
+                        stop = stop_loss_mgr.calculate_initial_stop(
+                            current_price, atr, "long"
+                        )
                         tp = current_price + (current_price - stop) * 2
                         portfolio.open_position(
-                            symbol=resolved.symbol, side="long", price=current_price,
-                            amount=amount, stop_loss=stop, take_profit=tp
+                            symbol=resolved.symbol,
+                            side="long",
+                            price=current_price,
+                            amount=amount,
+                            stop_loss=stop,
+                            take_profit=tp,
                         )
 
         # Close open positions
         for pos in list(portfolio.positions):
-            trade = portfolio.close_position(pos.symbol, float(test_df["close"].iloc[-1]))
+            trade = portfolio.close_position(
+                pos.symbol, float(test_df["close"].iloc[-1])
+            )
             if trade:
                 trade["exit_reason"] = "backtest_end"
                 trades.append(trade)
 
-        metrics = calculate_metrics(trades, params.backtest.initial_cash)
-        metrics.period = idx + 1
+        metrics = calculate_metrics(
+            trades, params.backtest.initial_cash, period=idx + 1
+        )
         metrics.train_range = split.train_range
         metrics.test_range = split.test_range
         all_results.append(metrics)

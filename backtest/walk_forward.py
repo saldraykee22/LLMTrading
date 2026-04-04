@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataSplit:
     """Veri bölme sonucu."""
+
     train: pd.DataFrame
     validation: pd.DataFrame
     test: pd.DataFrame
@@ -35,6 +36,7 @@ class DataSplit:
 @dataclass
 class BacktestResult:
     """Tek periyot backtest sonucu."""
+
     period: int
     total_return: float
     sharpe_ratio: float
@@ -98,7 +100,9 @@ def chronological_split(
 
     logger.info(
         "Veri bölündü: eğitim=%d, doğrulama=%d, test=%d",
-        len(train), len(validation), len(test),
+        len(train),
+        len(validation),
+        len(test),
     )
     return split
 
@@ -155,6 +159,7 @@ def rolling_walk_forward(
 def calculate_metrics(
     trades: list[dict[str, Any]],
     initial_cash: float | None = None,
+    period: int = 0,
 ) -> BacktestResult:
     """
     İşlem listesinden performans metriklerini hesaplar.
@@ -171,10 +176,19 @@ def calculate_metrics(
 
     if not trades:
         return BacktestResult(
-            period=0, total_return=0, sharpe_ratio=0, max_drawdown=0,
-            win_rate=0, total_trades=0, profitable_trades=0, losing_trades=0,
-            avg_win=0, avg_loss=0, profit_factor=0,
-            train_range="", test_range="",
+            period=0,
+            total_return=0,
+            sharpe_ratio=0,
+            max_drawdown=0,
+            win_rate=0,
+            total_trades=0,
+            profitable_trades=0,
+            losing_trades=0,
+            avg_win=0,
+            avg_loss=0,
+            profit_factor=0,
+            train_range="",
+            test_range="",
         )
 
     pnls = [t.get("pnl", 0) for t in trades]
@@ -197,7 +211,11 @@ def calculate_metrics(
     # Sharpe Oranı (yıllıklandırılmış, 252 iş günü varsayımı)
     if pnl_pcts and len(pnl_pcts) > 1:
         returns_arr = np.array(pnl_pcts)
-        sharpe = (np.mean(returns_arr) / np.std(returns_arr)) * np.sqrt(252) if np.std(returns_arr) > 0 else 0
+        sharpe = (
+            (np.mean(returns_arr) / np.std(returns_arr)) * np.sqrt(252)
+            if np.std(returns_arr) > 0
+            else 0
+        )
     else:
         sharpe = 0
 
@@ -211,7 +229,7 @@ def calculate_metrics(
     max_dd = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0
 
     return BacktestResult(
-        period=0,
+        period=period,
         total_return=round(total_return, 6),
         sharpe_ratio=round(float(sharpe), 4),
         max_drawdown=round(max_dd, 6),

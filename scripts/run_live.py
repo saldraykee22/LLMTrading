@@ -39,7 +39,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from config.settings import LLMProvider, get_settings, get_trading_params
+from config.settings import LLMProvider, TradingMode, get_settings, get_trading_params
 from data.market_data import MarketDataClient
 from data.news_data import NewsClient
 from data.symbol_resolver import resolve_symbol
@@ -201,6 +201,7 @@ def run_pipeline(
         news_data=news_serialized,
         technical_signals=tech_dict,
         portfolio_state=portfolio_state_dict,
+        provider=provider,
     )
 
     # ── 6. Sonuçları Göster ───────────────────────────────
@@ -244,13 +245,19 @@ def run_pipeline(
         settings = get_settings()
         if params.execution.mode == TradingMode.LIVE:
             if not settings.confirm_live_trade:
-                console.print("\n[bold red]❌ GÜVENLİK ENGELİ: Canlı işlem modu aktif ancak onaylanmadı![/bold red]")
-                console.print("[yellow]Canlı işlem yapmak için .env dosyasına şunları ekleyin:[/yellow]")
+                console.print(
+                    "\n[bold red]❌ GÜVENLİK ENGELİ: Canlı işlem modu aktif ancak onaylanmadı![/bold red]"
+                )
+                console.print(
+                    "[yellow]Canlı işlem yapmak için .env dosyasına şunları ekleyin:[/yellow]"
+                )
                 console.print("[white]TRADING_MODE=live[/white]")
                 console.print("[white]CONFIRM_LIVE_TRADE=true[/white]")
                 return {"status": "error", "message": "Live trading not confirmed"}
-            
-            console.print("\n[bold red]⚠⚠⚠ DİKKAT: CANLI İŞLEM GERÇEKLEŞTİRİLİYOR! ⚠⚠⚠[/bold red]")
+
+            console.print(
+                "\n[bold red]⚠⚠⚠ DİKKAT: CANLI İŞLEM GERÇEKLEŞTİRİLİYOR! ⚠⚠⚠[/bold red]"
+            )
 
         order = parse_trade_decision(
             trade_decision, current_price=current_price, atr_value=atr_value
@@ -264,7 +271,7 @@ def run_pipeline(
 
             # Paper modda portföy güncellemesi engine tarafından yapılır
             if exec_result.get("mode") == "paper":
-                paper_status = client._get_paper_engine().get_status()
+                paper_status = client.get_paper_status()
                 portfolio.cash = paper_status["cash"]
                 portfolio.total_pnl = paper_status["total_pnl"]
                 portfolio.daily_pnl = paper_status["daily_pnl"]

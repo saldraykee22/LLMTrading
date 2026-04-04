@@ -43,7 +43,7 @@ def _load_prompt(name: str) -> str:
     return ""
 
 
-def _create_llm(
+def create_llm(
     provider: LLMProvider | None = None,
     model: str | None = None,
     temperature: float = 0.1,
@@ -109,7 +109,7 @@ class SentimentAnalyzer:
         model: str | None = None,
     ) -> None:
         self._params = get_trading_params()
-        self._llm = _create_llm(provider, model, temperature=0.1)
+        self._llm = create_llm(provider, model, temperature=0.1)
         self._system_prompt = _load_prompt("sentiment_system.txt")
         self._store = SentimentStore()
 
@@ -246,4 +246,4 @@ def create_agent_llm(
     temperature: float = 0.2,
 ) -> ChatOpenAI:
     """Ajan düğümleri için LLM nesnesi oluşturur (dışa açık)."""
-    return _create_llm(provider, model, temperature)
+    return create_llm(provider, model, temperature)

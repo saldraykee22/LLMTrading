@@ -4,7 +4,7 @@ Bu proje **LangGraph** kullanilarak gelistirilmis bir Durum Grafigi (StateGraph)
 
 Durum nesnesi (State), `agents/state.py` icinde tanimlanan `TradingState` adli bir `TypedDict` sinifidir.
 
-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3 tamamlandi)
+> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
 
 ---
 
@@ -56,6 +56,8 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 
 **Faz 3 guncellemes:** `extract_json` artik `utils.json_utils`'ten import ediliyor (merkezi ayristirici)
 
+**Faz 4 guncellemesi:** `provider` parametresi state'ten okunuyor, paralel analiz destekleniyor
+
 ---
 
 ## 3. Bull vs Bear Debate (Tartisma / Halusinasyon Filtresi)
@@ -101,7 +103,9 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 
 ### LLM Degerlendirmesi
 
-System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol sonuclari LLM'e bildirilir, LLM derinlemesine bir risk analizi yapip stop-loss/take-profit/pozisyon boyutu onerir.
+System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol sonuclari, arastirma raporu ve LLM'e bildirilir, LLM derinlemesine bir risk analizi yapip stop-loss/take-profit/pozisyon boyutu onerir.
+
+**Faz 4 guncellemesi:** `research_report` artik LLM prompt'una dahil ediliyor — risk manager arastirma raporunu da degerlendiriyor.
 
 ### Yonlendirme
 
@@ -161,6 +165,80 @@ Bu cikti LangGraph dongusu disina cikarak `execution/order_manager.py` modulu uz
 
 ---
 
+## 7. Portfolio Manager (Portföy Yöneticisi) [FAZ 4 - YENİ]
+
+**Dosya:** `agents/portfolio_manager.py`
+
+**Gorevi:** Birden fazla varligi paralel olarak analiz eder, her biri icin bileşik skor hesaplar ve CVaR optimizasyonu ile optimal portföy dagilimini belirler.
+
+**Akış:**
+```
+Sembol Havuzu
+    |
+    v
+[Paralel Analiz — ThreadPoolExecutor]
+    |
+    +-- BTC/USDT  → run_analysis() → SymbolAnalysis
+    +-- ETH/USDT  → run_analysis() → SymbolAnalysis
+    +-- SOL/USDT  → run_analysis() → SymbolAnalysis
+    |
+    v
+[Bileşik Skorlama]
+    |  Debate Consensus:  %35
+    |  Sentiment Score:   %25
+    |  Trend Strength:    %20
+    |  RSI (ters):        %20
+    |  Confidence Factor: çarpan
+    v
+[CVaR Optimizasyonu] → Optimal Agirliklar
+    |
+    v
+Portföy Dagilimi (JSON)
+```
+
+**Bileşik Skor Formülü:**
+```
+composite_score = (
+    debate_consensus * 0.35 +
+    sentiment_score * 0.25 +
+    trend_strength * 0.20 +
+    rsi_normalized * 0.20
+) * confidence_factor
+```
+
+- `rsi_normalized`: RSI < 30 → +0.5 (firsat), RSI > 70 → -0.5 (risk), arasi → (RSI-50)/40
+- `confidence_factor`: (sentiment_confidence + 0.5) / 1.5 — düşük güven skoru düsürür
+
+**Kullanim:**
+```bash
+# 3 coin icin portföy analizi (paralel, 2 worker)
+python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT --workers 2
+
+# Max 3 pozisyon, min skor 0.2
+python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT,AVAX/USDT --max-positions 3 --min-score 0.2
+```
+
+**Cikti (Payload):**
+```json
+{
+    "status": "success",
+    "allocations": {"BTC/USDT": 0.50, "ETH/USDT": 0.50},
+    "asset_details": {
+        "BTC/USDT": {
+            "allocation_pct": 50.0,
+            "composite_score": 0.187,
+            "sentiment_score": -0.30,
+            "debate_consensus": 0.40,
+            "trend": "bullish",
+            "rsi": 63.6
+        }
+    },
+    "cvar_info": {"cvar": -0.0156, "var": -0.0098, "expected_return": -0.037}
+}
+```
+
+---
+
 ## State Nesnesi (TradingState)
 
 `agents/state.py` icerisindeki `TradingState` TypedDict alanlari:
@@ -179,5 +257,6 @@ Bu cikti LangGraph dongusu disina cikarak `execution/order_manager.py` modulu uz
 | `risk_approved` | bool | True ise trader'a git |
 | `trade_decision` | dict | Nihai islem emri |
 | `messages` | list | Tum ajan mesaj gecmisi |
-| `phase` | str | Mevcut asama (analysis/trade/completed) |
+| `phase` | str | Mevcut asama (init/research/debate/risk/trade/complete) |
 | `iteration` | int | Iterasyon sayaci (artik sadece referans) |
+| `provider` | str | LLM saglayici override (openrouter, deepseek, ollama) |

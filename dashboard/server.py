@@ -14,9 +14,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -31,6 +31,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def block_sensitive_files(request: Request, call_next):
+    """Python kaynak kodları, .env ve config dosyalarına erişimi engeller."""
+    if request.url.path.endswith((".py", ".pyc", ".env", ".yaml")):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    return await call_next(request)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -121,6 +130,19 @@ async def get_status():
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/portfolio_allocation")
+async def get_portfolio_allocation():
+    """En son portföy dağılımı (run_portfolio.py çıktısı)."""
+    if EXPORTS_DIR.exists():
+        files = sorted(
+            EXPORTS_DIR.glob("portfolio_*.json"), key=lambda f: f.stat().st_mtime
+        )
+        if files:
+            latest = files[-1]
+            return json.loads(latest.read_text(encoding="utf-8"))
+    return {"status": "no_allocation"}
 
 
 # Statik dosyalar (CSS, JS)

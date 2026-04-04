@@ -31,6 +31,7 @@ def trader_node(state: TradingState) -> dict[str, Any]:
     symbol = state["symbol"]
     params = get_trading_params()
     risk_approved = state.get("risk_approved", False)
+    provider = state.get("provider") or None
 
     logger.info("İşlemci Ajan çalışıyor: %s (onay: %s)", symbol, risk_approved)
 
@@ -104,7 +105,9 @@ def trader_node(state: TradingState) -> dict[str, Any]:
 
 Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
 
-    llm = create_agent_llm(model=params.agents.trader_model, temperature=0.1)
+    llm = create_agent_llm(
+        provider=provider, model=params.agents.trader_model, temperature=0.1
+    )
 
     try:
         response = llm.invoke(

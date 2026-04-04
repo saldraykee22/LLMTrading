@@ -66,7 +66,8 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
             continue
 
     # Duyarlılık analizi
-    analyzer = SentimentAnalyzer()
+    provider = state.get("provider") or None
+    analyzer = SentimentAnalyzer(provider=provider)
     sentiment_record = analyzer.analyze(
         symbol=symbol,
         news=news_items,
@@ -110,7 +111,7 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
 
 Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla."""
 
-    llm = create_agent_llm(model=params.agents.analyst_model)
+    llm = create_agent_llm(provider=provider, model=params.agents.analyst_model)
     try:
         response = llm.invoke(
             [

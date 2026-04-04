@@ -13,6 +13,7 @@ Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her 
 ### Temel Ozellikler
 
 - **Coklu Ajan Mimarisi:** Coordinator, Research, Debate, Risk, Trader ajanlari LangGraph uzerinden sirasyla calisir
+- **Portföy Yöneticisi:** Birden fazla varligi paralel analiz eder, bileşik skor ve CVaR ile optimal dagilim yapar
 - **Halusnasyon Filtresi:** Bull vs Bear tartisma mekanizmasi ile LLM kararlarinin dogrulanmasi
 - **Deterministik Risk Korumalari:** Drawdown, gunluk kayip ve pozisyon limitleri LLM'den bagimsiz olarak uygulanir
 - **Portfoy Kaliciligi (Persistence):** JSON tabanli kayit sistemi ile bot restart sonrasi durum korunur
@@ -82,7 +83,26 @@ python scripts/run_live.py --symbol BTC/USDT --provider deepseek
 python scripts/run_live.py --symbol BTC/USDT --provider ollama
 ```
 
-### 4. Backtest
+### 4. Portföy Yönetimi (Multi-Asset)
+
+```bash
+# 3 coin için portföy analizi ve dağılım
+python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT
+
+# Max 3 pozisyon, min skor 0.2
+python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT,AVAX/USDT --max-positions 3 --min-score 0.2
+
+# Farklı LLM sağlayıcı ile
+python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT --provider deepseek
+```
+
+Portföy yöneticisi:
+- Her sembol için tam analiz pipeline'ı çalıştırır (Coordinator → Research → Debate → Risk)
+- Bileşik skor hesaplar (sentiment %25, debate %35, trend %20, RSI %20)
+- CVaR optimizasyonu ile optimal ağırlıkları belirler
+- Nakıt dağılımını gösterir
+
+### 5. Backtest
 
 ```bash
 # Basit backtest (son 180 gun, gunluk mum)
@@ -95,7 +115,7 @@ python scripts/run_backtest.py --symbol BTC/USDT --days 90 --timeframe 1h
 python scripts/run_backtest.py --symbol AAPL --days 365 --mode walk-forward
 ```
 
-### 5. Circuit Breaker - Manuel Durdurma
+### 6. Circuit Breaker - Manuel Durdurma
 
 ```bash
 # Botu hemen durdur (pipeline baslangicinda kontrol edilir)
@@ -110,7 +130,8 @@ del data\STOP
 ## Dashboard (Izleme Paneli)
 
 `dashboard/index.html` dosyasini bir tarayicide acin. Eger `dashboard/server.py` calisiyorsa:
-- Portfolio durumu, P&L, drawdown gercek zamanli guncellenir (5 saniyelik polling)
+- Portföy durumu, P&L, drawdown gercek zamanli guncellenir (5 saniyelik polling)
+- **Portföy dağılımı** tablosu (run_portfolio.py çıktısı) otomatik gösterilir
 - Kapanmis islemler tablosu otomatik yenilenir
 - Ajan iletisim gecmisi izlenebilir
 
@@ -126,3 +147,5 @@ API olmadan: Dashboard demo veri ile calisir, hata vermez.
 | **Faz 1** | **Tamamlandi** | Portfolio persistence, Paper Trading Engine, deterministik risk kontrolleri, retry loop kaldirildi |
 | **Faz 2** | **Tamamlandi** | Circuit Breaker, Dashboard API polling, gunluk PNL sifirlama, LLM timeout/retry |
 | **Faz 3** | **Tamamlandi** | Walk-forward backtest, MACD/BB kolon guvenlik, sentiment deduplication, ATR fallback stop-loss |
+| **Faz 4** | **Tamamlandi** | **Portfolio Manager**: Multi-asset paralel analiz, bileşik skorlama, CVaR optimizasyonu, dashboard portföy görünümü |
+| **Faz 4 Düzeltmeleri** | **Tamamlandi** | TradingMode import, phase tutarsizligi, _create_llm public, provider parametresi, dashboard güvenlik, dead variable'lar |

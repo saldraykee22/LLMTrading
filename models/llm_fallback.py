@@ -17,7 +17,7 @@ from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
 from config.settings import LLMProvider, get_settings, get_trading_params
-from models.sentiment_analyzer import _create_llm
+from models.sentiment_analyzer import create_llm
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def invoke_with_fallback(
 
     for provider in providers:
         try:
-            llm = _create_llm(provider, model, temperature)
+            llm = create_llm(provider, model, temperature)
             response = llm.invoke(messages)
             content = response.content
             if isinstance(content, list):

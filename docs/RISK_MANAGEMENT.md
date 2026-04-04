@@ -2,7 +2,7 @@
 
 Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlarin halusnasyon gormesi muhtemel oldugundan risk mekanizmalari ikiye ayrilmistir: **Algoritmik** (Kodla kati sekilde saglanan) ve **Bilissel** (Risk Ajani ile yonetilen).
 
-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3 tamamlandi)
+> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
 
 ---
 
@@ -107,6 +107,7 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
 | 5 | **Drawdown limiti** | **Deterministik** | current_drawdown >= max_drawdown_pct **[Faz 1]** |
 | 6 | **Gunluk kayip limiti** | **Deterministik** | daily_loss/equity >= max_daily_loss_pct **[Faz 1]** |
 | 7 | **Pozisyon boyutu** | **Deterministik** | llm_size > equity * max_position_pct **[Faz 1]** |
+| 8 | **Nötr sinyal** | **Deterministik** | Hem tartışma hem duyarlılık nötr ise red **[Faz 4]** |
 
 > **Faz 1 oncesi:** 5, 6, 7 sadece LLM prompt'undaydi, kod tarafindan zorlanmiyordu.
 > **Faz 1 sonrasi:** Bu kontroller LLM cagrisindan bagimsiiz sekilde cod tarafindan uygulanir.
@@ -236,3 +237,36 @@ Veya `config/trading_params.yaml`:
 execution:
   mode: paper
 ```
+
+---
+
+## 8. Portfolio Manager Risk Katmani [FAZ 4 - YENİ]
+
+**Dosya:** `agents/portfolio_manager.py`
+
+Portföy yöneticisi, tek varlik riskinin ötesinde **portföy seviyesinde risk yönetimi** yapar.
+
+### Bileşik Skor Filtresi
+
+Her varlik, 4 faktörün agirlikli ortalamasiyla skorlanir:
+
+| Faktör | Agirlik | Açiklama |
+|--------|---------|----------|
+| Debate Consensus | %35 | Bull vs Bear tartışma sonucu (-1.0 ile 1.0) |
+| Sentiment Score | %25 | Haber duyarlilik skoru (-1.0 ile 1.0) |
+| Trend Strength | %20 | Teknik trend gücü (-1.0 ile 1.0) |
+| RSI (ters) | %20 | Aşiri alim/satim göstergesi |
+
+**Güven çarpani:** Düşük confidence skorlarini düsürür. `(confidence + 0.5) / 1.5`
+
+### CVaR Optimizasyonu
+
+- Tek varlik max agirlik: %40
+- Optimizasyon basarisiz olursa skor bazli dagilim fallback
+- Getiri matrisi son 90 günlük OHLCV verisinden hesaplanir
+
+### Portföy Seviyesi Kontroller
+
+- Min skor eşigi (`--min-score`): Altindaki varliklar elenir
+- Max pozisyon sayisi (`--max-positions`): Portföy çeşitlendirme siniri
+- Circuit Breaker: Portföy analizi öncesinde de kontrol edilir

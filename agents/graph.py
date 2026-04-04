@@ -3,13 +3,13 @@ Ana Ajan Grafiği (LangGraph StateGraph)
 =========================================
 Çoklu ajan iş akışını tanımlar:
 
-  Coordinator → Research Analyst → Bull vs Bear Debate → Risk Manager
-       ↑                                                      │
-       └──────────── (Red ise, max 3 iterasyon) ──────────────┘
-                                                               │
-                                                           (Onay ise)
-                                                               ↓
-                                                            Trader → END
+   Coordinator → Research Analyst → Debate → Risk Manager
+                                                  │
+                                     ┌────────────┴────────────┐
+                                     ↓                         ↓
+                                 (Approved)                (Rejected)
+                                     ↓                         ↓
+                                  Trader → END          Hold Decision → END
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _hold_decision_node(state: TradingState) -> dict[str, Any]:
     return {
         "messages": [{"role": "risk_manager", "content": msg}],
         "trade_decision": hold_decision,
-        "phase": "completed",
+        "phase": "complete",
     }
 
 
@@ -90,11 +90,12 @@ def build_trading_graph() -> StateGraph:
 
     Akış:
     coordinator → research_analyst → debate → risk_manager
-        ↑                                          │
-        └──── (rejected, iter < max) ──────────────┘
-                                                    │ (approved OR iter >= max)
-                                                    ↓
-                                                  trader → END
+                                       │
+                         ┌─────────────┴─────────────┐
+                         ↓                           ↓
+                     (Approved)                  (Rejected)
+                         ↓                           ↓
+                      trader → END          hold_decision → END
     """
     graph = StateGraph(TradingState)
 
@@ -133,7 +134,7 @@ def compile_trading_graph():
     """Grafı derler ve çalıştırılabilir hale getirir."""
     graph = build_trading_graph()
     compiled = graph.compile()
-    logger.info("Ajan grafı derlendi (5 düğüm, koşullu döngü)")
+    logger.info("Ajan grafı derlendi (6 düğüm, koşullu yönlendirme)")
     return compiled
 
 
@@ -144,6 +145,7 @@ def run_analysis(
     news_data: list | None = None,
     technical_signals: dict | None = None,
     portfolio_state: dict | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """
     Tek bir sembol için tam analiz pipeline'ını çalıştırır.
@@ -154,6 +156,7 @@ def run_analysis(
         news_data: Haber verileri (serialized dict listesi)
         technical_signals: Teknik gösterge verileri
         portfolio_state: Mevcut portföy durumu
+        provider: LLM sağlayıcı override (openrouter, deepseek, ollama)
 
     Returns:
         Nihai durum (tüm ajan çıktılarını içerir)
@@ -166,6 +169,7 @@ def run_analysis(
         news_data=news_data,
         technical_signals=technical_signals,
         portfolio_state=portfolio_state,
+        provider=provider,
     )
 
     app = compile_trading_graph()
