@@ -1,0 +1,74 @@
+# ============================================================
+# LLM Trading System — Trading Parameters
+# ============================================================
+
+# ── Risk Yönetimi ──────────────────────────────────────────
+risk:
+  max_position_pct: 0.05          # Portföyün max %5'i tek pozisyon
+  max_portfolio_risk_pct: 0.20    # Toplam portföy risk limiti %20
+  max_drawdown_pct: 0.15          # Max %15 düşüş → tüm pozisyonları kapat
+  max_daily_loss_pct: 0.03        # Günlük max %3 kayıp → işlem durdur
+  cvar_confidence: 0.95           # CVaR güven düzeyi
+  max_open_positions: 5           # Max eşzamanlı açık pozisyon
+  max_correlated_positions: 3     # Max ilişkili pozisyon sayısı
+
+# ── Volatilite / Rejim Filtresi ────────────────────────────
+regime:
+  vix_sma_period: 25              # VIX hareketli ortalama periyodu (gün)
+  vix_threshold_multiplier: 1.10  # VIX > SMA * 1.10 → yüksek volatilite
+  crypto_fear_greed_threshold: 20 # Fear & Greed Index < 20 → aşırı korku
+  halt_on_high_vol: true          # Yüksek volatilitede yeni pozisyon alma
+
+# ── Zarar-Kes (Stop-Loss) ─────────────────────────────────
+stop_loss:
+  atr_period: 14                  # ATR hesaplama periyodu
+  atr_multiplier: 2.5             # Trailing stop = entry ± ATR * 2.5
+  trailing_enabled: true          # Dinamik izleyen stop aktif mi
+  hard_stop_pct: 0.08             # Sabit zarar-kes %8 (son savunma)
+
+# ── Emir Yönetimi ─────────────────────────────────────────
+execution:
+  mode: "paper"                   # paper | live
+  exchange: "binance"             # Birincil borsa
+  default_order_type: "limit"     # limit | market
+  slippage_pct: 0.001             # Beklenen kayma %0.1
+  commission_pct: 0.001           # Binance komisyon %0.1
+  rate_limit_ms: 1200             # API istekleri arası bekleme (ms)
+  retry_count: 3                  # Başarısız emir yeniden deneme
+  retry_delay_ms: 2000            # Yeniden deneme bekleme süresi
+
+# ── Duyarlılık Analizi ────────────────────────────────────
+sentiment:
+  provider: "openrouter"          # openrouter | deepseek | ollama
+  model: "deepseek/deepseek-chat-v3-0324"
+  reasoning_model: "deepseek/deepseek-reasoner"
+  score_range: [-1.0, 1.0]       # Normalleştirilmiş skor aralığı
+  bullish_threshold: 0.3          # > 0.3 → yükseliş sinyali
+  bearish_threshold: -0.3         # < -0.3 → düşüş sinyali
+  min_confidence: 0.6             # Min güven düzeyi
+
+# ── Ajan Yapılandırması ───────────────────────────────────
+agents:
+  max_debate_rounds: 3            # Bull vs Bear max tartışma turu
+  max_retry_iterations: 3         # Risk red → yeniden analiz max tekrar
+  coordinator_model: "deepseek/deepseek-chat-v3-0324"
+  analyst_model: "deepseek/deepseek-chat-v3-0324"
+  risk_model: "deepseek/deepseek-chat-v3-0324"
+  trader_model: "deepseek/deepseek-chat-v3-0324"
+
+# ── Backtest ──────────────────────────────────────────────
+backtest:
+  train_pct: 0.70                 # Eğitim verisi oranı
+  validation_pct: 0.15            # Doğrulama verisi oranı
+  test_pct: 0.15                  # Test verisi oranı
+  initial_cash: 10000             # Başlangıç sermayesi (USDT)
+  benchmark: "BTC/USDT"           # Karşılaştırma varlığı
+
+# ── Veri Kaynakları ───────────────────────────────────────
+data:
+  crypto_exchange: "binance"
+  default_timeframe: "1h"         # Varsayılan mum periyodu
+  history_days: 365               # Geçmiş veri çekme süresi (gün)
+  news_lookback_hours: 24         # Haber geriye dönük bakış (saat)
+  cache_enabled: true
+  cache_ttl_minutes: 15           # Önbellek yaşam süresi

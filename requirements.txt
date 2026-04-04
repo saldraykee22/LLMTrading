@@ -1,0 +1,37 @@
+# ============================================================
+# LLM Trading System Dependencies
+# ============================================================
+
+# ── LLM & Agent Framework ─────────────────────────────────
+langchain>=0.3.0
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+
+# ── Data Sources ───────────────────────────────────────────
+yfinance>=0.2.40
+ccxt>=4.4.0
+finnhub-python>=2.4.20
+aiohttp>=3.10.0
+websockets>=13.0
+
+# ── Data Processing ────────────────────────────────────────
+pandas>=2.2.0
+numpy>=1.26.0
+pandas-ta>=0.3.14b
+
+# ── Risk & Optimization ───────────────────────────────────
+scipy>=1.14.0
+
+# ── Backtesting ────────────────────────────────────────────
+backtrader>=1.9.78
+
+# ── Configuration & Utilities ──────────────────────────────
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+python-dotenv>=1.0.1
+pyyaml>=6.0.2
+httpx>=0.27.0
+
+# ── Logging & Monitoring ──────────────────────────────────
+rich>=13.9.0

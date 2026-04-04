@@ -1,0 +1,201 @@
+"""
+Bull vs Bear Tartışma Modülü (Multi-Agent Debate)
+===================================================
+Halüsinasyonları filtrelemek için iki karşıt ajan tartıştırılır:
+- Bull Agent: Yükseliş senaryosunu savunur
+- Bear Agent: Düşüş senaryosunu savunur
+- Moderator: Tartışmayı sentezler ve nihai konsensüs skoru üretir
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from agents.state import TradingState
+from config.settings import get_trading_params
+from models.sentiment_analyzer import _extract_json, create_agent_llm
+
+logger = logging.getLogger(__name__)
+
+BULL_SYSTEM = """Sen finansal piyasalarda yükseliş (bullish) senaryoları savunan bir analistsin.
+Görevin, verilen varlık için YÜKSELME gerekçelerini güçlü argümanlarla sunmaktır.
+ANCAK gerçek verilere dayanmalısın — uydurma veya abartılı iddialar YASAK.
+Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et."""
+
+BEAR_SYSTEM = """Sen finansal piyasalarda düşüş (bearish) senaryoları savunan bir analistsin.
+Görevin, verilen varlık için DÜŞÜŞ risklerini güçlü argümanlarla sunmaktır.
+ANCAK gerçek verilere dayanmalısın — uydurma veya abartılı iddialar YASAK.
+Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et."""
+
+MODERATOR_SYSTEM = """Sen tarafsız bir finansal tartışma moderatörüsün.
+İki analistin (Bull ve Bear) argümanlarını değerlendir.
+
+Görevin:
+1. Her iki tarafın argümanlarının mantıksal tutarlılığını kontrol et
+2. Dayanaklarla desteklenmeyen iddiaları (halüsinasyonları) tespit et
+3. Daha güçlü argümanlara sahip tarafı belirle
+4. Nihai konsensüs skoru üret
+
+Çıktı Formatı (JSON):
+```json
+{
+    "winner": "bull|bear|draw",
+    "consensus_score": 0.0,
+    "bull_strength": 0.0,
+    "bear_strength": 0.0,
+    "hallucinations_detected": ["..."],
+    "key_arguments": {
+        "bull": ["..."],
+        "bear": ["..."]
+    },
+    "moderator_reasoning": "...",
+    "adjusted_signal": "bullish|bearish|neutral",
+    "confidence_adjustment": 0.0
+}
+```
+consensus_score: -1.0 (kesin düşüş) ile 1.0 (kesin yükseliş) arası
+"""
+
+
+def debate_node(state: TradingState) -> dict[str, Any]:
+    """
+    Bull vs Bear tartışma düğümü.
+
+    Süreç:
+    1. Bull ajan → yükseliş argümanları
+    2. Bear ajan → düşüş argümanları
+    3. (Opsiyonel) 2. tur: karşılıklı yanıtlar
+    4. Moderator → sentez ve konsensüs
+    """
+    symbol = state["symbol"]
+    params = get_trading_params()
+    max_rounds = params.agents.max_debate_rounds
+
+    logger.info("Bull vs Bear tartışması başlıyor: %s (%d tur)", symbol, max_rounds)
+
+    # Bağlam hazırla
+    sentiment = state.get("sentiment", {})
+    research = state.get("research_report", {})
+    tech = state.get("technical_signals", {})
+
+    context = f"""## Varlık: {symbol}
+
+## Araştırma Raporu Özeti
+- Duyarlılık skoru: {sentiment.get('sentiment_score', 0):.2f}
+- Sinyal: {sentiment.get('signal', 'neutral')}
+- Öneri: {research.get('recommendation', 'hold')}
+- Anahtar faktörler: {sentiment.get('key_factors', [])}
+
+## Teknik Göstergeler
+{json.dumps(tech, indent=2, ensure_ascii=False) if tech else 'Mevcut değil'}
+"""
+
+    llm = create_agent_llm(model=params.agents.analyst_model, temperature=0.3)
+
+    debate_log: list[str] = []
+
+    # ── Tur 1: İlk argümanlar ────────────────────────────
+    # Bull
+    try:
+        bull_resp = llm.invoke([
+            SystemMessage(content=BULL_SYSTEM),
+            HumanMessage(content=f"{context}\n\nBu varlık için yükseliş tezini sun. Somut verilerle destekle."),
+        ])
+        bull_args = bull_resp.content
+    except Exception as e:
+        logger.error("Bull ajan hatası: %s", e)
+        bull_args = "Bull argümanları oluşturulamadı."
+
+    # Bear
+    try:
+        bear_resp = llm.invoke([
+            SystemMessage(content=BEAR_SYSTEM),
+            HumanMessage(content=f"{context}\n\nBu varlık için düşüş risklerini sun. Somut verilerle destekle."),
+        ])
+        bear_args = bear_resp.content
+    except Exception as e:
+        logger.error("Bear ajan hatası: %s", e)
+        bear_args = "Bear argümanları oluşturulamadı."
+
+    debate_log.append(f"BULL (Tur 1): {bull_args[:300]}")
+    debate_log.append(f"BEAR (Tur 1): {bear_args[:300]}")
+
+    # ── Tur 2: Karşılıklı yanıtlar (max_rounds > 1 ise) ──
+    if max_rounds >= 2:
+        try:
+            bull_rebuttal = llm.invoke([
+                SystemMessage(content=BULL_SYSTEM),
+                HumanMessage(
+                    content=f"{context}\n\nBear tarafının argümanları:\n{bear_args}\n\n"
+                    "Bu argümanlara yanıt ver ve yükseliş tezini güçlendir."
+                ),
+            ])
+            bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
+        except Exception:
+            pass
+
+        try:
+            bear_rebuttal = llm.invoke([
+                SystemMessage(content=BEAR_SYSTEM),
+                HumanMessage(
+                    content=f"{context}\n\nBull tarafının argümanları:\n{bull_args[:1500]}\n\n"
+                    "Bu argümanlara yanıt ver ve düşüş risklerini güçlendir."
+                ),
+            ])
+            bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
+        except Exception:
+            pass
+
+    # ── Moderator ─────────────────────────────────────────
+    moderator_input = f"""{context}
+
+## Bull Tarafının Argümanları
+{bull_args[:2000]}
+
+## Bear Tarafının Argümanları
+{bear_args[:2000]}
+
+Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
+
+    try:
+        mod_resp = llm.invoke([
+            SystemMessage(content=MODERATOR_SYSTEM),
+            HumanMessage(content=moderator_input),
+        ])
+        debate_result = _extract_json(mod_resp.content)
+    except Exception as e:
+        logger.error("Moderator hatası: %s", e)
+        debate_result = {
+            "winner": "draw",
+            "consensus_score": 0.0,
+            "adjusted_signal": "neutral",
+            "moderator_reasoning": f"Moderator hatası: {e}",
+        }
+
+    # Varsayılanları doldur
+    debate_result.setdefault("winner", "draw")
+    debate_result.setdefault("consensus_score", 0.0)
+    debate_result.setdefault("adjusted_signal", "neutral")
+    debate_result.setdefault("hallucinations_detected", [])
+
+    hallu_count = len(debate_result.get("hallucinations_detected", []))
+
+    debate_msg = (
+        f"[Tartışma] {symbol} sonuç:\n"
+        f"  Kazanan: {debate_result['winner']}\n"
+        f"  Konsensüs: {debate_result['consensus_score']:.2f}\n"
+        f"  Düzeltilmiş sinyal: {debate_result['adjusted_signal']}\n"
+        f"  Tespit edilen halüsinasyon: {hallu_count}"
+    )
+
+    logger.info(debate_msg)
+
+    return {
+        "messages": [{"role": "debate", "content": debate_msg}],
+        "debate_result": debate_result,
+        "phase": "risk",
+    }
