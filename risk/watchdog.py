@@ -28,7 +28,7 @@ class Watchdog:
         portfolio: PortfolioState,
         exchange_client=None,
         crash_threshold_pct: float = 5.0,
-        check_interval_sec: int = 30,
+        check_interval_sec: int = 10,
     ) -> None:
         self.symbols = symbols
         self.portfolio = portfolio
@@ -59,6 +59,7 @@ class Watchdog:
         while not self._stop_event.is_set():
             try:
                 self._check_symbols()
+                self._check_position_sl_tp()
             except Exception as e:
                 logger.error("Watchdog check failed: %s", e)
             self._stop_event.wait(self.check_interval_sec)
@@ -91,6 +92,80 @@ class Watchdog:
 
             except Exception as e:
                 logger.warning("Watchdog check failed for %s: %s", symbol, e)
+
+    def _check_position_sl_tp(self) -> None:
+        """Checks all open positions for stop-loss and take-profit triggers."""
+        with self._lock:
+            positions_snapshot = list(self.portfolio.positions)
+
+        for pos in positions_snapshot:
+            try:
+                if pos.stop_loss <= 0 and pos.take_profit <= 0:
+                    continue
+
+                current_price = self._market_client.fetch_current_price(pos.symbol)
+                if current_price is None or current_price <= 0:
+                    continue
+
+                if pos.should_stop_loss(current_price):
+                    logger.warning(
+                        "STOP-LOSS TRIGGERED: %s (entry=%.4f, SL=%.4f, current=%.4f, amount=%.6f)",
+                        pos.symbol,
+                        pos.entry_price,
+                        pos.stop_loss,
+                        current_price,
+                        pos.amount,
+                    )
+                    self._emergency_close(pos, current_price, "stop-loss")
+
+                elif pos.should_take_profit(current_price):
+                    logger.info(
+                        "TAKE-PROFIT TRIGGERED: %s (entry=%.4f, TP=%.4f, current=%.4f, amount=%.6f)",
+                        pos.symbol,
+                        pos.entry_price,
+                        pos.take_profit,
+                        current_price,
+                        pos.amount,
+                    )
+                    self._emergency_close(pos, current_price, "take-profit")
+
+            except Exception as e:
+                logger.warning("SL/TP check failed for %s: %s", pos.symbol, e)
+
+    def _emergency_close(self, pos, price: float, reason: str) -> None:
+        """Executes an emergency close for a position."""
+        if not self.exchange_client:
+            logger.error("No exchange client available for emergency close")
+            return
+
+        with self._lock:
+            pos_still_open = next(
+                (p for p in self.portfolio.positions if p.symbol == pos.symbol), None
+            )
+            if pos_still_open is None:
+                return
+
+        from execution.order_manager import TradeOrder
+
+        order = TradeOrder(
+            symbol=pos.symbol,
+            action="sell",
+            order_type="market",
+            amount=pos.amount,
+        )
+        try:
+            result = self.exchange_client.execute_order(order, price)
+            if result.get("status") in ("filled", "closed", "open"):
+                fill_price = float(result.get("price") or price)
+                with self._lock:
+                    self.portfolio.close_position(pos.symbol, fill_price)
+                logger.warning(
+                    "Emergency sell executed for %s due to %s",
+                    pos.symbol,
+                    reason,
+                )
+        except Exception as e:
+            logger.error("Emergency sell failed for %s: %s", pos.symbol, e)
 
     def _handle_crash(self, symbol: str, price: float, drop_pct: float) -> None:
         """Handles a detected flash crash for a symbol."""

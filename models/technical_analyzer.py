@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 
+from models.orderbook_analyzer import OrderBookAnalyzer, SlippageResult
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +34,7 @@ class TechnicalSignals:
     # Göstergeler
     rsi_14: float = 50.0
     macd_signal: str = "neutral"  # bullish_cross | bearish_cross | neutral
-    macd_trend: str = "neutral"   # positive | negative | neutral
+    macd_trend: str = "neutral"  # positive | negative | neutral
     macd_histogram: float = 0.0
     bb_position: str = "middle"  # above_upper | middle | below_lower
     atr_14: float = 0.0
@@ -46,9 +48,12 @@ class TechnicalSignals:
     support_levels: list[float] = field(default_factory=list)
     resistance_levels: list[float] = field(default_factory=list)
 
+    # Order book / slippage
+    slippage_info: dict[str, Any] | None = field(default=None)
+
     def to_dict(self) -> dict[str, Any]:
         """Dict'e dönüştürür (LLM'e gönderim için)."""
-        return {
+        result = {
             "trend": self.trend,
             "trend_strength": round(self.trend_strength, 3),
             "signal": self.signal,
@@ -66,12 +71,24 @@ class TechnicalSignals:
             "support_levels": [round(s, 4) for s in self.support_levels[:3]],
             "resistance_levels": [round(r, 4) for r in self.resistance_levels[:3]],
         }
+        if self.slippage_info is not None:
+            result["slippage"] = self.slippage_info
+        return result
 
 
 class TechnicalAnalyzer:
     """Teknik gösterge hesaplama ve sinyal üretme motoru."""
 
-    def analyze(self, df: pd.DataFrame, symbol: str = "") -> TechnicalSignals:
+    def __init__(self, orderbook_analyzer: OrderBookAnalyzer | None = None) -> None:
+        self._orderbook_analyzer = orderbook_analyzer
+
+    def analyze(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "",
+        order_amount: float | None = None,
+        side: str = "buy",
+    ) -> TechnicalSignals:
         """
         OHLCV DataFrame'inden teknik göstergeleri hesaplar.
 
@@ -115,7 +132,9 @@ class TechnicalAnalyzer:
                 )
 
                 if not np.isnan(macd_line) and not np.isnan(signal_line):
-                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
+                    signals.macd_trend = (
+                        "positive" if macd_line > signal_line else "negative"
+                    )
                     if len(macd_df) >= 2:
                         prev_macd = macd_df[macd_col].iloc[-2]
                         prev_signal = macd_df[signal_col].iloc[-2]
@@ -130,7 +149,9 @@ class TechnicalAnalyzer:
                 hist = macd_df.iloc[-1, 1]
                 signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
                 if not np.isnan(macd_line) and not np.isnan(signal_line):
-                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
+                    signals.macd_trend = (
+                        "positive" if macd_line > signal_line else "negative"
+                    )
                     if len(macd_df) >= 2:
                         prev_macd = macd_df.iloc[-2, 0]
                         prev_signal = macd_df.iloc[-2, 2]
@@ -210,6 +231,20 @@ class TechnicalAnalyzer:
             signals.rsi_14,
             signals.signal,
         )
+
+        if (
+            self._orderbook_analyzer is not None
+            and order_amount is not None
+            and order_amount > 0
+        ):
+            try:
+                slippage_result = self._orderbook_analyzer.calculate_slippage(
+                    amount=order_amount, side=side
+                )
+                signals.slippage_info = slippage_result.to_dict()
+            except Exception as e:
+                logger.warning("Slippage analizi yapılamadı (%s): %s", symbol, e)
+
         return signals
 
     def _determine_trend(self, s: TechnicalSignals) -> tuple[str, float]:
