@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from config.settings import DATA_DIR, get_trading_params
 logger = logging.getLogger(__name__)
 
 PORTFOLIO_FILE = DATA_DIR / "portfolio_state.json"
+_portfolio_lock = threading.Lock()
 
 
 @dataclass
@@ -107,26 +109,27 @@ class PortfolioState:
 
     def save_to_file(self, path: Path | None = None) -> None:
         """Portföy durumunu JSON dosyasına kaydet."""
-        filepath = path or PORTFOLIO_FILE
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "initial_cash": self.initial_cash,
-            "cash": self.cash,
-            "positions": [asdict(p) for p in self.positions],
-            "closed_trades": self.closed_trades,
-            "daily_pnl": self.daily_pnl,
-            "daily_pnl_date": self.daily_pnl_date,
-            "total_pnl": self.total_pnl,
-            "max_equity": self.max_equity,
-            "current_drawdown": self.current_drawdown,
-            "benchmark_symbol": self.benchmark_symbol,
-            "benchmark_return": self.benchmark_return,
-            "alpha": self.alpha,
-        }
-        tmp_path = filepath.with_suffix(".tmp")
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        tmp_path.replace(filepath)
-        logger.info("Portföy kaydedildi: %s (equity: %.2f)", filepath, self.equity)
+        with _portfolio_lock:
+            filepath = path or PORTFOLIO_FILE
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "initial_cash": self.initial_cash,
+                "cash": self.cash,
+                "positions": [asdict(p) for p in self.positions],
+                "closed_trades": self.closed_trades,
+                "daily_pnl": self.daily_pnl,
+                "daily_pnl_date": self.daily_pnl_date,
+                "total_pnl": self.total_pnl,
+                "max_equity": self.max_equity,
+                "current_drawdown": self.current_drawdown,
+                "benchmark_symbol": self.benchmark_symbol,
+                "benchmark_return": self.benchmark_return,
+                "alpha": self.alpha,
+            }
+            tmp_path = filepath.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+            tmp_path.replace(filepath)
+            logger.info("Portföy kaydedildi: %s (equity: %.2f)", filepath, self.equity)
 
     @classmethod
     def load_from_file(cls, path: Path | None = None) -> "PortfolioState":
@@ -137,30 +140,31 @@ class PortfolioState:
             return cls()
 
         try:
-            data = json.loads(filepath.read_text(encoding="utf-8"))
-            positions = [_position_from_dict(p) for p in data.get("positions", [])]
-            state = cls(
-                initial_cash=data.get("initial_cash", 10000.0),
-                cash=data.get("cash", 10000.0),
-                positions=positions,
-                closed_trades=data.get("closed_trades", []),
-                daily_pnl=data.get("daily_pnl", 0.0),
-                daily_pnl_date=data.get("daily_pnl_date", ""),
-                total_pnl=data.get("total_pnl", 0.0),
-                max_equity=data.get("max_equity", 10000.0),
-                current_drawdown=data.get("current_drawdown", 0.0),
-                benchmark_symbol=data.get("benchmark_symbol", "BTC/USDT"),
-                benchmark_return=data.get("benchmark_return", 0.0),
-                alpha=data.get("alpha", 0.0),
-            )
-            state.reset_daily_pnl_if_needed()
-            logger.info(
-                "Portföy yüklendi: %s pozisyon, equity=%.2f, daily_pnl=%.2f",
-                len(positions),
-                state.equity,
-                state.daily_pnl,
-            )
-            return state
+            with _portfolio_lock:
+                data = json.loads(filepath.read_text(encoding="utf-8"))
+                positions = [_position_from_dict(p) for p in data.get("positions", [])]
+                state = cls(
+                    initial_cash=data.get("initial_cash", 10000.0),
+                    cash=data.get("cash", 10000.0),
+                    positions=positions,
+                    closed_trades=data.get("closed_trades", []),
+                    daily_pnl=data.get("daily_pnl", 0.0),
+                    daily_pnl_date=data.get("daily_pnl_date", ""),
+                    total_pnl=data.get("total_pnl", 0.0),
+                    max_equity=data.get("max_equity", 10000.0),
+                    current_drawdown=data.get("current_drawdown", 0.0),
+                    benchmark_symbol=data.get("benchmark_symbol", "BTC/USDT"),
+                    benchmark_return=data.get("benchmark_return", 0.0),
+                    alpha=data.get("alpha", 0.0),
+                )
+                state.reset_daily_pnl_if_needed()
+                logger.info(
+                    "Portföy yüklendi: %s pozisyon, equity=%.2f, daily_pnl=%.2f",
+                    len(positions),
+                    state.equity,
+                    state.daily_pnl,
+                )
+                return state
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logger.error("Portföy dosyası okunamadı, yeni portföy oluşturuluyor: %s", e)
             return cls()

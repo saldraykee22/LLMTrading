@@ -17,6 +17,7 @@ from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
+from utils.llm_retry import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -113,13 +114,16 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
     )
 
     try:
-        response = llm.invoke(
+        response = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
             ],
             max_tokens=params.limits.max_tokens_trader,
             response_format={"type": "json_object"},
+            max_retries=3,
+            base_delay=2.0,
         )
         trade_decision = extract_json(response.content)
     except Exception as e:

@@ -4,7 +4,7 @@ Bu proje **LangGraph** kullanilarak gelistirilmis bir Durum Grafigi (StateGraph)
 
 Durum nesnesi (State), `agents/state.py` icinde tanimlanan `TradingState` adli bir `TypedDict` sinifidir.
 
-> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5, 6 tamamlandi)
 
 ---
 
@@ -60,6 +60,8 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 
 **Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=300, JSON mode aktif, cache kontrolu LLM oncesi yapiliyor
 
+**Faz 6 guncellemesi:** RAG hafiza sorgusu eklendi — `query_similar_conditions()` ile geçmiş benzer durumlar LLM prompt'una dahil ediliyor. LLM retry/backoff (`invoke_with_retry`, max_retries=3).
+
 ---
 
 ## 3. Bull vs Bear Debate (Tartisma / Halusinasyon Filtresi)
@@ -99,6 +101,7 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 | 5 | **Drawdown limiti** | current_drawdown >= max_drawdown_pct ise red [FAZ 1] |
 | 6 | **Gunluk kayip limiti** | daily_loss/equity >= max_daily_loss_pct ise red [FAZ 1] |
 | 7 | **Pozisyon boyutu** | LLM'in onerdigi boyut equity * max_position_pct'i asiyorsa red [FAZ 1] |
+| 8 | **LLM Drift Kontrolu** | Ajan isabet orani < %40 ise red, < %60 ise uyari [FAZ 6] |
 
 > Kontrol 5, 6, 7 Faz 1'de eklendi. LLM prompt'unda var olan bu kurallar artik kodla da zorlanir.
 > Kontrol 7, LLM cagrisindan *sonra* calisir (once LLM, sonra dogrula).
@@ -119,6 +122,10 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
 **Cikti (Payload):** `risk_assessment`, `risk_approved`
 
 **Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=400, JSON mode aktif
+
+**Faz 6 guncellemesi:** DriftMonitor entegrasyonu — LLM isabet oranı kontrolü eklendi. LLM retry/backoff (max_retries=3).
+
+**Faz 6 guncellemesi:** LLM retry/backoff (5 cagriya uygulandi, max_retries=2).
 
 ---
 
@@ -147,6 +154,8 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
 Bu cikti LangGraph dongusu disina cikarak `execution/order_manager.py` modulu uzerinden `ExchangeClient.execute_order()`'a beslenir.
 
 **Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=250, JSON mode aktif
+
+**Faz 6 guncellemesi:** LLM retry/backoff (`invoke_with_retry`, max_retries=3).
 
 ---
 
@@ -245,7 +254,85 @@ python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT,AVAX/USDT -
 
 ---
 
-## Ajan Spesifikasyonlari [FAZ 5 GUNCELLEME]
+## 8. RAG Hafiza Sistemi (AgentMemoryStore) [FAZ 6 - YENİ]
+
+**Dosya:** `data/vector_store.py`
+
+**Gorevi:** ChromaDB tabanlı vektör veritabanı ile ajanın verdiği kararları ve o anki piyasa durumunu saklar. Gelecekte benzer piyasa koşulları oluştuğunda geçmiş deneyimleri sorgulayarak LLM'e bağlam sağlar.
+
+**Akış:**
+```
+[Pipeline Tamamlandı]
+        |
+        v
+AgentMemoryStore.store_decision()
+  - Piyasa durumu (fiyat, VIX, MACD, haberler) → embedding
+  - Metadata: {symbol, action, accuracy, timestamp}
+  - ChromaDB'ye kaydet
+        |
+        v
+[Sonraki Analizde]
+        |
+        v
+AgentMemoryStore.query_similar_conditions()
+  - Mevcut piyasa durumu → embedding
+  - En benzer 3 geçmiş durum sorgulanır
+  - Geçmiş aksiyonlar ve başarı oranları döndürülür
+        |
+        v
+Research Analyst prompt'una dahil edilir
+```
+
+**Kullanim:**
+```python
+from data.vector_store import AgentMemoryStore
+
+# Karar kaydet
+memory = AgentMemoryStore()
+memory.store_decision(state, accuracy_score=0.75)
+
+# Benzer durumları sorgula
+history = memory.query_similar_conditions(state, n_results=3)
+# → [{"past_action": "buy", "past_accuracy": 0.75, "market_context": "..."}]
+```
+
+**Not:** `chromadb` `requirements.txt`'de bulunmalıdır. ChromaDB başlatılamazsa graceful fallback (işlem sessizce atlanır).
+
+---
+
+## 9. Concept Drift Monitor (DriftMonitor) [FAZ 6 - YENİ]
+
+**Dosya:** `evaluation/drift_monitor.py`
+
+**Gorevi:** LLM'in sentiment tahminlerinin zaman içinde bozulup bozulmadığını (concept drift) tespit eder. Sentiment skorunun yönü ile fiyatın yönünü karşılaştırarak ajan isabet oranını hesaplar.
+
+**Hesaplama Mantığı:**
+```
+Son 5 sentiment kaydı alınır
+Her kayıt için:
+  - sentiment_score > 0 → bullish bekleniyor
+  - sentiment_score < 0 → bearish bekleniyor
+  - Fiyat değişimi yönü ile karşılaştır
+  - Yönler eşleşirse → doğru tahmin
+
+accuracy = doğru / toplam
+```
+
+**Risk Manager Entegrasyonu:**
+| Accuracy | Aksiyon |
+|----------|---------|
+| >= %60 | Normal — check passed |
+| %40 - %60 | Uyarı — "LLM isabet oranı düşüyor" |
+| < %40 | RED — "LLM İsabet Oranı Çok Düşük (Drift)" |
+
+**Accuracy Cache:**
+- `data/agent_accuracy.json` dosyasında sembol bazlı saklanır
+- `get_agent_accuracy(symbol)` ile okunur
+- Varsayılan: 1.0 (güvenli kabul — veri yoksa)
+
+---
+
+## Ajan Spesifikasyonlari [FAZ 6 GUNCELLEME]
 
 ### max_tokens ve JSON Mode
 
@@ -304,3 +391,27 @@ limits:
 | `phase` | str | Mevcut asama (init/research/debate/risk/trade/complete) |
 | `iteration` | int | Iterasyon sayaci (artik sadece referans) |
 | `provider` | str | LLM saglayici override (openrouter, deepseek, ollama) |
+| `historical_context` | list | [FAZ 6] RAG sorgusu sonucu — geçmiş benzer durumlar |
+| `agent_accuracy` | float | [FAZ 6] DriftMonitor isabet oranı (varsayılan: 1.0) |
+
+---
+
+## LLM Retry/Backoff [FAZ 6]
+
+Tüm ajan LLM çağrıları artık `utils/llm_retry.py::invoke_with_retry()` ile korunmaktadır.
+
+### Retry Parametreleri
+
+| Ajan | max_retries | base_delay | Açıklama |
+|------|-------------|------------|----------|
+| Sentiment | LLM kendi retry | - | `ChatOpenAI(max_retries=2)` |
+| Research | 3 | 2.0s | Exponential: 2s → 4s → 8s |
+| Debate (Bull/Bear/Mod) | 2 | 2.0s | Exponential: 2s → 4s |
+| Risk Manager | 3 | 2.0s | Exponential: 2s → 4s → 8s |
+| Trader | 3 | 2.0s | Exponential: 2s → 4s → 8s |
+
+### Davranış
+
+1. LLM çağrısı başarısız olursa → `base_delay * 2^attempt` saniye bekle
+2. Maksimum deneme sayısına ulaşılırsa → exception yukarı fırlatılır
+3. Ajan try/except bloğu ile fallback değer döner

@@ -189,10 +189,12 @@ class TestExtractJson:
         result = extract_json(text)
         assert result == {"signal": "bullish"}
 
-    def test_invalid_returns_empty(self):
+    def test_invalid_returns_error_flag(self):
         text = "not json at all"
         result = extract_json(text)
-        assert result == {}
+        assert "__parse_error__" in result
+        assert result["__parse_error__"] is True
+        assert "__raw_text__" in result
 
     def test_markdown_code_block(self):
         text = '```json\n{"sentiment_score": 0.5, "signal": "bullish"}\n```'

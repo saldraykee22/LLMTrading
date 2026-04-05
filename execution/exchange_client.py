@@ -231,7 +231,7 @@ class ExchangeClient:
             ]
         except ccxt.BaseError as e:
             logger.error("Açık emir sorgulama hatası: %s", e)
-            return []
+            return [{"error": str(e), "data": None}]
 
     def get_balance(self) -> dict[str, float]:
         """Hesap bakiyesini çeker."""
@@ -246,4 +246,4 @@ class ExchangeClient:
             }
         except ccxt.BaseError as e:
             logger.error("Bakiye hatası: %s", e)
-            return {}
+            return {"error": str(e), "data": None}

@@ -48,5 +48,5 @@ def extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("JSON çıkarılamadı, ham yanıt: %s", text[:200])
-    return {}
+    logger.error("JSON parse FAILED — raw response (first 300 chars): %s", text[:300])
+    return {"__parse_error__": True, "__raw_text__": text[:500]}

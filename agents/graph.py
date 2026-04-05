@@ -184,4 +184,14 @@ def run_analysis(
     app = get_compiled_graph()
     result = app.invoke(initial)
 
+    # ── Son Kararı RAG Hafızasına Kaydet ───────────────────
+    try:
+        from data.vector_store import AgentMemoryStore
+        from evaluation.drift_monitor import DriftMonitor
+        
+        acc = DriftMonitor().get_agent_accuracy(symbol)
+        AgentMemoryStore().store_decision(result, accuracy_score=acc)
+    except Exception as e:
+        logger.error("Hafıza kaydetme hatası: %s", e)
+
     return result

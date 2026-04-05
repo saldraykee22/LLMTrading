@@ -23,33 +23,80 @@ class AssetClass(str, Enum):
 @dataclass
 class ResolvedSymbol:
     """Çözümlenmiş sembol bilgisi."""
-    raw: str              # Kullanıcının girdiği ham sembol
-    symbol: str           # Normalize edilmiş sembol
+
+    raw: str  # Kullanıcının girdiği ham sembol
+    symbol: str  # Normalize edilmiş sembol
     asset_class: AssetClass
-    exchange: str         # Borsa adı (binance, yahoo, vb.)
-    base: str             # Temel varlık (BTC, AAPL, BIMAS)
-    quote: str            # Karşılık birimi (USDT, USD, TRY)
+    exchange: str  # Borsa adı (binance, yahoo, vb.)
+    base: str  # Temel varlık (BTC, AAPL, BIMAS)
+    quote: str  # Karşılık birimi (USDT, USD, TRY)
 
 
 # ── Bilinen BIST sembolleri (genişletilebilir) ─────────────
 BIST_SYMBOLS = {
-    "BIMAS", "THYAO", "SAHOL", "GARAN", "ASELS", "KCHOL",
-    "TUPRS", "EREGL", "SISE", "AKBNK", "YKBNK", "HALKB",
-    "TOASO", "FROTO", "ARCLK", "PETKM", "TAVHL", "TKFEN",
-    "KOZAL", "KOZAA", "DOHOL", "ENKAI", "EKGYO", "ISCTR",
-    "VAKBN", "PGSUS", "BERA", "SASA", "GUBRF", "KONTR",
+    "BIMAS",
+    "THYAO",
+    "SAHOL",
+    "GARAN",
+    "ASELS",
+    "KCHOL",
+    "TUPRS",
+    "EREGL",
+    "SISE",
+    "AKBNK",
+    "YKBNK",
+    "HALKB",
+    "TOASO",
+    "FROTO",
+    "ARCLK",
+    "PETKM",
+    "TAVHL",
+    "TKFEN",
+    "KOZAL",
+    "KOZAA",
+    "DOHOL",
+    "ENKAI",
+    "EKGYO",
+    "ISCTR",
+    "VAKBN",
+    "PGSUS",
+    "BERA",
+    "SASA",
+    "GUBRF",
+    "KONTR",
 }
 
 # ── Kripto çift pattern ───────────────────────────────────
-CRYPTO_PAIR_RE = re.compile(
-    r"^([A-Z]{2,10})[/\-_]([A-Z]{2,10})$", re.IGNORECASE
-)
+CRYPTO_PAIR_RE = re.compile(r"^([A-Z]{2,10})[/\-_]([A-Z]{2,10})$", re.IGNORECASE)
 
 CRYPTO_BASES = {
-    "BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE",
-    "AVAX", "DOT", "MATIC", "LINK", "UNI", "ATOM", "LTC",
-    "NEAR", "APT", "ARB", "OP", "SUI", "SEI", "TIA",
-    "FET", "RENDER", "INJ", "PEPE", "WIF", "BONK",
+    "BTC",
+    "ETH",
+    "BNB",
+    "SOL",
+    "XRP",
+    "ADA",
+    "DOGE",
+    "AVAX",
+    "DOT",
+    "MATIC",
+    "LINK",
+    "UNI",
+    "ATOM",
+    "LTC",
+    "NEAR",
+    "APT",
+    "ARB",
+    "OP",
+    "SUI",
+    "SEI",
+    "TIA",
+    "FET",
+    "RENDER",
+    "INJ",
+    "PEPE",
+    "WIF",
+    "BONK",
 }
 
 
@@ -82,7 +129,7 @@ def resolve_symbol(raw_input: str) -> ResolvedSymbol:
     # 2) Kripto çifti (birleşik): BTCUSDT → BTC/USDT
     for base in sorted(CRYPTO_BASES, key=len, reverse=True):
         if raw.startswith(base) and len(raw) > len(base):
-            quote = raw[len(base):]
+            quote = raw[len(base) :]
             if quote in ("USDT", "BUSD", "USDC", "BTC", "ETH", "USD", "TRY"):
                 return ResolvedSymbol(
                     raw=raw_input,
@@ -146,3 +193,37 @@ def is_crypto(symbol: str) -> bool:
 def is_bist(symbol: str) -> bool:
     """Sembolün BIST hissesi olup olmadığını kontrol eder."""
     return resolve_symbol(symbol).asset_class == AssetClass.BIST
+
+
+def refresh_crypto_bases(exchange_name: str = "binance") -> set[str]:
+    """
+    Fetch current trading pairs from exchange and update CRYPTO_BASES.
+    Returns the set of base currencies found.
+    """
+    try:
+        import ccxt
+
+        exchange_class = getattr(ccxt, exchange_name, None)
+        if exchange_class is None:
+            return CRYPTO_BASES
+
+        exchange = exchange_class({"enableRateLimit": True})
+        markets = exchange.load_markets()
+
+        bases: set[str] = set()
+        for symbol in markets:
+            market = markets[symbol]
+            if market.get("base") and market.get("quote") in (
+                "USDT",
+                "BTC",
+                "ETH",
+                "USDC",
+            ):
+                bases.add(market["base"])
+
+        return bases
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to refresh crypto bases: %s", e)
+        return CRYPTO_BASES

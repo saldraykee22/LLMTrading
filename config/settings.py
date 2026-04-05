@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # System
     log_level: str = "INFO"
     trading_mode: TradingMode = TradingMode.PAPER
-    confirm_live_trade: bool = False  # Safety lock for LIVE trading
+    confirm_live_trade: bool = True  # Safety lock for LIVE trading
 
     # Dashboard
     dashboard_api_key: str | None = None

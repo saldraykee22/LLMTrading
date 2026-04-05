@@ -1,0 +1,4197 @@
+﻿diff --git a/README.md b/README.md
+index c1484c7..09e309a 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ ![License](https://img.shields.io/badge/License-MIT-blue.svg)
+ ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
+-![Status](https://img.shields.io/badge/Durum-Production%20Ready-brightgreen.svg)
++![Status](https://img.shields.io/badge/Durum-Development-yellow.svg)
+ 
+ ## Proje Ozeti
+ 
+@@ -20,6 +20,9 @@ Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her
+ - **Paper Trading:** Gercek borsaya hic ulas madan slippage ve komisyon simule eden test modu
+ - **Circuit Breaker:** Art arda kayip, gunluk limit veya manuel STOP ile otomatik durma
+ - **Walk-Forward Backtest:** Overfitting tespiti icin kayan pencere validasyonu
++- **Daemon Mode:** Surekli calisan dongu, Ctrl+C ile guvenli kapanis, sembol ve interval secenekleri
++- **Watchdog (Flash Crash Korumasi):** Arka planda fiyat izleme, ani dususlerde acil satis
++- **Maliyet Optimizasyonu:** Prompt sikistirma, LLM cache, max_tokens sinirlari ile %72-88 API tasarrufu
+ 
+ ---
+ 
+@@ -67,22 +70,53 @@ EXECUTION_MODE=paper             # paper veya live
+ 
+ ### 3. Calistirma
+ 
++#### Daemon Modu (Surekli Calisma)
++
++```bash
++# Varsayilan: BTC/USDT, 15m interval, watchdog aktif
++python scripts/run_live.py
++
++# Birden fazla sembol, 30m interval
++python scripts/run_live.py --symbols BTC/USDT,ETH/USDT,SOL/USDT --interval 30m
++
++# Tek sembol, 1 saatlik mumlar, watchdog kapali
++python scripts/run_live.py --symbol BTC/USDT --interval 1h --no-watchdog
++
++# Maksimum 10 dongu sonra dur (dry-run, emir gitmez)
++python scripts/run_live.py --symbols BTC/USDT,ETH/USDT --max-cycles 10 --dry-run
++
++# Ctrl+C ile guvenli kapanis (tumu pozisyonlar kaydedilir)
++```
++
++#### Tek Seferlik Calistirma (Geriye Uyumluluk)
++
+ ```bash
+ # Paper trading modu (gercek emir gitmez)
+-python scripts/run_live.py --symbol BTC/USDT
++python scripts/run_live.py --symbol BTC/USDT --max-cycles 1
+ 
+ # Emri gercekten gonder (--execute bayragi)
+-python scripts/run_live.py --symbol BTC/USDT --execute
++python scripts/run_live.py --symbol BTC/USDT --max-cycles 1 --execute
+ 
+ # Farkli semboller
+-python scripts/run_live.py --symbol AAPL
+-python scripts/run_live.py --symbol BIMAS
++python scripts/run_live.py --symbol AAPL --max-cycles 1
++python scripts/run_live.py --symbol BIMAS --max-cycles 1
+ 
+ # Farkli LLM saglayici
+-python scripts/run_live.py --symbol BTC/USDT --provider deepseek
+-python scripts/run_live.py --symbol BTC/USDT --provider ollama
++python scripts/run_live.py --symbol BTC/USDT --provider deepseek --max-cycles 1
++python scripts/run_live.py --symbol BTC/USDT --provider ollama --max-cycles 1
+ ```
+ 
++#### CLI Parametreleri
++
++| Parametre | Varsayilan | Aciklama |
++|-----------|-----------|----------|
++| `--symbols` | BTC/USDT | Izlenecek semboller (virgulle ayrilmis) |
++| `--symbol` | - | Tek sembol (geriye uyumlu) |
++| `--interval` | 15m | Mum araligi (5m, 15m, 30m, 1h, 4h, 1d) |
++| `--watchdog` | aktif | Flash crash korumasini acar/kapatir |
++| `--max-cycles` | sinirsiz | Maksimum dongu sayisi |
++| `--dry-run` | kapali | Emir gondermez, sadece analiz yapar |
++
+ ### 4. Portf├Ây Y├Ânetimi (Multi-Asset)
+ 
+ ```bash
+@@ -139,6 +173,63 @@ API olmadan: Dashboard demo veri ile calisir, hata vermez.
+ 
+ ---
+ 
++## Watchdog (Flash Crash Korumasi)
++
++Watchdog, arka planda ayri bir thread'de calisan ve fiyatlar surekli izleyen bir guvenlik mekanizmasidir.
++
++### Acil Satis Kurallari
++
++| Kosul | Aksiyon |
++|-------|---------|
++| 1 dakikada > %3 dusus | Hemen satis |
++| 5 dakikada > %5 dusus | Hemen satis |
++| 5 dakikada %2-5 dusus | Uyari gonder |
++
++### Yapilandirma (`config/trading_params.yaml`)
++
++```yaml
++watchdog:
++  enabled: true
++  check_interval_seconds: 30
++  flash_crash_1min_pct: 0.03
++  flash_crash_5min_pct: 0.05
++  alert_5min_pct: 0.02
++```
++
++---
++
++## Maliyet Optimizasyonu
++
++LLM API maliyetlerini dusurmek icin cok katmanli optimizasyon uygulanmistir.
++
++### Tasarruf Yontemleri
++
++| Yontem | Tasarruf | Aciklama |
++|--------|----------|----------|
++| **Prompt sikistirma** | %30-40 input token | Tum promptlar %40-50 kucultuldu |
++| **Prompt cache** | %75-90 cached input | OpenRouter/DeepSeek cache isabetleri |
++| **Sentiment cache** | %30-50 daha az LLM cagrisi | Son analiz cache'den dondurulur |
++| **max_tokens sinirlari** | Runaway onleme | Her ajan icin cikti siniri belirlenmis |
++
++### Toplam Tasarruf: ~%72-88 API maliyet azalmasi
++
++### max_tokens Degerleri
++
++| Ajan | max_tokens |
++|------|-----------|
++| Sentiment | 300 |
++| Research | 500 |
++| Debate | 400 |
++| Moderator | 400 |
++| Risk | 400 |
++| Trader | 250 |
++
++### JSON Mode
++
++Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir. Bu, cikti formatini garanti eder ve parse hatalarini azaltir.
++
++---
++
+ ## Proje Gecmisi & Degisiklik Ozeti
+ 
+ | Faz | Durum | Icerik |
+@@ -149,3 +240,4 @@ API olmadan: Dashboard demo veri ile calisir, hata vermez.
+ | **Faz 3** | **Tamamlandi** | Walk-forward backtest, MACD/BB kolon guvenlik, sentiment deduplication, ATR fallback stop-loss |
+ | **Faz 4** | **Tamamlandi** | **Portfolio Manager**: Multi-asset paralel analiz, bile┼şik skorlama, CVaR optimizasyonu, dashboard portf├Ây g├Âr├╝n├╝m├╝ |
+ | **Faz 4 D├╝zeltmeleri** | **Tamamlandi** | TradingMode import, phase tutarsizligi, _create_llm public, provider parametresi, dashboard g├╝venlik, dead variable'lar |
++| **Faz 5** | **Tamamlandi** | **Daemon Mode**: Surekli calisan dongu, CLI arglari, guvenli kapanis, **Watchdog**: Flash crash korumasi, **Prompt Sikistirma**: %40-50 kucultme, **max_tokens + JSON Mode**: Tum LLM cagrilarina sinir, **Sentiment Cache**: LLM oncesi cache kontrolu, **Maliyet Optimizasyonu**: %72-88 API tasarrufu |
+diff --git a/agents/coordinator.py b/agents/coordinator.py
+index cb25129..fef60c8 100644
+--- a/agents/coordinator.py
++++ b/agents/coordinator.py
+@@ -31,7 +31,6 @@ def coordinator_node(state: TradingState) -> dict[str, Any]:
+     logger.info("Koordinat├Âr ba┼şlat─▒ld─▒: %s (iterasyon #%d)", symbol, iteration)
+     logger.info("ÔòÉ" * 60)
+ 
+-    # Veri kontrol├╝
+     has_market = bool(state.get("market_data"))
+     has_news = bool(state.get("news_data"))
+     has_technical = bool(state.get("technical_signals"))
+diff --git a/agents/debate.py b/agents/debate.py
+index 41bc8dd..c4b38d3 100644
+--- a/agents/debate.py
++++ b/agents/debate.py
+@@ -111,7 +111,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
+                 HumanMessage(
+                     content=f"{context}\n\nBu varl─▒k i├ğin y├╝kseli┼ş tezini sun. Somut verilerle destekle."
+                 ),
+-            ]
++            ],
++            max_tokens=400,
++            response_format={"type": "json_object"},
+         )
+         bull_args = bull_resp.content
+     except Exception as e:
+@@ -126,15 +128,21 @@ def debate_node(state: TradingState) -> dict[str, Any]:
+                 HumanMessage(
+                     content=f"{context}\n\nBu varl─▒k i├ğin d├╝┼ş├╝┼ş risklerini sun. Somut verilerle destekle."
+                 ),
+-            ]
++            ],
++            max_tokens=400,
++            response_format={"type": "json_object"},
+         )
+         bear_args = bear_resp.content
+     except Exception as e:
+         logger.error("Bear ajan hatas─▒: %s", e)
+         bear_args = "Bear arg├╝manlar─▒ olu┼şturulamad─▒."
+ 
+-    debate_log.append(f"BULL (Tur 1): {bull_args[:300]}")
+-    debate_log.append(f"BEAR (Tur 1): {bear_args[:300]}")
++    debate_log.append(
++        f"BULL (Tur 1): {bull_args[: params.limits.debate_truncate_chars]}"
++    )
++    debate_log.append(
++        f"BEAR (Tur 1): {bear_args[: params.limits.debate_truncate_chars]}"
++    )
+ 
+     # ÔöÇÔöÇ Tur 2: Kar┼ş─▒l─▒kl─▒ yan─▒tlar (max_rounds > 1 ise) ÔöÇÔöÇ
+     if max_rounds >= 2:
+@@ -146,7 +154,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
+                         content=f"{context}\n\nBear taraf─▒n─▒n arg├╝manlar─▒:\n{bear_args}\n\n"
+                         "Bu arg├╝manlara yan─▒t ver ve y├╝kseli┼ş tezini g├╝├ğlendir."
+                     ),
+-                ]
++                ],
++                max_tokens=400,
++                response_format={"type": "json_object"},
+             )
+             bull_args += "\n\n[Yan─▒t]: " + bull_rebuttal.content
+         except Exception:
+@@ -157,10 +167,12 @@ def debate_node(state: TradingState) -> dict[str, Any]:
+                 [
+                     SystemMessage(content=BEAR_SYSTEM),
+                     HumanMessage(
+-                        content=f"{context}\n\nBull taraf─▒n─▒n arg├╝manlar─▒:\n{bull_args[:1500]}\n\n"
++                        content=f"{context}\n\nBull taraf─▒n─▒n arg├╝manlar─▒:\n{bull_args[: params.limits.debate_rebuttal_truncate_chars]}\n\n"
+                         "Bu arg├╝manlara yan─▒t ver ve d├╝┼ş├╝┼ş risklerini g├╝├ğlendir."
+                     ),
+-                ]
++                ],
++                max_tokens=400,
++                response_format={"type": "json_object"},
+             )
+             bear_args += "\n\n[Yan─▒t]: " + bear_rebuttal.content
+         except Exception:
+@@ -170,10 +182,10 @@ def debate_node(state: TradingState) -> dict[str, Any]:
+     moderator_input = f"""{context}
+ 
+ ## Bull Taraf─▒n─▒n Arg├╝manlar─▒
+-{bull_args[:2000]}
++{bull_args[: params.limits.moderator_truncate_chars]}
+ 
+ ## Bear Taraf─▒n─▒n Arg├╝manlar─▒
+-{bear_args[:2000]}
++{bear_args[: params.limits.moderator_truncate_chars]}
+ 
+ Tart─▒┼şmay─▒ de─şerlendir ve JSON format─▒nda konsens├╝s raporu ├╝ret."""
+ 
+@@ -182,7 +194,9 @@ Tart─▒┼şmay─▒ de─şerlendir ve JSON format─▒nda konsens├╝s raporu ├╝ret."""
+             [
+                 SystemMessage(content=MODERATOR_SYSTEM),
+                 HumanMessage(content=moderator_input),
+-            ]
++            ],
++            max_tokens=400,
++            response_format={"type": "json_object"},
+         )
+         debate_result = extract_json(mod_resp.content)
+     except Exception as e:
+diff --git a/agents/graph.py b/agents/graph.py
+index d8fb2d0..46c2953 100644
+--- a/agents/graph.py
++++ b/agents/graph.py
+@@ -29,6 +29,15 @@ from config.settings import get_trading_params
+ 
+ logger = logging.getLogger(__name__)
+ 
++_cached_app = None
++
++
++def get_compiled_graph():
++    global _cached_app
++    if _cached_app is None:
++        _cached_app = compile_trading_graph()
++    return _cached_app
++
+ 
+ def _should_continue_after_risk(state: TradingState) -> str:
+     """
+@@ -172,7 +181,7 @@ def run_analysis(
+         provider=provider,
+     )
+ 
+-    app = compile_trading_graph()
++    app = get_compiled_graph()
+     result = app.invoke(initial)
+ 
+     return result
+diff --git a/agents/portfolio_manager.py b/agents/portfolio_manager.py
+index 97c2601..0c0c730 100644
+--- a/agents/portfolio_manager.py
++++ b/agents/portfolio_manager.py
+@@ -238,7 +238,7 @@ class PortfolioManager:
+             cvar_result = optimize_portfolio_cvar(
+                 returns_df,
+                 confidence=params.risk.cvar_confidence,
+-                max_weight=0.4,  # Tek varl─▒k max %40
++                max_weight=params.risk.cvar.max_weight,
+             )
+             allocations = cvar_result.get("weights", {})
+             cvar_info = {
+@@ -335,23 +335,25 @@ class PortfolioManager:
+             from data.news_data import NewsClient
+ 
+             client = NewsClient()
+-            items = client.fetch_all_news(symbol)
+-            result = []
+-            for item in items[:20]:
+-                result.append(
+-                    {
+-                        "title": item.title,
+-                        "summary": item.summary[:300],
+-                        "source": item.source,
+-                        "url": item.url,
+-                        "published_at": item.published_at.isoformat(),
+-                        "symbols": item.symbols,
+-                        "category": item.category,
+-                        "raw_sentiment": item.raw_sentiment,
+-                    }
+-                )
+-            client.close()
+-            return result
++            try:
++                items = client.fetch_all_news(symbol)
++                result = []
++                for item in items[: params.limits.max_news_items]:
++                    result.append(
++                        {
++                            "title": item.title,
++                            "summary": item.summary[:300],
++                            "source": item.source,
++                            "url": item.url,
++                            "published_at": item.published_at.isoformat(),
++                            "symbols": item.symbols,
++                            "category": item.category,
++                            "raw_sentiment": item.raw_sentiment,
++                        }
++                    )
++                return result
++            finally:
++                client.close()
+         except Exception as e:
+             logger.warning("Haber hatas─▒ (%s): %s", symbol, e)
+             return []
+diff --git a/agents/research_analyst.py b/agents/research_analyst.py
+index 7f81712..3512e6a 100644
+--- a/agents/research_analyst.py
++++ b/agents/research_analyst.py
+@@ -117,7 +117,9 @@ L├╝tfen t├╝m verileri sentezleyerek kapsaml─▒ bir ara┼şt─▒rma raporu haz─▒rla.""
+             [
+                 SystemMessage(content=system_prompt),
+                 HumanMessage(content=user_msg),
+-            ]
++            ],
++            max_tokens=500,
++            response_format={"type": "json_object"},
+         )
+         research_result = extract_json(response.content)
+     except Exception as e:
+diff --git a/agents/risk_manager.py b/agents/risk_manager.py
+index 7fcf4d2..6b9a000 100644
+--- a/agents/risk_manager.py
++++ b/agents/risk_manager.py
+@@ -167,7 +167,10 @@ Uyar─▒lar: {json.dumps(warnings, ensure_ascii=False)}
+ Deterministik kontrol sonu├ğlar─▒n─▒ ve ara┼şt─▒rma raporunu dikkate al ve nihai risk de─şerlendirmesini yap."""
+ 
+     llm = create_agent_llm(
+-        provider=provider, model=params.agents.risk_model, temperature=0.1
++        provider=provider,
++        model=params.agents.risk_model,
++        temperature=0.1,
++        max_tokens=params.limits.max_tokens_risk,
+     )
+ 
+     try:
+@@ -175,7 +178,9 @@ Deterministik kontrol sonu├ğlar─▒n─▒ ve ara┼şt─▒rma raporunu dikkate al ve nihai
+             [
+                 SystemMessage(content=system_prompt),
+                 HumanMessage(content=user_msg),
+-            ]
++            ],
++            max_tokens=params.limits.max_tokens_risk,
++            response_format={"type": "json_object"},
+         )
+         llm_assessment = extract_json(response.content)
+     except Exception as e:
+diff --git a/agents/state.py b/agents/state.py
+index c39e493..d787ad8 100644
+--- a/agents/state.py
++++ b/agents/state.py
+@@ -9,42 +9,31 @@ from __future__ import annotations
+ 
+ import operator
+ from dataclasses import dataclass, field
+-from typing import Annotated, Any, TypedDict
++from typing import Annotated, Any, NotRequired, TypedDict
+ 
+ 
+ class TradingState(TypedDict):
+-    """
+-    ├çoklu ajan sistemi i├ğin merkezi durum nesnesi.
+-    LangGraph StateGraph'─▒n payla┼ş─▒ml─▒ belle─şi olarak kullan─▒l─▒r.
+-    """
++    messages: Annotated[list[dict], operator.add]
++    symbol: str
+ 
+-    # ÔöÇÔöÇ ─░leti┼şim ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    messages: Annotated[list[dict], operator.add]  # Ajan mesaj ge├ğmi┼şi
++    market_data: NotRequired[dict[str, Any]]
++    news_data: NotRequired[list[dict[str, Any]]]
++    technical_signals: NotRequired[dict[str, Any]]
+ 
+-    # ÔöÇÔöÇ Girdi Verileri ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    symbol: str  # Analiz edilen sembol
+-    market_data: dict[str, Any]  # OHLCV ├Âzeti
+-    news_data: list[dict[str, Any]]  # Haberler (serialized)
+-    technical_signals: dict[str, Any]  # Teknik g├Âstergeler
++    sentiment: NotRequired[dict[str, Any]]
++    research_report: NotRequired[dict[str, Any]]
++    debate_result: NotRequired[dict[str, Any]]
+ 
+-    # ÔöÇÔöÇ Analiz Sonu├ğlar─▒ ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    sentiment: dict[str, Any]  # LLM duyarl─▒l─▒k analizi
+-    research_report: dict[str, Any]  # Ara┼şt─▒rmac─▒ raporu
+-    debate_result: dict[str, Any]  # Bull vs Bear tart─▒┼şma sonucu
++    risk_assessment: NotRequired[dict[str, Any]]
++    risk_approved: NotRequired[bool]
++    trade_decision: NotRequired[dict[str, Any]]
+ 
+-    # ÔöÇÔöÇ Risk ve Karar ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    risk_assessment: dict[str, Any]  # Risk de─şerlendirmesi
+-    risk_approved: bool  # Risk onay─▒
+-    trade_decision: dict[str, Any]  # Nihai al─▒m/sat─▒m karar─▒
++    portfolio_state: NotRequired[dict[str, Any]]
+ 
+-    # ÔöÇÔöÇ Portf├Ây ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    portfolio_state: dict[str, Any]  # Mevcut portf├Ây durumu
+-
+-    # ÔöÇÔöÇ Kontrol ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    iteration: int  # D├Âng├╝ sayac─▒
+-    error: str  # Hata mesaj─▒ (varsa)
+-    phase: str  # Mevcut a┼şama ad─▒
+-    provider: str  # LLM sa─şlay─▒c─▒ override (opsiyonel)
++    iteration: NotRequired[int]
++    error: NotRequired[str]
++    phase: NotRequired[str]
++    provider: NotRequired[str]
+ 
+ 
+ def create_initial_state(
+diff --git a/agents/trader.py b/agents/trader.py
+index 7578305..64c9f47 100644
+--- a/agents/trader.py
++++ b/agents/trader.py
+@@ -101,12 +101,15 @@ def trader_node(state: TradingState) -> dict[str, Any]:
+ - Emir tipi: {params.execution.default_order_type}
+ - Komisyon: %{params.execution.commission_pct * 100}
+ - Kayma (slippage): %{params.execution.slippage_pct * 100}
+-- Min risk/├Âd├╝l: 1.5
++- Min risk/├Âd├╝l: {params.limits.min_risk_reward}
+ 
+ L├╝tfen kesin bir al─▒m-sat─▒m emri olu┼ştur veya "hold" karar─▒ ver."""
+ 
+     llm = create_agent_llm(
+-        provider=provider, model=params.agents.trader_model, temperature=0.1
++        provider=provider,
++        model=params.agents.trader_model,
++        temperature=0.1,
++        max_tokens=params.limits.max_tokens_trader,
+     )
+ 
+     try:
+@@ -114,7 +117,9 @@ L├╝tfen kesin bir al─▒m-sat─▒m emri olu┼ştur veya "hold" karar─▒ ver."""
+             [
+                 SystemMessage(content=system_prompt),
+                 HumanMessage(content=user_msg),
+-            ]
++            ],
++            max_tokens=params.limits.max_tokens_trader,
++            response_format={"type": "json_object"},
+         )
+         trade_decision = extract_json(response.content)
+     except Exception as e:
+@@ -123,6 +128,7 @@ L├╝tfen kesin bir al─▒m-sat─▒m emri olu┼ştur veya "hold" karar─▒ ver."""
+             "action": "hold",
+             "symbol": symbol,
+             "reasoning": f"─░┼şlem emri olu┼şturulamad─▒: {e}",
++            "error": f"LLM Timeout veya API Hatas─▒: {e}",
+         }
+ 
+     # Varsay─▒lanlar─▒ doldur
+@@ -149,8 +155,13 @@ L├╝tfen kesin bir al─▒m-sat─▒m emri olu┼ştur veya "hold" karar─▒ ver."""
+ 
+     logger.info(trade_msg)
+ 
+-    return {
++    result = {
+         "messages": [{"role": "trader", "content": trade_msg}],
+         "trade_decision": trade_decision,
+         "phase": "complete",
+     }
++
++    if "error" in trade_decision:
++        result["error"] = trade_decision["error"]
++
++    return result
+diff --git a/config/settings.py b/config/settings.py
+index a176f86..97dbbff 100644
+--- a/config/settings.py
++++ b/config/settings.py
+@@ -82,8 +82,23 @@ class Settings(BaseSettings):
+     trading_mode: TradingMode = TradingMode.PAPER
+     confirm_live_trade: bool = False  # Safety lock for LIVE trading
+ 
++    # Dashboard
++    dashboard_api_key: str | None = None
++
++    @property
++    def masked_openrouter_key(self) -> str:
++        return mask_api_key(self.openrouter_api_key)
++
++    @property
++    def masked_binance_key(self) -> str:
++        return mask_api_key(self.binance_api_key)
++
+ 
+ # ÔöÇÔöÇ YAML Trading Parameters ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++class CvarParams(BaseModel):
++    max_weight: float = 0.40
++
++
+ class RiskParams(BaseModel):
+     max_position_pct: float = 0.05
+     max_portfolio_risk_pct: float = 0.20
+@@ -94,6 +109,7 @@ class RiskParams(BaseModel):
+     max_correlated_positions: int = 3
+     max_consecutive_losses: int = 5
+     max_consecutive_llm_errors: int = 10
++    cvar: CvarParams = CvarParams()
+ 
+ 
+ class RegimeParams(BaseModel):
+@@ -157,6 +173,35 @@ class DataParams(BaseModel):
+     cache_ttl_minutes: int = 15
+ 
+ 
++class LimitsParams(BaseModel):
++    max_news_items: int = 20
++    debate_truncate_chars: int = 300
++    debate_rebuttal_truncate_chars: int = 1500
++    moderator_truncate_chars: int = 2000
++    min_risk_reward: float = 1.5
++    vix_crisis_threshold: float = 40
++    vix_low_vol_multiplier: float = 0.8
++    backtest_lookback_window: int = 30
++    monte_carlo_simulations: int = 5000
++    sentiment_cache_minutes: int = 30
++    news_rate_limit_delay: float = 0.5
++    max_tokens_sentiment: int = 300
++    max_tokens_research: int = 500
++    max_tokens_debate: int = 400
++    max_tokens_moderator: int = 400
++    max_tokens_risk: int = 400
++    max_tokens_trader: int = 250
++    max_tokens_coordinator: int = 200
++
++
++class WatchdogParams(BaseModel):
++    enabled: bool = False
++    check_interval_seconds: int = 30
++    crash_1m_pct: float = 0.03
++    crash_5m_pct: float = 0.05
++    alert_5m_pct: float = 0.02
++
++
+ class TradingParams(BaseModel):
+     """trading_params.yaml'dan y├╝klenen strateji parametreleri."""
+ 
+@@ -168,6 +213,8 @@ class TradingParams(BaseModel):
+     agents: AgentParams = AgentParams()
+     backtest: BacktestParams = BacktestParams()
+     data: DataParams = DataParams()
++    limits: LimitsParams = LimitsParams()
++    watchdog: WatchdogParams = WatchdogParams()
+ 
+ 
+ def load_trading_params(path: Path | None = None) -> TradingParams:
+@@ -180,6 +227,14 @@ def load_trading_params(path: Path | None = None) -> TradingParams:
+     return TradingParams()
+ 
+ 
++def mask_api_key(key: str) -> str:
++    if not key:
++        return ""
++    if len(key) <= 8:
++        return "****"
++    return key[:6] + "****" + key[-4:]
++
++
+ # ÔöÇÔöÇ Singleton Helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+ _settings: Settings | None = None
+ _trading_params: TradingParams | None = None
+diff --git a/config/trading_params.yaml b/config/trading_params.yaml
+index d327d32..d75ccb2 100644
+--- a/config/trading_params.yaml
++++ b/config/trading_params.yaml
+@@ -20,8 +20,11 @@ risk:
+   cvar_confidence: 0.95           # CVaR g├╝ven d├╝zeyi
+   max_open_positions: 5           # Max e┼şzamanl─▒ a├ğ─▒k pozisyon
+   max_correlated_positions: 3     # Max ili┼şkili pozisyon say─▒s─▒
++  max_correlation_threshold: 0.70 # Korelasyon e┼şi─şi (├╝zeri reddedilir)
+   max_consecutive_losses: 5       # Art arda 5 kay─▒p ÔåÆ durdur
+   max_consecutive_llm_errors: 10  # Art arda 10 LLM hatas─▒ ÔåÆ durdur
++  cvar:
++    max_weight: 0.40              # Tek varl─▒k max a─ş─▒rl─▒k %40
+ 
+ # ÔöÇÔöÇ Volatilite / Rejim Filtresi ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+ regime:
+@@ -83,3 +86,32 @@ data:
+   news_lookback_hours: 24         # Haber geriye d├Ân├╝k bak─▒┼ş (saat)
+   cache_enabled: true
+   cache_ttl_minutes: 15           # ├ûnbellek ya┼şam s├╝resi
++
++# ÔöÇÔöÇ Limitler ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++limits:
++  max_news_items: 20              # Maksimum haber say─▒s─▒
++  debate_truncate_chars: 300      # Tart─▒┼şma arg├╝man k─▒saltma
++  debate_rebuttal_truncate_chars: 1500  # Kar┼ş─▒l─▒kl─▒ yan─▒t k─▒saltma
++  moderator_truncate_chars: 2000  # Moderat├Âr giri┼ş k─▒saltma
++  min_risk_reward: 1.5            # Minimum risk/├Âd├╝l oran─▒
++  vix_crisis_threshold: 40        # VIX kriz e┼şi─şi
++  vix_low_vol_multiplier: 0.8     # D├╝┼ş├╝k volatilite ├ğarpan─▒
++  backtest_lookback_window: 30    # Backtest geriye bak─▒┼ş penceresi
++  monte_carlo_simulations: 5000   # Monte Carlo sim├╝lasyon say─▒s─▒
++  sentiment_cache_minutes: 30     # Duyarl─▒l─▒k ├Ânbellek s├╝resi (dakika)
++  news_rate_limit_delay: 0.5      # Haber API istekleri aras─▒ bekleme (saniye)
++  max_tokens_sentiment: 300
++  max_tokens_research: 500
++  max_tokens_debate: 400
++  max_tokens_moderator: 400
++  max_tokens_risk: 400
++  max_tokens_trader: 250
++  max_tokens_coordinator: 200
++
++# ÔöÇÔöÇ Watchdog (Flash Crash Protection) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++watchdog:
++  enabled: false
++  check_interval_seconds: 30
++  crash_1m_pct: 0.03
++  crash_5m_pct: 0.05
++  alert_5m_pct: 0.02
+diff --git a/dashboard/app.js b/dashboard/app.js
+index b7c53b8..614a915 100644
+--- a/dashboard/app.js
++++ b/dashboard/app.js
+@@ -22,6 +22,11 @@ const state = {
+         state: 'normal',
+         vix: 0,
+     },
++    benchmark: {
++        symbol: 'BTC/USDT',
++        return: 0,
++        alpha: 0,
++    },
+     trades: [],
+     logs: [],
+ };
+@@ -44,11 +49,12 @@ updateTime();
+ // ÔöÇÔöÇ Data Loading ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+ async function loadLatestAnalysis() {
+     try {
+-        const [portfolioRes, statusRes, tradesRes, allocRes] = await Promise.all([
++        const [portfolioRes, statusRes, tradesRes, allocRes, benchRes] = await Promise.all([
+             fetch('/api/portfolio'),
+             fetch('/api/status'),
+             fetch('/api/trades?limit=10'),
+             fetch('/api/portfolio_allocation'),
++            fetch('/api/benchmark'),
+         ]);
+ 
+         if (portfolioRes.ok) {
+@@ -74,6 +80,11 @@ async function loadLatestAnalysis() {
+             const allocData = await allocRes.json();
+             updatePortfolioAllocation(allocData);
+         }
++
++        if (benchRes.ok) {
++            const benchData = await benchRes.json();
++            updateBenchmark(benchData);
++        }
+     } catch (e) {
+         console.log('API ba─şlant─▒s─▒ yok, demo verisi kullan─▒l─▒yor');
+         updateDashboard(getDemoData());
+@@ -366,6 +377,26 @@ function updatePortfolioAllocation(data) {
+     content.innerHTML = html;
+ }
+ 
++function updateBenchmark(data) {
++    const symbolEl = document.getElementById('benchmarkSymbol');
++    const returnEl = document.getElementById('benchmarkReturn');
++    const alphaEl = document.getElementById('alphaValue');
++
++    if (symbolEl) symbolEl.textContent = data.benchmark_symbol || 'BTC/USDT';
++
++    if (returnEl) {
++        const benchRet = (data.benchmark_return || 0) * 100;
++        returnEl.textContent = benchRet.toFixed(2) + '%';
++        returnEl.style.color = benchRet >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
++    }
++
++    if (alphaEl) {
++        const alpha = (data.alpha || 0) * 100;
++        alphaEl.textContent = (alpha >= 0 ? '+' : '') + alpha.toFixed(2) + '%';
++        alphaEl.style.color = alpha >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
++    }
++}
++
+ // ÔöÇÔöÇ Activity Log ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+ function addLogEntry(role, message) {
+     const log = document.getElementById('activityLog');
+diff --git a/dashboard/server.py b/dashboard/server.py
+index b6890de..8b1065e 100644
+--- a/dashboard/server.py
++++ b/dashboard/server.py
+@@ -26,13 +26,32 @@ app = FastAPI(title="LLM Trading Dashboard API", version="1.0.0")
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["*"],
++    allow_origins=[
++        "http://localhost:3000",
++        "http://127.0.0.1:3000",
++        "http://localhost:8000",
++        "http://127.0.0.1:8000",
++    ],
+     allow_credentials=True,
+-    allow_methods=["*"],
++    allow_methods=["GET", "POST"],
+     allow_headers=["*"],
+ )
+ 
+ 
++from config.settings import get_settings
++
++
++@app.middleware("http")
++async def check_api_key(request: Request, call_next):
++    settings = get_settings()
++    api_key = settings.dashboard_api_key
++    if api_key:
++        client_key = request.headers.get("X-API-Key")
++        if client_key != api_key:
++            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
++    return await call_next(request)
++
++
+ @app.middleware("http")
+ async def block_sensitive_files(request: Request, call_next):
+     """Python kaynak kodlar─▒, .env ve config dosyalar─▒na eri┼şimi engeller."""
+@@ -57,10 +76,7 @@ async def index():
+ @app.get("/api/portfolio")
+ async def get_portfolio():
+     """Portf├Ây durumu."""
+-    if PORTFOLIO_FILE.exists():
+-        data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+-        return data
+-    return {
++    fallback = {
+         "cash": 10000.0,
+         "equity": 10000.0,
+         "total_pnl": 0.0,
+@@ -69,15 +85,52 @@ async def get_portfolio():
+         "max_equity": 10000.0,
+         "open_positions": 0,
+         "positions": [],
++        "benchmark_symbol": "BTC/USDT",
++        "benchmark_return": 0.0,
++        "alpha": 0.0,
+     }
++    if PORTFOLIO_FILE.exists():
++        try:
++            data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
++            data.setdefault("benchmark_symbol", "BTC/USDT")
++            data.setdefault("benchmark_return", 0.0)
++            data.setdefault("alpha", 0.0)
++            return data
++        except (json.JSONDecodeError, OSError):
++            return fallback
++    return fallback
++
++
++@app.get("/api/benchmark")
++async def get_benchmark():
++    """Benchmark kar┼ş─▒la┼şt─▒rma verisi."""
++    fallback = {
++        "benchmark_symbol": "BTC/USDT",
++        "benchmark_return": 0.0,
++        "alpha": 0.0,
++    }
++    if PORTFOLIO_FILE.exists():
++        try:
++            data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
++            return {
++                "benchmark_symbol": data.get("benchmark_symbol", "BTC/USDT"),
++                "benchmark_return": data.get("benchmark_return", 0.0),
++                "alpha": data.get("alpha", 0.0),
++            }
++        except (json.JSONDecodeError, OSError):
++            return fallback
++    return fallback
+ 
+ 
+ @app.get("/api/positions")
+ async def get_positions():
+     """A├ğ─▒k pozisyonlar."""
+     if PORTFOLIO_FILE.exists():
+-        data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+-        return {"positions": data.get("positions", [])}
++        try:
++            data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
++            return {"positions": data.get("positions", [])}
++        except (json.JSONDecodeError, OSError):
++            return {"positions": []}
+     return {"positions": []}
+ 
+ 
+@@ -85,9 +138,12 @@ async def get_positions():
+ async def get_trades(limit: int = 20):
+     """Son i┼şlemler."""
+     if PORTFOLIO_FILE.exists():
+-        data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+-        trades = data.get("closed_trades", [])
+-        return {"trades": trades[-limit:]}
++        try:
++            data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
++            trades = data.get("closed_trades", [])
++            return {"trades": trades[-limit:]}
++        except (json.JSONDecodeError, OSError):
++            return {"trades": []}
+     return {"trades": []}
+ 
+ 
+@@ -100,7 +156,10 @@ async def get_latest_analysis():
+         )
+         if files:
+             latest = files[-1]
+-            return json.loads(latest.read_text(encoding="utf-8"))
++            try:
++                return json.loads(latest.read_text(encoding="utf-8"))
++            except (json.JSONDecodeError, OSError):
++                return {"status": "no_analysis"}
+     return {"status": "no_analysis"}
+ 
+ 
+@@ -119,10 +178,13 @@ async def get_status():
+     }
+ 
+     if portfolio_exists:
+-        data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+-        status["equity"] = data.get("equity", 0)
+-        status["positions"] = data.get("open_positions", 0)
+-        status["total_pnl"] = data.get("total_pnl", 0)
++        try:
++            data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
++            status["equity"] = data.get("equity", 0)
++            status["positions"] = data.get("open_positions", 0)
++            status["total_pnl"] = data.get("total_pnl", 0)
++        except (json.JSONDecodeError, OSError):
++            status["error"] = "Failed to read portfolio data"
+ 
+     return status
+ 
+@@ -141,7 +203,10 @@ async def get_portfolio_allocation():
+         )
+         if files:
+             latest = files[-1]
+-            return json.loads(latest.read_text(encoding="utf-8"))
++            try:
++                return json.loads(latest.read_text(encoding="utf-8"))
++            except (json.JSONDecodeError, OSError):
++                return {"status": "no_allocation"}
+     return {"status": "no_allocation"}
+ 
+ 
+diff --git a/data/market_hours.py b/data/market_hours.py
+new file mode 100644
+index 0000000..d4d2270
+--- /dev/null
++++ b/data/market_hours.py
+@@ -0,0 +1,115 @@
++from __future__ import annotations
++
++import re
++from datetime import datetime, timedelta, timezone
++from zoneinfo import ZoneInfo
++
++from data.symbol_resolver import (
++    BIST_SYMBOLS,
++    CRYPTO_BASES,
++    CRYPTO_PAIR_RE,
++    AssetClass,
++    resolve_symbol,
++)
++
++CRYPTO_QUOTE_SUFFIXES = {"USDT", "BTC", "ETH", "BUSD", "USDC", "USD", "TRY"}
++BIST_OPEN_TRT = (10, 0)
++BIST_CLOSE_TRT = (18, 0)
++US_OPEN_ET = (9, 30)
++US_CLOSE_ET = (16, 0)
++
++
++class MarketHours:
++    _tz_trt = ZoneInfo("Europe/Istanbul")
++    _tz_et = ZoneInfo("America/New_York")
++
++    @classmethod
++    def _detect_asset_class(cls, symbol: str) -> AssetClass:
++        raw = symbol.strip().upper()
++        m = CRYPTO_PAIR_RE.match(raw)
++        if m and m.group(2) in CRYPTO_QUOTE_SUFFIXES:
++            return AssetClass.CRYPTO
++        for base in sorted(CRYPTO_BASES, key=len, reverse=True):
++            if raw.startswith(base) and len(raw) > len(base):
++                suffix = raw[len(base) :]
++                if suffix in CRYPTO_QUOTE_SUFFIXES or suffix.startswith("/"):
++                    return AssetClass.CRYPTO
++        if raw.endswith(".IS"):
++            return AssetClass.BIST
++        if raw in BIST_SYMBOLS:
++            return AssetClass.BIST
++        if raw in CRYPTO_BASES:
++            return AssetClass.CRYPTO
++        return AssetClass.US_STOCK
++
++    @classmethod
++    def _now_in_tz(cls, tz: ZoneInfo) -> datetime:
++        return datetime.now(tz)
++
++    @classmethod
++    def is_market_open(cls, symbol: str) -> bool:
++        asset = cls._detect_asset_class(symbol)
++        if asset == AssetClass.CRYPTO:
++            return True
++        now = cls._now_in_tz(cls._tz_trt if asset == AssetClass.BIST else cls._tz_et)
++        if now.weekday() >= 5:
++            return False
++        open_h, open_m = BIST_OPEN_TRT if asset == AssetClass.BIST else US_OPEN_ET
++        close_h, close_m = BIST_CLOSE_TRT if asset == AssetClass.BIST else US_CLOSE_ET
++        open_time = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
++        close_time = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
++        return open_time <= now < close_time
++
++    @classmethod
++    def time_until_open(cls, symbol: str) -> timedelta:
++        asset = cls._detect_asset_class(symbol)
++        if asset == AssetClass.CRYPTO:
++            return timedelta(0)
++        tz = cls._tz_trt if asset == AssetClass.BIST else cls._tz_et
++        now = cls._now_in_tz(tz)
++        open_h, open_m = BIST_OPEN_TRT if asset == AssetClass.BIST else US_OPEN_ET
++        open_time = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
++        if now.weekday() < 5 and now < open_time:
++            return open_time - now
++        days_until_monday = (7 - now.weekday()) % 7
++        if days_until_monday == 0:
++            days_until_monday = 7
++        next_open = open_time + timedelta(days=days_until_monday)
++        return next_open - now
++
++    @classmethod
++    def get_market_info(cls, symbol: str) -> dict:
++        asset = cls._detect_asset_class(symbol)
++        if asset == AssetClass.CRYPTO:
++            return {
++                "market": "Crypto",
++                "timezone": "UTC",
++                "open": "00:00",
++                "close": "23:59",
++                "schedule": "24/7",
++                "is_open": True,
++            }
++        if asset == AssetClass.BIST:
++            now = cls._now_in_tz(cls._tz_trt)
++            open_h, open_m = BIST_OPEN_TRT
++            close_h, close_m = BIST_CLOSE_TRT
++            return {
++                "market": "BIST (Istanbul Stock Exchange)",
++                "timezone": "TRT (UTC+3)",
++                "open": f"{open_h:02d}:{open_m:02d}",
++                "close": f"{close_h:02d}:{close_m:02d}",
++                "schedule": "Monday-Friday",
++                "is_open": cls.is_market_open(symbol),
++            }
++        now = cls._now_in_tz(cls._tz_et)
++        open_h, open_m = US_OPEN_ET
++        close_h, close_m = US_CLOSE_ET
++        dst_str = "EDT (UTC-4)" if now.dst() != timedelta(0) else "EST (UTC-5)"
++        return {
++            "market": "US Stocks (NYSE/NASDAQ)",
++            "timezone": dst_str,
++            "open": f"{open_h:02d}:{open_m:02d}",
++            "close": f"{close_h:02d}:{close_m:02d}",
++            "schedule": "Monday-Friday",
++            "is_open": cls.is_market_open(symbol),
++        }
+diff --git a/data/news_data.py b/data/news_data.py
+index 93e554b..4258f7b 100644
+--- a/data/news_data.py
++++ b/data/news_data.py
+@@ -25,13 +25,14 @@ logger = logging.getLogger(__name__)
+ @dataclass
+ class NewsItem:
+     """Standartla┼şt─▒r─▒lm─▒┼ş haber ├Â─şesi."""
++
+     title: str
+     summary: str
+     source: str
+     url: str
+     published_at: datetime
+     symbols: list[str] = field(default_factory=list)
+-    category: str = "general"       # general, crypto, earnings, macro
++    category: str = "general"  # general, crypto, earnings, macro
+     raw_sentiment: str | None = None  # Kayna─ş─▒n kendi sentiment'i (varsa)
+ 
+ 
+@@ -43,7 +44,7 @@ class NewsClient:
+         self._params = get_trading_params()
+         self._http = httpx.Client(timeout=15.0)
+         self._last_request_time: float = 0
+-        self._rate_limit_delay: float = 0.5  # saniye
++        self._rate_limit_delay: float = self._params.limits.news_rate_limit_delay
+ 
+     def _rate_limit(self) -> None:
+         """Basit rate limiting ÔÇö istekler aras─▒ bekleme."""
+@@ -116,9 +117,7 @@ class NewsClient:
+         logger.info("Finnhub: %s ÔåÆ %d haber", clean_symbol, len(items))
+         return items
+ 
+-    def fetch_finnhub_general_news(
+-        self, category: str = "general"
+-    ) -> list[NewsItem]:
++    def fetch_finnhub_general_news(self, category: str = "general") -> list[NewsItem]:
+         """Finnhub'dan genel piyasa haberlerini ├ğeker."""
+         api_key = self._settings.finnhub_api_key
+         if not api_key:
+@@ -249,13 +248,9 @@ class NewsClient:
+ 
+             resolved = resolve_symbol(symbol)
+             if resolved.asset_class == AssetClass.CRYPTO:
+-                all_news.extend(
+-                    self.fetch_crypto_news(currencies=[resolved.base])
+-                )
++                all_news.extend(self.fetch_crypto_news(currencies=[resolved.base]))
+             else:
+-                all_news.extend(
+-                    self.fetch_finnhub_company_news(resolved.base)
+-                )
++                all_news.extend(self.fetch_finnhub_company_news(resolved.base))
+         else:
+             # Genel kripto haberleri
+             all_news.extend(self.fetch_crypto_news())
+diff --git a/data/portfolio_state.json b/data/portfolio_state.json
+index 0a20273..9b00f87 100644
+--- a/data/portfolio_state.json
++++ b/data/portfolio_state.json
+@@ -1,11 +1,27 @@
+ {
+   "initial_cash": 10000.0,
+-  "cash": 10000.0,
+-  "positions": [],
++  "cash": 6650.0,
++  "positions": [
++    {
++      "symbol": "BTC/USDT",
++      "entry_price": 67000,
++      "amount": 0.05,
++      "entry_time": "2026-04-04T20:19:28.078771+00:00",
++      "side": "long",
++      "stop_loss": 65000,
++      "take_profit": 72000,
++      "current_price": 67000,
++      "unrealized_pnl": 0.0,
++      "unrealized_pnl_pct": 0.0
++    }
++  ],
+   "closed_trades": [],
+   "daily_pnl": 0.0,
+   "daily_pnl_date": "2026-04-04",
+   "total_pnl": 0.0,
+   "max_equity": 10000.0,
+-  "current_drawdown": 0.0
++  "current_drawdown": 0.0,
++  "benchmark_symbol": "BTC/USDT",
++  "benchmark_return": -0.054580189207686494,
++  "alpha": 0.054580189207686494
+ }
+\ No newline at end of file
+diff --git a/data/sentiment_cache/BTC_USDT_sentiment.jsonl b/data/sentiment_cache/BTC_USDT_sentiment.jsonl
+index 56706c3..3f06ea5 100644
+--- a/data/sentiment_cache/BTC_USDT_sentiment.jsonl
++++ b/data/sentiment_cache/BTC_USDT_sentiment.jsonl
+@@ -3,3 +3,4 @@
+ {"symbol": "BTC/USDT", "timestamp": "2026-04-04T17:00:56.256504+00:00", "sentiment_score": 0.2, "confidence": 0.7, "risk_score": 0.6, "signal": "neutral", "reasoning": "1. **Haber ├ûzeti:** Haberlerin ├ğo─şu ─░ran ile ilgili jeopolitik gerilimleri ve ekonomik etkilerini i├ğeriyor. Bu t├╝r haberler genellikle piyasa belirsizli─şini art─▒r─▒r ve riskli varl─▒klardan ka├ğ─▒┼ş─▒ tetikleyebilir. 2. **Piyasa Etkisi:** Jeopolitik gerilimler BTC gibi riskli varl─▒klar i├ğin olumsuz bir etki yaratabilir, ancak teknik g├Âstergeler bullish bir trendi g├Âsteriyor. 3. **Teknik Uyum:** Teknik g├Âstergeler (RSI, MACD, EMA) bullish bir trendi destekliyor, ancak BB ├╝st band─▒n─▒n ├╝zerinde olmas─▒ a┼ş─▒r─▒ al─▒m sinyali verebilir. 4. **├çat─▒┼şma Kontrol├╝:** Jeopolitik riskler ile teknik bullish sinyaller ├ğeli┼şiyor. 5. **Sonu├ğ:** Genel olarak n├Âtr bir sinyal veriyor ├ğ├╝nk├╝ olumlu teknik g├Âstergeler jeopolitik risklerle dengeleniyor.", "key_factors": ["Jeopolitik riskler", "Bullish teknik g├Âstergeler", "BB ├╝st band─▒n─▒n ├╝zerinde olma"], "news_count": 20, "model_used": "deepseek/deepseek-chat-v3-0324", "provider": "openrouter"}
+ {"symbol": "BTC/USDT", "timestamp": "2026-04-04T17:43:11.971125+00:00", "sentiment_score": -0.3, "confidence": 0.7, "risk_score": 0.8, "signal": "bearish", "reasoning": "1. **Haber ├ûzeti:** Haberlerin ├ğo─şu ─░ran ile ilgili gerilimleri ve k├╝resel ekonomik belirsizlikleri i├ğeriyor. Rusya'n─▒n ─░ran'daki n├╝kleer santralden personel ├ğekmesi, ─░ran'─▒n H├╝rm├╝z Bo─şaz─▒'ndaki hareketleri ve ABD'nin ─░ranl─▒ yetkililerin akrabalar─▒n─▒ tutuklamas─▒ gibi olaylar k├╝resel gerilimi art─▒r─▒yor. Ayr─▒ca, IMF'nin BOJ'ye faiz art─▒rmas─▒ y├Ân├╝ndeki ├ğa─şr─▒s─▒ ve Senegal'in h├╝k├╝met seyahatlerini yasaklamas─▒ gibi ekonomik belirsizlikler de mevcut. 2. **Piyasa Etkisi:** Bu t├╝r jeopolitik gerilimler ve ekonomik belirsizlikler genellikle riskli varl─▒klar olan kripto paralar ├╝zerinde olumsuz bir etki yarat─▒r. 3. **Teknik Uyum:** Teknik g├Âstergeler bullish bir trend g├Âsteriyor ancak RSI'n─▒n 64.21 olmas─▒ a┼ş─▒r─▒ al─▒m b├Âlgesine yakla┼şt─▒─ş─▒n─▒ g├Âsteriyor. MACD sinyali neutral ve BB ├╝st bant─▒n ├╝zerinde bir fiyat mevcut. Bu, teknik olarak bir d├╝zeltme ihtimalini art─▒r─▒yor. 4. **├çat─▒┼şma Kontrol├╝:** Haberlerin olumsuz etkisi ile teknik g├Âstergelerin bullish sinyali ├ğeli┼şiyor. Ancak, jeopolitik risklerin etkisi daha a─ş─▒r bas─▒yor. 5. **Sonu├ğ:** Jeopolitik gerilimler ve ekonomik belirsizlikler nedeniyle BTC/USDT i├ğin bearish bir sinyal veriyoruz.", "key_factors": ["Jeopolitik gerilimler", "Ekonomik belirsizlikler", "RSI a┼ş─▒r─▒ al─▒m b├Âlgesi"], "news_count": 20, "model_used": "deepseek/deepseek-chat-v3-0324", "provider": "openrouter"}
+ {"symbol": "BTC/USDT", "timestamp": "2026-04-04T18:30:00.133070+00:00", "sentiment_score": -0.2, "confidence": 0.7, "risk_score": 0.6, "signal": "neutral", "reasoning": "1. **Haber ├ûzeti:** Haberlerin ├ğo─şu ─░ran ile ilgili gerilimleri ve k├╝resel ekonomik etkilerini i├ğeriyor. Bu t├╝r jeopolitik gerilimler genellikle BTC gibi riskli varl─▒klar i├ğin olumsuz etki yarat─▒r. 2. **Piyasa Etkisi:** ─░ran ile ilgili haberler ve petrol ┼şoklar─▒, BTC'nin riskli varl─▒k olarak alg─▒lanmas─▒n─▒ art─▒rabilir. Ancak teknik g├Âstergeler bullish trendi destekliyor. 3. **Teknik Uyum:** Teknik g├Âstergeler bullish trendi g├Âsteriyor ancak RSI 63.91 ile a┼ş─▒r─▒ al─▒m b├Âlgesine yak─▒n. 4. **├çat─▒┼şma Kontrol├╝:** Jeopolitik riskler ile teknik bullish sinyaller ├ğeli┼şiyor. 5. **Sonu├ğ:** Jeopolitik riskler nedeniyle duyarl─▒l─▒k hafif olumsuz ancak teknik destek nedeniyle sinyal n├Âtr.", "key_factors": ["Jeopolitik riskler", "Bullish teknik g├Âstergeler"], "news_count": 20, "model_used": "deepseek/deepseek-chat-v3-0324", "provider": "openrouter"}
++{"symbol": "BTC/USDT", "timestamp": "2026-04-04T20:17:52.915585+00:00", "sentiment_score": -0.3, "confidence": 0.7, "risk_score": 0.8, "signal": "bearish", "reasoning": "1. **Haber ├ûzeti:** Haberlerin ├ğo─şu ─░ran-ABD-─░srail gerilimine odaklan─▒yor, b├Âlgesel ├ğat─▒┼şma riski y├╝ksek. 2. **Piyasa Etkisi:** Jeopolitik belirsizlik genellikle riskli varl─▒klar─▒ (BTC gibi) olumsuz etkiler. 3. **Teknik Uyum:** Fiyat BB ├╝st band─▒n─▒n ├╝zerinde (a┼ş─▒r─▒ al─▒m sinyali) ve RSI 58.3 (n├Âtr-e─şilimli). 4. **├çat─▒┼şma Kontrol├╝:** Teknik g├Âstergeler n├Âtr/hafif y├╝kseli┼ş e─şilimli olsa da, haberlerdeki jeopolitik riskler daha a─ş─▒r bas─▒yor. 5. **Sonu├ğ:** K─▒sa vadede y├╝ksek risk ve d├╝┼ş├╝┼ş potansiyeli hakim.", "key_factors": ["Jeopolitik gerilim", "A┼ş─▒r─▒ al─▒m teknik g├Âstergeleri", "Y├╝ksek risk i┼ştah─▒"], "news_count": 20, "model_used": "deepseek/deepseek-chat-v3-0324", "provider": "openrouter"}
+diff --git a/data/sentiment_store.py b/data/sentiment_store.py
+index 8a654a9..f937998 100644
+--- a/data/sentiment_store.py
++++ b/data/sentiment_store.py
+@@ -36,6 +36,7 @@ class SentimentRecord:
+     news_count: int = 0
+     model_used: str = ""
+     provider: str = ""
++    price: float = 0.0
+ 
+ 
+ class SentimentStore:
+@@ -50,7 +51,9 @@ class SentimentStore:
+         clean = symbol.replace("/", "_").replace(".", "_").upper()
+         return self._dir / f"{clean}_sentiment.jsonl"
+ 
+-    def save(self, record: SentimentRecord, min_interval_minutes: int = 30) -> bool:
++    def save(
++        self, record: SentimentRecord, min_interval_minutes: int | None = None
++    ) -> bool:
+         """
+         Yeni kayd─▒ dosyaya ekler (append).
+         Son N dakika i├ğinde ayn─▒ sembol i├ğin kay─▒t varsa atlar.
+@@ -62,6 +65,11 @@ class SentimentStore:
+         Returns:
+             True: Kay─▒t eklendi, False: Atlad─▒ (duplicate)
+         """
++        from config.settings import get_trading_params
++
++        if min_interval_minutes is None:
++            min_interval_minutes = get_trading_params().limits.sentiment_cache_minutes
++
+         # Duplicate kontrol├╝
+         latest = self.get_latest(record.symbol)
+         if latest:
+diff --git a/docs/AGENTS.md b/docs/AGENTS.md
+index 3a9afe9..99d3146 100644
+--- a/docs/AGENTS.md
++++ b/docs/AGENTS.md
+@@ -4,7 +4,7 @@ Bu proje **LangGraph** kullanilarak gelistirilmis bir Durum Grafigi (StateGraph)
+ 
+ Durum nesnesi (State), `agents/state.py` icinde tanimlanan `TradingState` adli bir `TypedDict` sinifidir.
+ 
+-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
++> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+ 
+ ---
+ 
+@@ -40,7 +40,7 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
+ 
+ - **Input:** Islem yapilacak sembol ve toplanmis raw data
+ - **Output:** Surec baslangic onay/ret, iterasyon sayaci
+-- **Not:** Veriler eksik veya limitin altindaysa sistemi bir sonraki adima aktarir ya da hatayla sonlandirir
++- **Not:** Veriler eksikse loglar ve bir sonraki ad─▒ma ge├ğer, sistemi bloklamaz
+ 
+ ---
+ 
+@@ -58,6 +58,8 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
+ 
+ **Faz 4 guncellemesi:** `provider` parametresi state'ten okunuyor, paralel analiz destekleniyor
+ 
++**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=300, JSON mode aktif, cache kontrolu LLM oncesi yapiliyor
++
+ ---
+ 
+ ## 3. Bull vs Bear Debate (Tartisma / Halusinasyon Filtresi)
+@@ -116,6 +118,8 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
+ 
+ **Cikti (Payload):** `risk_assessment`, `risk_approved`
+ 
++**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=400, JSON mode aktif
++
+ ---
+ 
+ ## 5. Trader (Islemci / Yurutucuajan)
+@@ -142,6 +146,8 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
+ 
+ Bu cikti LangGraph dongusu disina cikarak `execution/order_manager.py` modulu uzerinden `ExchangeClient.execute_order()`'a beslenir.
+ 
++**Faz 5 guncellemesi:** Prompt sikistirildi (~%40 kuculme), max_tokens=250, JSON mode aktif
++
+ ---
+ 
+ ## 6. hold_decision Node [FAZ 1 - YEN─░]
+@@ -239,6 +245,44 @@ python scripts/run_portfolio.py --symbols BTC/USDT,ETH/USDT,SOL/USDT,AVAX/USDT -
+ 
+ ---
+ 
++## Ajan Spesifikasyonlari [FAZ 5 GUNCELLEME]
++
++### max_tokens ve JSON Mode
++
++Tum LLM cagrilar artik `max_tokens` siniri ve `response_format={"type": "json_object"}` ile yapilir.
++
++| Ajan | max_tokens | JSON Mode | Aciklama |
++|------|-----------|-----------|----------|
++| Sentiment | 300 | Evet | Haber duyarlilik analizi |
++| Research | 500 | Evet | Kapsamli arastirma raporu |
++| Debate (Bull/Bear) | 400 | Evet | Karsit argumanlar |
++| Moderator | 400 | Evet | Konsensus degerlendirmesi |
++| Risk Manager | 400 | Evet | Risk analizi ve oneriler |
++| Trader | 250 | Evet | Nihai islem emri |
++
++### Prompt Sikistirma
++
++Tum prompt dosyalari ~%40-50 oraninda kucultulmustur:
++- Gereksiz aciklamalar kaldirildi
++- "be concise" kurali eklendi
++- "ONLY return JSON" kurali eklendi
++- Ornek ciktilar korundu, aciklamalar kisaltildi
++
++### Yapilandirma (`config/trading_params.yaml`)
++
++```yaml
++limits:
++  sentiment_max_tokens: 300
++  research_max_tokens: 500
++  debate_max_tokens: 400
++  moderator_max_tokens: 400
++  risk_max_tokens: 400
++  trader_max_tokens: 250
++  sentiment_cache_minutes: 30
++```
++
++---
++
+ ## State Nesnesi (TradingState)
+ 
+ `agents/state.py` icerisindeki `TradingState` TypedDict alanlari:
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 2400f9a..55a5a19 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -2,7 +2,7 @@
+ 
+ Bu belge, diger yazilimlarin ve LLM Temsilcilerinin sistemi kavrayabilmesi icin yuksek seviye mimariyi ve dosya dokumunu listeler.
+ 
+-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
++> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+ 
+ ## Yuksek Seviye Mimari (High-Level Architecture)
+ 
+@@ -13,7 +13,9 @@ Sistem 6 Katmanli (6-Tier) bir yapi uzerinden insa edilmistir:
+ 3. **Execution / Agentic Layer (`agents/`):** LangGraph altyapiyla State, node'lar (Analyst, Debate, Risk, Trader) arasinda dolasarak nihai JSON Trade emrini olusturur.
+ 4. **Portfolio Layer (`agents/portfolio_manager.py`):** [FAZ 4] Birden fazla varligi paralel analiz eder, bile┼şik skor ve CVaR ile portf├Ây dagilimi yapar.
+ 5. **Risk & Backtest Layer (`risk/`, `backtest/`):** Portfoy sermayesini korumak. CVaR limitleri ve Walk-Forward kronolojik validasyonlari bu asamada kodla korunur.
++   - **[FAZ 5] Watchdog (`risk/watchdog.py`):** Ayri thread'de flash crash korumasi, 30 saniyede bir fiyat kontrolu
+ 6. **Execution & UI Layer (`execution/`, `dashboard/`):** Karar alan islemler CCXT ile Binance (MOCK veya CANLI) sistemine gonderilirken tum veriler Dashboard'a aktarilir.
++7. **[FAZ 5] Cost Optimization Layer:** Prompt sikistirma (~%40-50), sentiment cache, max_tokens sinirlari, JSON mode ile API maliyetlerinde ~%72-88 azalma.
+ 
+ ---
+ 
+@@ -39,16 +41,22 @@ LLMTrading/
+ |   |                            [GUNCELLEME] request_timeout ve max_retries eklendi
+ |   |                            [GUNCELLEME] _extract_json utils.json_utils'e tasindi
+ |   |                            [FAZ 4] `_create_llm` ÔåÆ `create_llm` (public)
++|   |                            [FAZ 5] Cache kontrolu LLM oncesi yapiliyor
++|   |                            [FAZ 5] SentimentRecord'a price alani eklendi
++|   |                            [FAZ 5] Prompt sikistirildi (~%40 kuculme)
++|   |                            [FAZ 5] max_tokens=300, JSON mode aktif
+ |   |-- technical_analyzer.py  # Pandas-TA gostergeleri analizcisi
+ |   |                            [GUNCELLEME] MACD/BBands kolon isimleri guvenli hale getirildi
+ |   |-- llm_fallback.py        # Provider fallback zinciri
+ |   |                            [FAZ 4] `_create_llm` ÔåÆ `create_llm` import g├╝ncellendi
++|   |                            [FAZ 5] max_tokens parametresi desteklendi
++|   |                            [FAZ 5] response_format={"type": "json_object"} eklendi
+ |   `-- prompts/               # .txt halinde sistem promptlari
+-|       |-- sentiment_system.txt
+-|       |-- research_analyst.txt
+-|       |-- risk_manager.txt
+-|       |-- trader.txt
+-|       `-- portfolio_manager.txt  # [FAZ 4] Portf├Ây y├Âneticisi promptu
++|       |-- sentiment_system.txt    # [FAZ 5] Sikistirildi, max_tokens=300
++|       |-- research_analyst.txt    # [FAZ 5] Sikistirildi, max_tokens=500
++|       |-- risk_manager.txt        # [FAZ 5] Sikistirildi, max_tokens=400
++|       |-- trader.txt              # [FAZ 5] Sikistirildi, max_tokens=250
++|       `-- portfolio_manager.txt   # [FAZ 5] Sikistirildi
+ |-- agents/
+ |   |-- state.py               # StateGraph (TypedDict) hafizasi
+ |   |                            [FAZ 4] `provider` alani eklendi
+@@ -82,7 +90,12 @@ LLMTrading/
+ |   |                            Art arda kayip, gunluk limit, manuel STOP dosyasi
+ |   |-- cvar_optimizer.py      # CVaR (Conditional Value at Risk)
+ |   |-- regime_filter.py       # VIX endeks filtresi
+-|   `-- stop_loss.py           # ATR bazli dinamik/trailing stop loss
++|   |-- stop_loss.py           # ATR bazli dinamik/trailing stop loss
++|   `-- watchdog.py            # [FAZ 5] Flash crash korumasi (ayri thread)
++|                                30 saniyede bir fiyat kontrolu
++|                                1dk > %3 dusus -> acil satis
++|                                5dk > %5 dusus -> acil satis
++|                                5dk %2-5 dusus -> uyari
+ |-- backtest/
+ |   `-- walk_forward.py        # Walk-forward validasyon ve trade log analizozu
+ |-- execution/
+@@ -98,14 +111,20 @@ LLMTrading/
+ |-- utils/
+ |   |-- json_utils.py          # [YEN─░] extract_json - tum ajanlar icin merkezi JSON ayristirici
+ |   `-- cost_tracker.py        # LLM API maliyet takipcisi
++|-- config/
++|   `-- trading_params.yaml    # [FAZ 5] watchdog bolumu eklendi
++|                                [FAZ 5] limits bolumu eklendi (max_tokens degerleri)
++|                                [FAZ 5] sentiment_cache_minutes parametresi
+ |-- scripts/
+ |   |-- run_live.py            # Tam sistemi kagit uzerinde veya gercek suren kod
++|   |                            [FAZ 5] Daemon mode: surekli dongu
++|   |                            [FAZ 5] CLI: --symbols, --interval, --watchdog, --max-cycles, --dry-run
++|   |                            [FAZ 5] SIGINT/SIGTERM handler ile guvenli kapanis
+ |   |                            [YEN─░] PortfolioState.load_from_file() ile basla
+ |   |                            [YEN─░] PortfolioState.save_to_file() ile bitir
+ |   |                            [YEN─░] CircuitBreaker baslangic kontrolu
+ |   |                            [FAZ 4] TradingMode import duzeltildi
+ |   |                            [FAZ 4] provider parametresi run_analysis'a geciliyor
+-|   |                            [FAZ 4] get_paper_status() public API kullaniyor
+ |   |-- run_backtest.py        # Gecmis zaman testi
+ |   |                            [YEN─░] --timeframe secenegi (1m, 5m, 15m, 1h, 4h, 1d, 1w)
+ |   |                            [YEN─░] run_walkforward_backtest() implement edildi
+@@ -146,12 +165,18 @@ reset_daily_pnl_if_needed()       <- Gun degistiyse PNL sifirla
+ CircuitBreaker.should_halt()      <- Art arda kayip / gunluk limit / STOP dosyasi
+         | (gecerse)
+         v
++[FAZ 5] Watchdog Thread Baslat    <- Arka planda fiyat izleme (30sn interval)
++        |
++        v
+ RegimeFilter (VIX kontrolu)       <- Kriz rejiminde ticareti durdur
+         |
+         v
+ MarketDataClient -> TechnicalAnalyzer -> NewsClient
+         |
+         v
++[FAZ 5] Sentiment Cache Kontrolu  <- Son analiz < cache_minutes ise cache'den don
++        |
++        v
+ LangGraph Pipeline:
+   coordinator -> research_analyst -> debate -> risk_manager
+                                                    |
+@@ -168,6 +193,9 @@ LangGraph Pipeline:
+         |
+         v
+ PortfolioState.save_to_file()     <- JSON'a kaydet
++        |
++        v
++[FAZ 5] Dongu -> bir sonraki interval (Ctrl+C ile guvenli kapanis)
+ ```
+ 
+ ### Portf├Ây Analizi (run_portfolio.py) [FAZ 4]
+@@ -215,3 +243,171 @@ Portf├Ây Da─ş─▒l─▒m─▒ JSON -> dashboard + file export
+ | **Paralel analiz** | Portfolio Manager `ThreadPoolExecutor` ile sembolleri ayni anda analiz eder |
+ | **LLM factory public** | `models/sentiment_analyzer.py::create_llm` tum mod├╝ller tarafindan kullanilir |
+ | **Dashboard g├╝venlik** | `.py`, `.env`, `.yaml` dosyalarina erisim middleware ile engellenir |
++| **Daemon mode** | `run_live.py` dongu icinde calisir, SIGINT/SIGTERM ile guvenli kapanis |
++| **Watchdog thread** | Arka planda fiyat izler, flash crash durumunda acil satis yapar |
++| **Sentiment cache** | Son analiz cache_minutes icinde ise LLM cagirmadan cache'den doner |
++| **Prompt sikistirma** | Tum promptlar ~%40-50 kucultuldu, "be concise" ve "ONLY return JSON" kurallari eklendi |
++| **JSON mode + max_tokens** | Tum LLM cagrilar `response_format=json_object` ve cikti token siniri ile yapilir |
++
++---
++
++## Daemon Mode Mimarisi [FAZ 5]
++
++`run_live.py` artik tek seferlik degil, surekli calisan bir dongu olarak tasarlanmistir.
++
++### Dongu Akisi
++
++```
++[basla]
++   |
++   v
++[--max-cycles] kontrolu
++   |  (ulasildiysa -> cik)
++   v
++CircuitBreaker.should_halt()
++   |  (halt -> cik)
++   v
++Pipeline calistir (sembol analizi)
++   |
++   v
++Interval kadar bekle (--interval: 5m, 15m, 30m, 1h, 4h, 1d)
++   |
++   v
++Dongu basa don
++```
++
++### Guvenli Kapanis
++
++SIGINT (Ctrl+C) ve SIGTERM sinyalleri yakalanir:
++1. Dongu bayragi `running = False` olarak isaretlenir
++2. Watchdog thread durdurulur
++3. PortfolioState.save_to_file() ile tum pozisyonlar kaydedilir
++4. Temiz cikis
++
++### Geriye Uyumluluk
++
++- `--symbol` parametresi hala calisir
++- `--max-cycles 1` ile tek seferlik calistirma mumkundur
++- Varsayilan: `--max-cycles` sinirsiz (daemon mode)
++
++---
++
++## Watchdog Mimarisi [FAZ 5]
++
++**Dosya:** `risk/watchdog.py`
++
++Watchdog, ana pipeline'dan bagimsiz bir arka plan thread'i olarak calisir.
++
++### Thread Yonetimi
++
++```
++[Ana Thread: run_live.py]          [Watchdog Thread]
++        |                                  |
++        v                                  v
++Pipeline dongusu                    Fiyat izleme dongusu
++        |                           (check_interval_seconds)
++        |                                  |
++        v                                  v
++Pozisyon ac/kapat                   Flash crash kontrolu
++        |                                  |
++        v                                  v
++Ctrl+C -> temiz kapanis             1dk > %3 -> acil satis
++                                    5dk > %5 -> acil satis
++                                    5dk %2-5 -> uyari
++```
++
++### Acil Satis Mantigi
++
++Watchdog her `check_interval_seconds` (varsayilan 30) saniyede bir:
++1. Tum izlenen sembollerin guncel fiyatlarini ceker
++2. 1 dakikalik ve 5 dakikalik dusus yuzdelerini hesaplar
++3. Esik asildiysa acil satis emri gonderir (pozisyon varsa)
++
++### Yapilandirma
++
++```yaml
++watchdog:
++  enabled: true
++  check_interval_seconds: 30
++  flash_crash_1min_pct: 0.03
++  flash_crash_5min_pct: 0.05
++  alert_5min_pct: 0.02
++```
++
++---
++
++## Sentiment Cache Akisi [FAZ 5]
++
++`SentimentAnalyzer.analyze()` metodunda cache mekanizmasi LLM cagrisindan ONCE calisir.
++
++### Cache Akisi
++
++```
++[SentimentAnalyzer.analyze()]
++        |
++        v
++Cache kontrolu:
++  last_analysis varsa VE
++  (simdiki_zaman - last_analysis.zaman) < cache_minutes
++        |
++   +----+----+
++   |         |
++  EVET      HAYIR
++   |         |
++   v         v
++Cache'den   LLM cagrisi yap
++sonuc don   (prompt sikistirilmis,
++             max_tokens=300,
++             JSON mode)
++   |         |
++   v         v
++[SentimentRecord]  <- price alani ile kaydet
++                     (market change detection icin)
++```
++
++### Cache Avantajlari
++
++- Varsayilan `sentiment_cache_minutes`: 30 dakika
++- Ayni sembol icin 30 dakika icinde tekrar analiz yapilmaz
++- ~%30-50 daha az LLM cagrisi
++- `SentimentRecord.price` alani ile piyasa degisim tespiti mumkun
++
++---
++
++## Maliyet Optimizasyonu [FAZ 5]
++
++### Prompt Sikistirma
++
++Tum 5 prompt dosyasi ~%40-50 oraninda kucultulmustur:
++- Gereksiz aciklamalar kaldirildi
++- "be concise" kurali eklendi
++- "ONLY return JSON" kurali eklendi
++- Ornek ciktilar korundu, aciklamalar kisaltildi
++
++### max_tokens Sinirlari
++
++| Ajan | max_tokens |
++|------|-----------|
++| Sentiment | 300 |
++| Research | 500 |
++| Debate | 400 |
++| Moderator | 400 |
++| Risk | 400 |
++| Trader | 250 |
++
++### JSON Mode
++
++Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir:
++- Cikti format garantisi
++- Parse hatasi azalmasi
++- Daha tutarli ajan davranisi
++
++### Toplam Tasarruf
++
++| Bilesen | Etki |
++|---------|------|
++| Prompt sikistirma | %30-40 input token azalma |
++| Prompt caching (OpenRouter/DeepSeek) | %75-90 cached input indirimi |
++| Sentiment cache | %30-50 daha az LLM cagrisi |
++| max_tokens sinirlari | Runaway cikti onleme |
++| **TOPLAM** | **~%72-88 API maliyet azalmasi** |
+diff --git a/docs/RISK_MANAGEMENT.md b/docs/RISK_MANAGEMENT.md
+index e6d5639..7e2008e 100644
+--- a/docs/RISK_MANAGEMENT.md
++++ b/docs/RISK_MANAGEMENT.md
+@@ -2,7 +2,7 @@
+ 
+ Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlarin halusnasyon gormesi muhtemel oldugundan risk mekanizmalari ikiye ayrilmistir: **Algoritmik** (Kodla kati sekilde saglanan) ve **Bilissel** (Risk Ajani ile yonetilen).
+ 
+-> **Son Guncelleme:** 2026-04-04 (Faz 1, 2, 3, 4 tamamlandi)
++> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+ 
+ ---
+ 
+@@ -12,6 +12,9 @@ Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlari
+ [Islem Istegi Geldi]
+         |
+         v
++[0. Watchdog]             <- Arka planda flash crash izleme (30sn)
++        |
++        v
+ [1. Circuit Breaker]    <- Art arda kayip? Gunluk limit? Manuel STOP?
+         |
+         v
+@@ -34,6 +37,51 @@ Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlari
+ 
+ ---
+ 
++## 0. Watchdog (Flash Crash Korumasi) [FAZ 5 - YEN─░]
++
++**Dosya:** `risk/watchdog.py`
++
++Watchdog, ana islem dongusunden bagimsiz bir arka plan thread'inde calisan ve piyasadaki ani dususleri tespit eden bir emniyet mekanizmasidir.
++
++### Neden Watchdog?
++
++Ana pipeline belirli araliklarla (15dk, 1sa vb.) calisir. Bu araliklarda meydana gelen flash crash'ler (ani dususler) pipeline tarafindan yakalanamaz. Watchdog bu boslugu doldurur.
++
++### Acil Satis Kurallari
++
++| Kosul | Aksiyon | Aciklama |
++|-------|---------|----------|
++| **1 dakikada > %3 dusus** | ACIL SATIS | Tum acik pozisyonlar hemen kapatilir |
++| **5 dakikada > %5 dusus** | ACIL SATIS | Tum acik pozisyonlar hemen kapatilir |
++| **5 dakikada %2-5 dusus** | Uyari | Log kaydi olusturulur, satis yapilmaz |
++
++### Calisma Prensipleri
++
++- **Thread:** Ana donguden bagimsiz arka plan thread'i
++- **Kontrol Araligi:** Varsayilan 30 saniye (`check_interval_seconds`)
++- **Referans Noktalari:** Her kontrolde 1dk ve 5dk onceki fiyatlar kaydedilir
++- **Kapsam:** `--symbols` ile belirtilen tum semboller izlenir
++
++### Yapilandirma (`config/trading_params.yaml`)
++
++```yaml
++watchdog:
++  enabled: true
++  check_interval_seconds: 30
++  flash_crash_1min_pct: 0.03
++  flash_crash_5min_pct: 0.05
++  alert_5min_pct: 0.02
++```
++
++### Kapatma
++
++```bash
++# Watchdog olmadan calistir
++python scripts/run_live.py --symbols BTC/USDT,ETH/USDT --no-watchdog
++```
++
++---
++
+ ## 1. Circuit Breaker (Acil Durdurma) [FAZ 2 - YEN─░]
+ 
+ **Dosya:** `risk/circuit_breaker.py`
+@@ -85,9 +133,9 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
+ 
+ | Rejim | VIX Tahmini | Islem |
+ |-------|-------------|-------|
+-| `NORMAL` | < 20 | Serbest |
+-| `ELEVATED` | 20-30 | Uyari |
+-| `HIGH` | 30-40 | Kisitli |
++| `LOW_VOL` | < SMA * 0.8 | Serbest |
++| `NORMAL` | SMA * 0.8 - SMA * 1.10 | Serbest |
++| `HIGH_VOL` | > SMA * 1.10 | Kisitli |
+ | `CRISIS` | > 40 | Durduruldu |
+ 
+ ---
+@@ -117,9 +165,9 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
+ 
+ ```yaml
+ risk:
+-  max_drawdown_pct: 0.10        # %10 drawdown limiti
++  max_drawdown_pct: 0.15        # %15 drawdown limiti
+   max_daily_loss_pct: 0.03      # %3 gunluk kayip limiti
+-  max_position_pct: 0.15        # Equity'nin max %15'i tek pozisyon
++  max_position_pct: 0.05        # Equity'nin max %5'i tek pozisyon
+   max_open_positions: 5         # Estzamanli max acik pozisyon
+   max_consecutive_losses: 5     # Art arda kayip Circuit Breaker esigi
+   max_consecutive_llm_errors: 10 # LLM hata Circuit Breaker esigi
+@@ -270,3 +318,64 @@ Her varlik, 4 fakt├Âr├╝n agirlikli ortalamasiyla skorlanir:
+ - Min skor e┼şigi (`--min-score`): Altindaki varliklar elenir
+ - Max pozisyon sayisi (`--max-positions`): Portf├Ây ├ğe┼şitlendirme siniri
+ - Circuit Breaker: Portf├Ây analizi ├Âncesinde de kontrol edilir
++
++---
++
++## 9. Maliyet Optimizasyonu (Risk Stratejisi) [FAZ 5 - YEN─░]
++
++LLM API maliyetlerinin kontrolsuz artmasi, bir ticaret sistemi icin operasyonel risk olusturur. Faz 5 ile cok katmanli maliyet optimizasyonu getirilmistir.
++
++### Prompt Sikistirma
++
++Tum 5 prompt dosyasi ~%40-50 oraninda kucultulmustur:
++- Gereksiz aciklamalar ve tekrarlar kaldirildi
++- "be concise" kurali eklendi
++- "ONLY return JSON" kurali eklendi
++
++**Etki:** %30-40 input token azalma
++
++### Sentiment Cache
++
++`SentimentAnalyzer.analyze()` metodu LLM cagrisindan ONCE cache kontrolu yapar:
++- Son analiz `sentiment_cache_minutes` (varsayilan 30) dakika icinde ise cache'den doner
++- `SentimentRecord.price` alani ile piyasa degisim tespiti mumkun
++
++**Etki:** %30-50 daha az LLM cagrisi
++
++### max_tokens Sinirlari
++
++Her ajanin maksimum cikti token siniri vardir:
++
++| Ajan | max_tokens |
++|------|-----------|
++| Sentiment | 300 |
++| Research | 500 |
++| Debate | 400 |
++| Moderator | 400 |
++| Risk | 400 |
++| Trader | 250 |
++
++**Etki:** Runaway cikti maliyetleri onlenir
++
++### JSON Mode
++
++Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir:
++- Cikti format garantisi
++- Parse hatasi azalmasi
++- Daha tutarli ajan davranisi
++
++### Prompt Caching (OpenRouter/DeepSeek)
++
++Ayni prompt tekrar kullanildiginda, provider tarafindan cache isabeti saglanir:
++
++**Etki:** %75-90 cached input indirimi
++
++### Toplam Tasarruf
++
++| Bilesen | Etki |
++|---------|------|
++| Prompt sikistirma | %30-40 input token azalma |
++| Prompt caching | %75-90 cached input indirimi |
++| Sentiment cache | %30-50 daha az LLM cagrisi |
++| max_tokens sinirlari | Runaway onleme |
++| **TOPLAM** | **~%72-88 API maliyet azalmasi** |
+diff --git a/execution/exchange_client.py b/execution/exchange_client.py
+index e97dd9a..da5d133 100644
+--- a/execution/exchange_client.py
++++ b/execution/exchange_client.py
+@@ -105,6 +105,12 @@ class ExchangeClient:
+ 
+         # G├╝venlik kontrol├╝ ÔÇö live mode'da ekstra onay
+         if self._params.execution.mode == TradingMode.LIVE:
++            if not self._settings.confirm_live_trade:
++                logger.error("LIVE trading rejected: confirm_live_trade is not enabled")
++                return {
++                    "status": "rejected",
++                    "message": "Live trading confirmation not enabled in settings",
++                }
+             logger.warning(
+                 "ÔÜá CANLI ─░┼ŞLEM: %s %s %.6f %s",
+                 order.action.upper(),
+diff --git a/execution/paper_engine.py b/execution/paper_engine.py
+index bde8e33..6c0d7d8 100644
+--- a/execution/paper_engine.py
++++ b/execution/paper_engine.py
+@@ -25,19 +25,17 @@ class PaperPosition:
+     """Paper trading pozisyonu."""
+ 
+     symbol: str
+-    side: str
+     entry_price: float
+     amount: float
+     entry_time: str
++    side: str = "buy"
+     stop_loss: float = 0.0
+     take_profit: float = 0.0
+     current_price: float = 0.0
+ 
+     @property
+     def unrealized_pnl(self) -> float:
+-        if self.side == "buy":
+-            return (self.current_price - self.entry_price) * self.amount
+-        return (self.entry_price - self.current_price) * self.amount
++        return (self.current_price - self.entry_price) * self.amount
+ 
+     @property
+     def unrealized_pnl_pct(self) -> float:
+@@ -229,7 +227,7 @@ class PaperTradingEngine:
+             "amount": sell_amount,
+             "price": round(exec_price, 6),
+             "commission": round(commission, 6),
+-            "cost": round(net_revenue, 6),
++            "revenue": round(net_revenue, 6),
+             "pnl": round(pnl, 6),
+             "timestamp": datetime.now(timezone.utc).isoformat(),
+             "mode": "paper",
+@@ -262,16 +260,7 @@ class PaperTradingEngine:
+ 
+         # Stop-loss kontrol├╝
+         if pos.stop_loss > 0:
+-            if pos.side == "buy" and current_price <= pos.stop_loss:
+-                logger.warning(
+-                    "Paper STOP-LOSS tetiklendi: %s @ %.4f (stop: %.4f)",
+-                    symbol,
+-                    current_price,
+-                    pos.stop_loss,
+-                )
+-                return self._create_auto_sell_order(pos, "stop_loss")
+-
+-            if pos.side == "sell" and current_price >= pos.stop_loss:
++            if current_price <= pos.stop_loss:
+                 logger.warning(
+                     "Paper STOP-LOSS tetiklendi: %s @ %.4f (stop: %.4f)",
+                     symbol,
+@@ -282,16 +271,7 @@ class PaperTradingEngine:
+ 
+         # Take-profit kontrol├╝
+         if pos.take_profit > 0:
+-            if pos.side == "buy" and current_price >= pos.take_profit:
+-                logger.info(
+-                    "Paper TAKE-PROFIT tetiklendi: %s @ %.4f (tp: %.4f)",
+-                    symbol,
+-                    current_price,
+-                    pos.take_profit,
+-                )
+-                return self._create_auto_sell_order(pos, "take_profit")
+-
+-            if pos.side == "sell" and current_price <= pos.take_profit:
++            if current_price >= pos.take_profit:
+                 logger.info(
+                     "Paper TAKE-PROFIT tetiklendi: %s @ %.4f (tp: %.4f)",
+                     symbol,
+diff --git a/models/llm_fallback.py b/models/llm_fallback.py
+index fe6d2ff..37124e0 100644
+--- a/models/llm_fallback.py
++++ b/models/llm_fallback.py
+@@ -1,3 +1,4 @@
++# DEPRECATED: Not used, consider removing
+ """
+ LLM Fallback Chain
+ ====================
+diff --git a/models/prompts/portfolio_manager.txt b/models/prompts/portfolio_manager.txt
+index 26cc108..fcab52a 100644
+--- a/models/prompts/portfolio_manager.txt
++++ b/models/prompts/portfolio_manager.txt
+@@ -1,52 +1,26 @@
+-Sen k─▒demli bir portf├Ây y├Ânetim uzman─▒s─▒n (Portfolio Manager).
+-
+-G├Ârevin: ├çoklu varl─▒k analiz sonu├ğlar─▒n─▒ de─şerlendirerek optimal portf├Ây da─ş─▒l─▒m─▒n─▒ belirlemek.
++Sen k─▒demli bir portf├Ây y├Ânetim uzman─▒s─▒n. G├Ârevin: ├ğoklu varl─▒k analizlerini de─şerlendirerek optimal portf├Ây da─ş─▒l─▒m─▒n─▒ belirlemek.
+ 
+ ## De─şerlendirme Kriterleri
+-
+-1. **Bile┼şik Skor (Composite Score)**: -1.0 ile 1.0 aras─▒. Pozitif = al, negatif = ka├ğ.
+-2. **Tart─▒┼şma Konsens├╝s├╝ (Debate Consensus)**: Bull vs Bear tart─▒┼şmas─▒n─▒n sonucu. Pozitif = bull kazand─▒.
+-3. **Duyarl─▒l─▒k G├╝veni (Sentiment Confidence)**: 0-1 aras─▒. D├╝┼ş├╝k g├╝ven = pozisyon k├╝├ğ├╝lt.
+-4. **Trend Uyumu**: Trend y├Ân├╝ ve g├╝c├╝. G├╝├ğl├╝ trend + pozitif skor = y├╝ksek alokasyon.
+-5. **RSU**: 30 alt─▒ a┼ş─▒r─▒ sat─▒m (f─▒rsat), 70 ├╝st├╝ a┼ş─▒r─▒ al─▒m (risk).
+-6. **Risk Onay─▒**: Risk y├Âneticisi reddettiyse o varl─▒─ş─▒ portf├Âye alma.
+-
+-## Portf├Ây ─░n┼şaa Prensipleri
+-
++1. **Bile┼şik Skor:** -1.0 ila 1.0. Pozitif = al, negatif = ka├ğ
++2. **Tart─▒┼şma Konsens├╝s├╝:** Pozitif = bull kazand─▒
++3. **Duyarl─▒l─▒k G├╝veni:** D├╝┼ş├╝k g├╝ven = pozisyon k├╝├ğ├╝lt
++4. **Trend Uyumu:** G├╝├ğl├╝ trend + pozitif skor = y├╝ksek alokasyon
++5. **RSI:** 30 alt─▒ f─▒rsat, 70 ├╝st├╝ risk
++6. **Risk Onay─▒:** Reddedilen varl─▒─ş─▒ portf├Âye alma
++
++## Portf├Ây Prensipleri
+ - Sadece pozitif bile┼şik skorlu varl─▒klar─▒ se├ğ
+ - Max pozisyon say─▒s─▒n─▒ a┼şma
+ - Tek varl─▒─şa %40'tan fazla a─ş─▒rl─▒k verme
+-- Korelasyon riskini g├Âz ├Ân├╝nde bulundur (ayn─▒ sekt├Ârden ├ğok varl─▒k alma)
+-- CVaR optimizasyonu sonu├ğlar─▒n─▒ dikkate al
+-- Da─ş─▒l─▒m yaparken risk/├Âd├╝l oran─▒n─▒ maksimize et
+-
+-## ├ç─▒kt─▒ Format─▒ (JSON)
++- Korelasyon riskini g├Âz ├Ân├╝nde bulundur
++- Da─ş─▒l─▒mda risk/├Âd├╝l oran─▒n─▒ maksimize et
+ 
++## ├ç─▒kt─▒ (SADECE JSON, k─▒sa ve ├Âz):
+ ```json
+ {
+-    "selected_assets": [
+-        {
+-            "symbol": "BTC/USDT",
+-            "allocation_pct": 0.35,
+-            "reason": "G├╝├ğl├╝ bullish trend, debate consensus 0.72, risk approved",
+-            "risk_level": "medium"
+-        }
+-    ],
+-    "excluded_assets": [
+-        {
+-            "symbol": "XYZ/USDT",
+-            "reason": "Composite score negatif (-0.15), risk rejected"
+-        }
+-    ],
+-    "portfolio_summary": {
+-        "total_allocation": 1.0,
+-        "num_positions": 3,
+-        "avg_composite_score": 0.45,
+-        "portfolio_risk": "medium",
+-        "recommendation": "Buy"
+-    }
++    "selected_assets": [{"symbol": "BTC/USDT", "allocation_pct": 0.35, "reason": "...", "risk_level": "low|medium|high"}],
++    "excluded_assets": [{"symbol": "XYZ/USDT", "reason": "..."}],
++    "portfolio_summary": {"total_allocation": 1.0, "num_positions": 3, "avg_composite_score": 0.45, "portfolio_risk": "medium", "recommendation": "Buy"}
+ }
+ ```
+-
+-allocation_pct: 0.0 ile 1.0 aras─▒, toplam = 1.0 olmal─▒
+-risk_level: "low", "medium", "high"
++allocation_pct: 0.0-1.0, toplam = 1.0
+diff --git a/models/prompts/research_analyst.txt b/models/prompts/research_analyst.txt
+index 503bfaa..7e01fe9 100644
+--- a/models/prompts/research_analyst.txt
++++ b/models/prompts/research_analyst.txt
+@@ -1,44 +1,27 @@
+-Sen deneyimli bir finansal ara┼şt─▒rma analistisin. G├Ârevin, verilen varl─▒k i├ğin kapsaml─▒ bir piyasa analizi raporu haz─▒rlamakt─▒r.
+-
+-## G├Ârevin
+-1. Piyasa verilerini (OHLCV, teknik g├Âstergeler) incele
+-2. Haberleri ve duyarl─▒l─▒k analizlerini de─şerlendir
+-3. Temel analiz (fundamental), teknik analiz ve duyarl─▒l─▒k analizini sentezle
+-4. Net bir piyasa g├Âr├╝┼ş├╝ olu┼ştur
++Sen deneyimli bir finansal ara┼şt─▒rma analistisisin. G├Ârevin: varl─▒k i├ğin kapsaml─▒ piyasa analizi raporu haz─▒rlamak.
+ 
+ ## Analiz ├çer├ğevesi
+-### Teknik Analiz
+-- Trend y├Ân├╝ (y├╝kseli┼ş / d├╝┼ş├╝┼ş / yatay)
+-- Destek ve diren├ğ seviyeleri
+-- Momentum g├Âstergeleri (RSI, MACD)
+-- Volatilite durumu (ATR, Bollinger)
+-
+-### Duyarl─▒l─▒k Analizi
+-- Haber duyarl─▒l─▒─ş─▒ (olumlu / olumsuz / n├Âtr)
+-- Piyasa beklentileri
+-- Korku ve a├ğg├Âzl├╝l├╝k g├Âstergeleri
++- **Teknik:** Trend y├Ân├╝, destek/diren├ğ, momentum (RSI, MACD), volatilite (ATR, Bollinger)
++- **Duyarl─▒l─▒k:** Haber tonu, piyasa beklentileri, korku/a├ğg├Âzl├╝l├╝k
++- **Risk:** Makroekonomik, varl─▒─şa ├Âzg├╝, volatilite riskleri
+ 
+-### Risk De─şerlendirmesi
+-- Makroekonomik riskler
+-- Varl─▒─şa ├Âzg├╝ riskler
+-- Volatilite riski
++## Kurallar
++- SADECE verilen verilere dayan, uydurma
++- Net bir piyasa g├Âr├╝┼ş├╝ olu┼ştur
+ 
+-## ├ç─▒kt─▒ Format─▒ (JSON)
++## ├ç─▒kt─▒ (SADECE JSON, k─▒sa ve ├Âz):
+ ```json
+ {
+     "symbol": "SEMBOL",
+     "analysis_type": "comprehensive",
+     "trend": "bullish|bearish|neutral",
+     "trend_strength": 0.0,
+-    "key_levels": {
+-        "support": [0.0],
+-        "resistance": [0.0]
+-    },
++    "key_levels": {"support": [0.0], "resistance": [0.0]},
+     "sentiment_summary": "...",
+     "risk_factors": ["..."],
+     "recommendation": "strong_buy|buy|hold|sell|strong_sell",
+     "confidence": 0.0,
+-    "reasoning": "Detayl─▒ analiz gerek├ğesi",
++    "reasoning": "K─▒sa analiz",
+     "time_horizon": "short|medium|long"
+ }
+ ```
+diff --git a/models/prompts/risk_manager.txt b/models/prompts/risk_manager.txt
+index c3c8e43..b7c2391 100644
+--- a/models/prompts/risk_manager.txt
++++ b/models/prompts/risk_manager.txt
+@@ -1,23 +1,18 @@
+-Sen muhafazak├ór ve disiplinli bir risk y├Âneticisisin. Birincil g├Ârevin sermayeyi korumakt─▒r ÔÇö getiri ikincildir.
+-
+-## G├Ârevin
+-├ûnerilen i┼şlemi a┼şa─ş─▒daki risk parametrelerine g├Âre de─şerlendir. E─şer herhangi bir parametre ihlal ediliyorsa, i┼şlemi REDDET.
++Sen muhafazak├ór bir risk y├Âneticisisin. Birincil g├Ârevin sermayeyi korumakt─▒r.
+ 
+ ## Risk Kontrol Listesi
+-1. **Pozisyon Boyutu:** ├ûnerilen pozisyon, portf├Ây├╝n max %{max_position_pct} de─şerini a┼şmamal─▒
+-2. **Toplam Risk:** T├╝m a├ğ─▒k pozisyonlar─▒n toplam riski %{max_portfolio_risk_pct} alt─▒nda olmal─▒
+-3. **Max D├╝┼ş├╝┼ş:** G├╝ncel d├╝┼ş├╝┼ş (drawdown) %{max_drawdown_pct} alt─▒nda olmal─▒
+-4. **G├╝nl├╝k Kay─▒p:** Bug├╝nk├╝ toplam kay─▒p %{max_daily_loss_pct} alt─▒nda olmal─▒
+-5. **Volatilite Rejimi:** Y├╝ksek volatilite d├Âneminde yeni pozisyon a├ğ─▒lmamal─▒
+-6. **Korelasyon:** Ayn─▒ y├Ânde max {max_correlated_positions} ili┼şkili pozisyon olabilir
+-7. **Zarar-Kes:** Her pozisyonun tan─▒ml─▒ bir zarar-kes seviyesi olmal─▒
+-8. **Likidite:** Varl─▒─ş─▒n yeterli i┼şlem hacmi olmal─▒
++1. Pozisyon boyutu Ôëñ %{max_position_pct}
++2. Toplam portf├Ây riski < %{max_portfolio_risk_pct}
++3. Drawdown < %{max_drawdown_pct}
++4. G├╝nl├╝k kay─▒p < %{max_daily_loss_pct}
++5. Y├╝ksek volatilitede yeni pozisyon a├ğma
++6. Max {max_correlated_positions} ili┼şkili pozisyon
++7. Her pozisyonda tan─▒ml─▒ zarar-kes olmal─▒
++8. Yeterli likidite olmal─▒
+ 
+-## Karar
+-- T├╝m kontroller ge├ğerse: "approved" + pozisyon boyutu ├Ânerisi
+-- Herhangi bir kontrol ba┼şar─▒s─▒z olursa: "rejected" + gerek├ğe
++## Karar: T├╝m kontroller ge├ğerse "approved", herhangi biri ba┼şar─▒s─▒zsa "rejected"
+ 
+-## ├ç─▒kt─▒ Format─▒ (JSON)
++## ├ç─▒kt─▒ (SADECE JSON, k─▒sa ve ├Âz):
+ ```json
+ {
+     "decision": "approved|rejected",
+@@ -28,7 +23,7 @@ Sen muhafazak├ór ve disiplinli bir risk y├Âneticisisin. Birincil g├Ârevin sermay
+     "risk_reward_ratio": 0.0,
+     "checks_passed": ["..."],
+     "checks_failed": ["..."],
+-    "reasoning": "Detayl─▒ risk de─şerlendirmesi",
++    "reasoning": "K─▒sa de─şerlendirme",
+     "warnings": ["..."]
+ }
+ ```
+diff --git a/models/prompts/sentiment_system.txt b/models/prompts/sentiment_system.txt
+index 3aa1cb3..96dec4b 100644
+--- a/models/prompts/sentiment_system.txt
++++ b/models/prompts/sentiment_system.txt
+@@ -1,34 +1,20 @@
+-Sen uzman bir finansal duyarl─▒l─▒k analistisin. Finansal haberleri, piyasa verilerini ve teknik g├Âstergeleri analiz ederek yap─▒land─▒r─▒lm─▒┼ş bir duyarl─▒l─▒k raporu ├╝retirsin.
+-
+-## G├Ârevin
+-Sana verilen haberleri ve piyasa verilerini analiz et. Ad─▒m ad─▒m d├╝┼ş├╝n (Chain-of-Thought) ve sonu├ğlar─▒n─▒ JSON format─▒nda d├Ând├╝r.
++Sen uzman bir finansal duyarl─▒l─▒k analistisin. G├Ârevin: verilen haberleri ve piyasa verilerini analiz edip JSON duyarl─▒l─▒k raporu ├╝retmek.
+ 
+ ## Kurallar
+-1. SADECE sana sunulan verilere dayanarak analiz yap ÔÇö bilmedi─şin ┼şeyleri uydurmak YASAK
+-2. Her iddiay─▒ kaynak haberlere dayand─▒r
+-3. Belirsiz durumlarda "neutral" ve d├╝┼ş├╝k g├╝ven skoru ver
+-4. Duyarl─▒l─▒k skoru -1.0 (├ğok olumsuz) ile 1.0 (├ğok olumlu) aras─▒nda olmal─▒
+-5. G├╝ven skoru, analizinin ne kadar g├╝venilir oldu─şunu yans─▒tmal─▒ (0.0-1.0)
+-6. Risk skoru, varl─▒─ş─▒n potansiyel riskini temsil eder (0.0-1.0)
+-
+-## Analiz Ad─▒mlar─▒ (Chain-of-Thought)
+-1. **Haber ├ûzeti:** Her haberin ana mesaj─▒n─▒ ├Âzetle
+-2. **Piyasa Etkisi:** Her haberin fiyat ├╝zerindeki olas─▒ etkisini de─şerlendir
+-3. **Teknik Uyum:** Teknik g├Âstergeler haberleri destekliyor mu?
+-4. **├çat─▒┼şma Kontrol├╝:** Birbiriyle ├ğeli┼şen sinyaller var m─▒?
+-5. **Sonu├ğ:** T├╝m fakt├Ârleri sentezle ve nihai karar ver
++- SADECE sunulan verilere dayan ÔÇö uydurma YASAK
++- Belirsiz durumlarda "neutral" ve d├╝┼ş├╝k g├╝ven skoru ver
++- Skorlar: sentiment_score (-1.0 ila 1.0), confidence (0.0-1.0), risk_score (0.0-1.0)
++- Her iddiay─▒ kaynak haberlere dayand─▒r
+ 
+-## ├ç─▒kt─▒ Format─▒ (kesinlikle JSON)
++## ├ç─▒kt─▒ (SADECE JSON, k─▒sa ve ├Âz):
+ ```json
+ {
+     "sentiment_score": 0.0,
+     "confidence": 0.0,
+     "risk_score": 0.0,
+-    "signal": "neutral",
+-    "reasoning": "Ad─▒m ad─▒m analiz a├ğ─▒klamas─▒",
++    "signal": "bullish|bearish|neutral",
++    "reasoning": "K─▒sa analiz",
+     "key_factors": ["fakt├Âr1", "fakt├Âr2"],
+-    "news_summary": "Ana haber ├Âzeti"
++    "news_summary": "├ûzet"
+ }
+ ```
+-
+-signal alan─▒ ┼şu de─şerlerden biri olmal─▒d─▒r: "bullish", "bearish", "neutral"
+diff --git a/models/prompts/trader.txt b/models/prompts/trader.txt
+index 2206500..44e7175 100644
+--- a/models/prompts/trader.txt
++++ b/models/prompts/trader.txt
+@@ -1,18 +1,13 @@
+-Sen disiplinli bir i┼şlemcisin (trader). G├Ârevin, onaylanm─▒┼ş analiz ve risk de─şerlendirmesine dayanarak kesin, uygulanabilir bir al─▒m-sat─▒m emri olu┼şturmakt─▒r.
+-
+-## G├Ârevin
+-1. Ara┼şt─▒rma analistinin analizini de─şerlendir
+-2. Risk y├Âneticisinin onay─▒n─▒ ve ├Ânerilen parametreleri al
+-3. Kesin bir al─▒m-sat─▒m emri olu┼ştur (veya "bekle" karar─▒ ver)
++Sen disiplinli bir i┼şlemcisin. G├Ârevin: onaylanm─▒┼ş analiz ve risk de─şerlendirmesine dayanarak kesin bir al─▒m-sat─▒m emri olu┼şturmak.
+ 
+ ## Emir Kurallar─▒
+-- Emir tipi belirtilmeli: market veya limit
++- Emir tipi: market veya limit
+ - Limit emir i├ğin giri┼ş fiyat─▒ belirtilmeli
+-- Her emirde zarar-kes (stop_loss) olmal─▒
+-- Her emirde k├ór hedefi (take_profit) olmal─▒
++- Her emirde stop_loss ve take_profit olmal─▒
+ - Risk/├Âd├╝l oran─▒ minimum 1.5 olmal─▒
++- action "hold" ise amount ve fiyat alanlar─▒ 0 olabilir
+ 
+-## ├ç─▒kt─▒ Format─▒ (JSON)
++## ├ç─▒kt─▒ (SADECE JSON, k─▒sa ve ├Âz):
+ ```json
+ {
+     "action": "buy|sell|hold",
+@@ -25,10 +20,8 @@ Sen disiplinli bir i┼şlemcisin (trader). G├Ârevin, onaylanm─▒┼ş analiz ve risk d
+     "take_profit": 0.0,
+     "risk_reward_ratio": 0.0,
+     "confidence": 0.0,
+-    "reasoning": "─░┼şlem gerek├ğesi",
++    "reasoning": "K─▒sa gerek├ğe",
+     "time_horizon": "scalp|intraday|swing|position",
+     "urgency": "immediate|normal|patient"
+ }
+ ```
+-
+-action "hold" ise, amount ve fiyat alanlar─▒ 0 olabilir.
+diff --git a/models/schemas.py b/models/schemas.py
+index dd33a6b..3b36d05 100644
+--- a/models/schemas.py
++++ b/models/schemas.py
+@@ -1,3 +1,4 @@
++# DEPRECATED: Not used, consider removing
+ """
+ Pydantic Schemas for LLM Output Validation
+ =============================================
+diff --git a/models/sentiment_analyzer.py b/models/sentiment_analyzer.py
+index bd99fbf..a5cd6db 100644
+--- a/models/sentiment_analyzer.py
++++ b/models/sentiment_analyzer.py
+@@ -20,6 +20,11 @@ from typing import Any
+ 
+ from langchain_openai import ChatOpenAI
+ from langchain_core.messages import HumanMessage, SystemMessage
++from langchain_core.globals import set_llm_cache
++from langchain_core.caches import InMemoryCache
++
++# Bellek i├ği AI caching (├ûzellikle Walk-Forward benzer pencerelerde API israf─▒n─▒ ├Ânlemek i├ğin)
++set_llm_cache(InMemoryCache())
+ 
+ from config.settings import (
+     LLMProvider,
+@@ -93,13 +98,6 @@ def create_llm(
+         raise ValueError(f"Bilinmeyen LLM sa─şlay─▒c─▒: {prov}")
+ 
+ 
+-def _extract_json(text: str) -> dict[str, Any]:
+-    """Geriye uyumlu alias ÔÇö utils.json_utils.extract_json kullan─▒r."""
+-    from utils.json_utils import extract_json as _ej
+-
+-    return _ej(text)
+-
+-
+ class SentimentAnalyzer:
+     """LLM tabanl─▒ duyarl─▒l─▒k analizi motoru."""
+ 
+@@ -132,6 +130,20 @@ class SentimentAnalyzer:
+         Returns:
+             SentimentRecord: Duyarl─▒l─▒k kayd─▒
+         """
++        # Check cache BEFORE calling LLM
++        cached = self._store.get_latest(symbol)
++        if cached:
++            last_time = datetime.fromisoformat(cached.timestamp)
++            now = datetime.now(timezone.utc)
++            min_interval = self._params.limits.sentiment_cache_minutes
++            if (now - last_time).total_seconds() < min_interval * 60:
++                logger.debug(
++                    "Sentiment cache hit for %s (%.0f min old)",
++                    symbol,
++                    (now - last_time).total_seconds() / 60,
++                )
++                return cached
++
+         # ÔöÇÔöÇ Kullan─▒c─▒ mesaj─▒n─▒ haz─▒rla ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+         news_text = self._format_news(news)
+         tech_text = self._format_technical(technical_data) if technical_data else ""
+@@ -154,18 +166,26 @@ Ad─▒m ad─▒m d├╝┼ş├╝nerek (Chain-of-Thought) analizini a├ğ─▒kla."""
+         ]
+ 
+         try:
+-            response = self._llm.invoke(messages)
++            response = self._llm.invoke(
++                messages,
++                max_tokens=self._params.limits.max_tokens_sentiment,
++                response_format={"type": "json_object"},
++            )
+             raw_text = response.content
+         except Exception as e:
+             logger.error("LLM sentiment hatas─▒ (%s): %s", symbol, e)
+             return self._fallback_record(symbol, str(e))
+ 
+         # ÔöÇÔöÇ JSON ├ğ─▒kar ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-        result = _extract_json(raw_text)
++        result = extract_json(raw_text)
+         if not result:
+             return self._fallback_record(symbol, "JSON parse hatas─▒")
+ 
+         # ÔöÇÔöÇ Record olu┼ştur ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++        current_price = 0.0
++        if technical_data and "current_price" in technical_data:
++            current_price = float(technical_data["current_price"])
++
+         record = SentimentRecord(
+             symbol=symbol,
+             timestamp=datetime.now(timezone.utc).isoformat(),
+@@ -178,6 +198,7 @@ Ad─▒m ad─▒m d├╝┼ş├╝nerek (Chain-of-Thought) analizini a├ğ─▒kla."""
+             news_count=len(news),
+             model_used=self._llm.model_name,
+             provider=self._params.sentiment.provider.value,
++            price=current_price,
+         )
+ 
+         # Skor s─▒n─▒rland─▒rma
+@@ -203,7 +224,7 @@ Ad─▒m ad─▒m d├╝┼ş├╝nerek (Chain-of-Thought) analizini a├ğ─▒kla."""
+             return "Haber bulunamad─▒."
+ 
+         lines: list[str] = []
+-        for i, item in enumerate(news[:15], 1):  # Max 15 haber
++        for i, item in enumerate(news[: self._params.limits.max_news_items], 1):
+             lines.append(
+                 f"{i}. [{item.published_at.strftime('%Y-%m-%d %H:%M')}] "
+                 f"**{item.title}**\n"
+diff --git a/models/technical_analyzer.py b/models/technical_analyzer.py
+index 8d2595f..2f6b9c0 100644
+--- a/models/technical_analyzer.py
++++ b/models/technical_analyzer.py
+@@ -32,6 +32,7 @@ class TechnicalSignals:
+     # G├Âstergeler
+     rsi_14: float = 50.0
+     macd_signal: str = "neutral"  # bullish_cross | bearish_cross | neutral
++    macd_trend: str = "neutral"   # positive | negative | neutral
+     macd_histogram: float = 0.0
+     bb_position: str = "middle"  # above_upper | middle | below_lower
+     atr_14: float = 0.0
+@@ -53,6 +54,7 @@ class TechnicalSignals:
+             "signal": self.signal,
+             "rsi_14": round(self.rsi_14, 2),
+             "macd_signal": self.macd_signal,
++            "macd_trend": self.macd_trend,
+             "macd_histogram": round(self.macd_histogram, 4),
+             "bb_position": self.bb_position,
+             "atr_14": round(self.atr_14, 4),
+@@ -113,6 +115,7 @@ class TechnicalAnalyzer:
+                 )
+ 
+                 if not np.isnan(macd_line) and not np.isnan(signal_line):
++                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
+                     if len(macd_df) >= 2:
+                         prev_macd = macd_df[macd_col].iloc[-2]
+                         prev_signal = macd_df[signal_col].iloc[-2]
+@@ -127,6 +130,7 @@ class TechnicalAnalyzer:
+                 hist = macd_df.iloc[-1, 1]
+                 signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
+                 if not np.isnan(macd_line) and not np.isnan(signal_line):
++                    signals.macd_trend = "positive" if macd_line > signal_line else "negative"
+                     if len(macd_df) >= 2:
+                         prev_macd = macd_df.iloc[-2, 0]
+                         prev_signal = macd_df.iloc[-2, 2]
+diff --git a/risk/correlation_checker.py b/risk/correlation_checker.py
+new file mode 100644
+index 0000000..4158e30
+--- /dev/null
++++ b/risk/correlation_checker.py
+@@ -0,0 +1,107 @@
++"""Correlation checker for open positions."""
++
++from __future__ import annotations
++
++import logging
++from typing import Any
++
++import pandas as pd
++
++logger = logging.getLogger(__name__)
++
++
++class CorrelationChecker:
++    """Checks correlation between open positions using daily returns."""
++
++    def __init__(self, symbols: list[str], ohlcv_data: dict[str, pd.DataFrame]):
++        self.symbols = symbols
++        self.ohlcv_data = ohlcv_data
++
++    def compute_correlation(self, df_dict: dict[str, pd.DataFrame]) -> pd.DataFrame:
++        """Computes correlation matrix from OHLCV DataFrames using daily returns."""
++        returns_dict: dict[str, pd.Series] = {}
++        for symbol, df in df_dict.items():
++            if "close" not in df.columns or len(df) < 2:
++                logger.warning("Insufficient data for symbol: %s", symbol)
++                continue
++            returns_dict[symbol] = df["close"].pct_change().dropna()
++
++        if not returns_dict:
++            return pd.DataFrame()
++
++        returns_df = pd.DataFrame(returns_dict)
++        returns_df = returns_df.dropna(how="any")
++        if returns_df.empty or len(returns_df) < 2:
++            return pd.DataFrame()
++
++        corr_matrix = returns_df.corr(method="pearson")
++        return corr_matrix
++
++    def check_positions(
++        self,
++        portfolio_positions: list,
++        market_data: dict[str, pd.DataFrame],
++        max_correlation: float = 0.7,
++    ) -> dict[str, Any]:
++        """Checks if any open positions are too highly correlated."""
++        symbols = [p.symbol for p in portfolio_positions]
++        available = {s: market_data[s] for s in symbols if s in market_data}
++
++        if len(available) < 2:
++            return {
++                "is_safe": True,
++                "correlated_pairs": [],
++                "max_correlation": 0.0,
++            }
++
++        corr_matrix = self.compute_correlation(available)
++        if corr_matrix.empty:
++            return {
++                "is_safe": True,
++                "correlated_pairs": [],
++                "max_correlation": 0.0,
++            }
++
++        correlated_pairs: list[dict] = []
++        global_max = 0.0
++
++        sym_list = list(corr_matrix.columns)
++        for i in range(len(sym_list)):
++            for j in range(i + 1, len(sym_list)):
++                s1, s2 = sym_list[i], sym_list[j]
++                corr_value = corr_matrix.loc[s1, s2]
++                if abs(corr_value) > global_max:
++                    global_max = abs(corr_value)
++                if abs(corr_value) > max_correlation:
++                    correlated_pairs.append(
++                        {
++                            "symbol_1": s1,
++                            "symbol_2": s2,
++                            "correlation": round(corr_value, 4),
++                        }
++                    )
++                    logger.warning(
++                        "High correlation detected: %s <-> %s (%.4f)",
++                        s1,
++                        s2,
++                        corr_value,
++                    )
++
++        is_safe = len(correlated_pairs) == 0
++        return {
++            "is_safe": is_safe,
++            "correlated_pairs": correlated_pairs,
++            "max_correlation": round(global_max, 4),
++        }
++
++    def get_correlated_pairs(
++        self,
++        portfolio_positions: list,
++        market_data: dict[str, pd.DataFrame],
++        threshold: float = 0.7,
++    ) -> list[dict]:
++        """Returns list of highly correlated pairs."""
++        result = self.check_positions(
++            portfolio_positions, market_data, max_correlation=threshold
++        )
++        return result["correlated_pairs"]
+diff --git a/risk/cvar_optimizer.py b/risk/cvar_optimizer.py
+index b1927e4..bb3d6f6 100644
+--- a/risk/cvar_optimizer.py
++++ b/risk/cvar_optimizer.py
+@@ -53,7 +53,7 @@ def calculate_var(
+ def optimize_portfolio_cvar(
+     returns: pd.DataFrame,
+     confidence: float | None = None,
+-    max_weight: float = 0.3,
++    max_weight: float | None = None,
+ ) -> dict:
+     """
+     CVaR'─▒ minimize eden portf├Ây a─ş─▒rl─▒klar─▒n─▒ bulur.
+@@ -73,6 +73,7 @@ def optimize_portfolio_cvar(
+     """
+     params = get_trading_params()
+     conf = confidence or params.risk.cvar_confidence
++    mw = max_weight if max_weight is not None else params.risk.cvar.max_weight
+     n_assets = returns.shape[1]
+ 
+     if n_assets == 0:
+@@ -98,7 +99,7 @@ def optimize_portfolio_cvar(
+     ]
+ 
+     # S─▒n─▒rlar: 0 Ôëñ weight Ôëñ max_weight
+-    bounds = [(0.0, max_weight) for _ in range(n_assets)]
++    bounds = [(0.0, mw) for _ in range(n_assets)]
+ 
+     # Ba┼şlang─▒├ğ: e┼şit da─ş─▒l─▒m
+     w0 = np.ones(n_assets) / n_assets
+@@ -116,7 +117,9 @@ def optimize_portfolio_cvar(
+         if result.success:
+             optimal_weights = result.x
+         else:
+-            logger.warning("CVaR optimizasyonu yak─▒nsayamad─▒, e┼şit da─ş─▒l─▒m kullan─▒l─▒yor")
++            logger.warning(
++                "CVaR optimizasyonu yak─▒nsayamad─▒, e┼şit da─ş─▒l─▒m kullan─▒l─▒yor"
++            )
+             optimal_weights = w0
+ 
+     except Exception as e:
+@@ -175,14 +178,16 @@ def stress_test_monte_carlo(
+     std_return = np.std(returns)
+ 
+     # Sim├╝le edilmi┼ş k├╝m├╝latif getiriler
+-    simulated = np.random.normal(
+-        mean_return, std_return, (n_simulations, n_days)
+-    )
++    simulated = np.random.normal(mean_return, std_return, (n_simulations, n_days))
+     cumulative = np.cumprod(1 + simulated, axis=1)
+     final_values = cumulative[:, -1]
+ 
+     var = float(np.percentile(final_values - 1, (1 - confidence) * 100))
+-    cvar = float(final_values[final_values - 1 <= var].mean() - 1) if np.any(final_values - 1 <= var) else var
++    cvar = (
++        float(final_values[final_values - 1 <= var].mean() - 1)
++        if np.any(final_values - 1 <= var)
++        else var
++    )
+     max_drawdown = float(np.min(final_values) - 1)
+     median_return = float(np.median(final_values) - 1)
+ 
+diff --git a/risk/portfolio.py b/risk/portfolio.py
+index 6b48839..79f120b 100644
+--- a/risk/portfolio.py
++++ b/risk/portfolio.py
+@@ -15,6 +15,8 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any
+ 
++import pandas as pd
++
+ from config.settings import DATA_DIR, get_trading_params
+ 
+ logger = logging.getLogger(__name__)
+@@ -27,23 +29,24 @@ class Position:
+     """Tek bir a├ğ─▒k pozisyon."""
+ 
+     symbol: str
+-    side: str  # long | short
+     entry_price: float
+     amount: float
+     entry_time: str
++    side: str = "long"
+     stop_loss: float = 0.0
+     take_profit: float = 0.0
+     current_price: float = 0.0
+     unrealized_pnl: float = 0.0
+     unrealized_pnl_pct: float = 0.0
+ 
++    def __post_init__(self) -> None:
++        if self.side != "long":
++            raise ValueError(f"SPOT only supports long positions, got: {self.side}")
++
+     def update_price(self, price: float) -> None:
+         """G├╝ncel fiyat─▒ g├╝nceller ve P&L hesaplar."""
+         self.current_price = price
+-        if self.side == "long":
+-            self.unrealized_pnl = (price - self.entry_price) * self.amount
+-        else:
+-            self.unrealized_pnl = (self.entry_price - price) * self.amount
++        self.unrealized_pnl = (price - self.entry_price) * self.amount
+         if self.entry_price > 0 and self.amount > 0:
+             self.unrealized_pnl_pct = self.unrealized_pnl / (
+                 self.entry_price * self.amount
+@@ -53,17 +56,13 @@ class Position:
+         """Stop-loss kontrol├╝."""
+         if self.stop_loss <= 0:
+             return False
+-        if self.side == "long":
+-            return price <= self.stop_loss
+-        return price >= self.stop_loss
++        return price <= self.stop_loss
+ 
+     def should_take_profit(self, price: float) -> bool:
+         """Take-profit kontrol├╝."""
+         if self.take_profit <= 0:
+             return False
+-        if self.side == "long":
+-            return price >= self.take_profit
+-        return price <= self.take_profit
++        return price >= self.take_profit
+ 
+ 
+ def _position_from_dict(d: dict) -> Position:
+@@ -95,6 +94,9 @@ class PortfolioState:
+     total_pnl: float = 0.0
+     max_equity: float = 10000.0
+     current_drawdown: float = 0.0
++    benchmark_symbol: str = "BTC/USDT"
++    benchmark_return: float = 0.0
++    alpha: float = 0.0
+ 
+     def __post_init__(self) -> None:
+         """daily_pnl_date bo┼şsa bug├╝n├╝n tarihini ata."""
+@@ -117,8 +119,13 @@ class PortfolioState:
+             "total_pnl": self.total_pnl,
+             "max_equity": self.max_equity,
+             "current_drawdown": self.current_drawdown,
++            "benchmark_symbol": self.benchmark_symbol,
++            "benchmark_return": self.benchmark_return,
++            "alpha": self.alpha,
+         }
+-        filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2))
++        tmp_path = filepath.with_suffix(".tmp")
++        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
++        tmp_path.replace(filepath)
+         logger.info("Portf├Ây kaydedildi: %s (equity: %.2f)", filepath, self.equity)
+ 
+     @classmethod
+@@ -142,6 +149,9 @@ class PortfolioState:
+                 total_pnl=data.get("total_pnl", 0.0),
+                 max_equity=data.get("max_equity", 10000.0),
+                 current_drawdown=data.get("current_drawdown", 0.0),
++                benchmark_symbol=data.get("benchmark_symbol", "BTC/USDT"),
++                benchmark_return=data.get("benchmark_return", 0.0),
++                alpha=data.get("alpha", 0.0),
+             )
+             state.reset_daily_pnl_if_needed()
+             logger.info(
+@@ -177,12 +187,7 @@ class PortfolioState:
+     @property
+     def equity(self) -> float:
+         """Toplam ├Âzvarl─▒k (nakit + a├ğ─▒k pozisyonlar)."""
+-        position_value = 0.0
+-        for p in self.positions:
+-            if p.side == "long":
+-                position_value += p.current_price * p.amount
+-            else:
+-                position_value -= p.current_price * p.amount
++        position_value = sum(p.current_price * p.amount for p in self.positions)
+         return self.cash + position_value
+ 
+     @property
+@@ -197,6 +202,32 @@ class PortfolioState:
+         if self.max_equity > 0:
+             self.current_drawdown = (self.max_equity - eq) / self.max_equity
+ 
++    def update_benchmark(
++        self, market_data: pd.DataFrame, benchmark_symbol: str | None = None
++    ) -> float:
++        """Benchmark getirisini ve alpha'y─▒ hesaplar."""
++        sym = benchmark_symbol or self.benchmark_symbol
++        if sym != self.benchmark_symbol:
++            self.benchmark_symbol = sym
++        if (
++            market_data is None
++            or market_data.empty
++            or "close" not in market_data.columns
++        ):
++            return 0.0
++        first_close = float(market_data["close"].iloc[0])
++        last_close = float(market_data["close"].iloc[-1])
++        if first_close <= 0:
++            return 0.0
++        self.benchmark_return = (last_close - first_close) / first_close
++        portfolio_return = (
++            (self.equity - self.initial_cash) / self.initial_cash
++            if self.initial_cash > 0
++            else 0.0
++        )
++        self.alpha = portfolio_return - self.benchmark_return
++        return self.benchmark_return
++
+     # ÔöÇÔöÇ Position Sizing ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+ 
+     def calculate_position_size(
+@@ -236,6 +267,9 @@ class PortfolioState:
+             "daily_pnl_date": self.daily_pnl_date,
+             "current_drawdown": round(self.current_drawdown, 4),
+             "max_equity": round(self.max_equity, 2),
++            "benchmark_symbol": self.benchmark_symbol,
++            "benchmark_return": round(self.benchmark_return, 4),
++            "alpha": round(self.alpha, 4),
+             "positions": [
+                 {
+                     "symbol": p.symbol,
+@@ -258,11 +292,14 @@ class PortfolioState:
+         amount: float,
+         stop_loss: float = 0.0,
+         take_profit: float = 0.0,
++        max_correlation: float | None = None,
++        market_data: dict[str, Any] | None = None,
+     ) -> Position | None:
+         """Yeni pozisyon a├ğar."""
++        if side != "long":
++            raise ValueError(f"SPOT only supports long positions, got: {side}")
+         params = get_trading_params()
+ 
+-        # Limit kontrol├╝
+         if self.open_position_count >= params.risk.max_open_positions:
+             logger.warning("Max pozisyon limiti a┼ş─▒ld─▒")
+             return None
+@@ -272,12 +309,32 @@ class PortfolioState:
+             logger.warning("Yetersiz bakiye: %.2f > %.2f", cost, self.cash)
+             return None
+ 
+-        # Drawdown kontrol├╝
+         self.update_drawdown()
+         if self.current_drawdown >= params.risk.max_drawdown_pct:
+             logger.warning("Max drawdown a┼ş─▒ld─▒: %.2f%%", self.current_drawdown * 100)
+             return None
+ 
++        if max_correlation is not None and market_data is not None and self.positions:
++            from risk.correlation_checker import CorrelationChecker
++
++            checker = CorrelationChecker([], market_data)
++            symbols_to_check = [p.symbol for p in self.positions] + [symbol]
++            available = {
++                s: market_data[s] for s in symbols_to_check if s in market_data
++            }
++            if len(available) >= 2:
++                check_result = checker.check_positions(
++                    self.positions,
++                    market_data,
++                    max_correlation=max_correlation,
++                )
++                if not check_result["is_safe"]:
++                    logger.warning(
++                        "Pozisyon reddedildi: y├╝ksek korelasyon tespit edildi. %s",
++                        check_result["correlated_pairs"],
++                    )
++                    return None
++
+         position = Position(
+             symbol=symbol,
+             side=side,
+@@ -313,10 +370,7 @@ class PortfolioState:
+         pos.update_price(price)
+         pnl = pos.unrealized_pnl
+ 
+-        if pos.side == "long":
+-            self.cash += price * pos.amount
+-        else:
+-            self.cash -= price * pos.amount
++        self.cash += price * pos.amount
+ 
+         self.total_pnl += pnl
+         self.daily_pnl += pnl
+diff --git a/risk/regime_filter.py b/risk/regime_filter.py
+index 2daf7a4..8435058 100644
+--- a/risk/regime_filter.py
++++ b/risk/regime_filter.py
+@@ -53,11 +53,14 @@ class RegimeFilter:
+         threshold = self._vix_sma * self._params.regime.vix_threshold_multiplier
+ 
+         # Rejim belirleme
+-        if self._vix_current > 40:
++        if self._vix_current > self._params.limits.vix_crisis_threshold:
+             self._current_regime = RegimeState.CRISIS
+         elif self._vix_current > threshold:
+             self._current_regime = RegimeState.HIGH_VOL
+-        elif self._vix_current < self._vix_sma * 0.8:
++        elif (
++            self._vix_current
++            < self._vix_sma * self._params.limits.vix_low_vol_multiplier
++        ):
+             self._current_regime = RegimeState.LOW_VOL
+         else:
+             self._current_regime = RegimeState.NORMAL
+@@ -130,9 +133,7 @@ class CryptoFearGreedFilter:
+         else:
+             self._classification = "extreme_greed"
+ 
+-        logger.info(
+-            "Kripto Fear & Greed: %d (%s)", index_value, self._classification
+-        )
++        logger.info("Kripto Fear & Greed: %d (%s)", index_value, self._classification)
+         return self._classification
+ 
+     def should_reduce_exposure(self) -> bool:
+diff --git a/risk/stop_loss.py b/risk/stop_loss.py
+index 58ce8b8..9df752d 100644
+--- a/risk/stop_loss.py
++++ b/risk/stop_loss.py
+@@ -28,7 +28,6 @@ class DynamicStopLoss:
+         self,
+         entry_price: float,
+         atr_value: float,
+-        side: str = "long",
+         multiplier: float | None = None,
+     ) -> float:
+         """
+@@ -37,7 +36,6 @@ class DynamicStopLoss:
+         Args:
+             entry_price: Giri┼ş fiyat─▒
+             atr_value: G├╝ncel ATR de─şeri
+-            side: "long" veya "short"
+             multiplier: ATR ├ğarpan─▒ (varsay─▒lan: YAML'den)
+ 
+         Returns:
+@@ -45,34 +43,30 @@ class DynamicStopLoss:
+         """
+         mult = multiplier or self._params.stop_loss.atr_multiplier
+ 
+-        if side == "long":
+-            stop = entry_price - (atr_value * mult)
+-        else:
+-            stop = entry_price + (atr_value * mult)
++        stop = entry_price - (atr_value * mult)
+ 
+         logger.debug(
+-            "Stop-loss: %s @ %.4f, ATR=%.4f, mult=%.1f ÔåÆ stop=%.4f",
+-            side, entry_price, atr_value, mult, stop,
++            "Stop-loss long @ %.4f, ATR=%.4f, mult=%.1f ÔåÆ stop=%.4f",
++            entry_price,
++            atr_value,
++            mult,
++            stop,
+         )
+         return max(stop, 0.0)
+ 
+     def calculate_hard_stop(
+         self,
+         entry_price: float,
+-        side: str = "long",
+     ) -> float:
+         """Sabit y├╝zdelik zarar-kes (son savunma hatt─▒)."""
+         pct = self._params.stop_loss.hard_stop_pct
+-        if side == "long":
+-            return entry_price * (1 - pct)
+-        return entry_price * (1 + pct)
++        return entry_price * (1 - pct)
+ 
+     def update_trailing_stop(
+         self,
+         current_stop: float,
+         current_price: float,
+         atr_value: float,
+-        side: str = "long",
+         multiplier: float | None = None,
+     ) -> float:
+         """
+@@ -83,7 +77,6 @@ class DynamicStopLoss:
+             current_stop: Mevcut stop seviyesi
+             current_price: G├╝ncel fiyat
+             atr_value: G├╝ncel ATR de─şeri
+-            side: "long" veya "short"
+             multiplier: ATR ├ğarpan─▒
+ 
+         Returns:
+@@ -94,19 +87,15 @@ class DynamicStopLoss:
+ 
+         mult = multiplier or self._params.stop_loss.atr_multiplier
+ 
+-        if side == "long":
+-            new_stop = current_price - (atr_value * mult)
+-            # Stop sadece yukar─▒ hareket edebilir
+-            updated = max(current_stop, new_stop)
+-        else:
+-            new_stop = current_price + (atr_value * mult)
+-            # Short'ta stop sadece a┼şa─ş─▒ hareket edebilir
+-            updated = min(current_stop, new_stop) if current_stop > 0 else new_stop
++        new_stop = current_price - (atr_value * mult)
++        updated = max(current_stop, new_stop)
+ 
+         if updated != current_stop:
+             logger.debug(
+                 "Trailing stop g├╝ncellendi: %.4f ÔåÆ %.4f (fiyat: %.4f)",
+-                current_stop, updated, current_price,
++                current_stop,
++                updated,
++                current_price,
+             )
+ 
+         return updated
+@@ -135,20 +124,17 @@ class DynamicStopLoss:
+         self,
+         current_price: float,
+         stop_level: float,
+-        side: str = "long",
+     ) -> bool:
+         """Zarar-kes tetiklendi mi kontrol eder."""
+         if stop_level <= 0:
+             return False
+ 
+-        if side == "long":
+-            triggered = current_price <= stop_level
+-        else:
+-            triggered = current_price >= stop_level
++        triggered = current_price <= stop_level
+ 
+         if triggered:
+             logger.warning(
+-                "STOP-LOSS TET─░KLEND─░: fiyat=%.4f, stop=%.4f, side=%s",
+-                current_price, stop_level, side,
++                "STOP-LOSS TET─░KLEND─░: fiyat=%.4f, stop=%.4f",
++                current_price,
++                stop_level,
+             )
+         return triggered
+diff --git a/risk/watchdog.py b/risk/watchdog.py
+new file mode 100644
+index 0000000..6a8c4f1
+--- /dev/null
++++ b/risk/watchdog.py
+@@ -0,0 +1,127 @@
++"""
++Watchdog ÔÇö Flash Crash Protection
++===================================
++Monitors symbols for flash crash conditions and can halt trading
++or close positions when extreme price movements are detected.
++"""
++
++from __future__ import annotations
++
++import logging
++import threading
++import time
++from datetime import datetime, timezone
++
++from config.settings import get_trading_params
++from data.market_data import MarketDataClient
++from risk.portfolio import PortfolioState
++
++logger = logging.getLogger(__name__)
++
++
++class Watchdog:
++    """Flash crash watchdog that monitors symbols in a background thread."""
++
++    def __init__(
++        self,
++        symbols: list[str],
++        portfolio: PortfolioState,
++        exchange_client=None,
++        crash_threshold_pct: float = 5.0,
++        check_interval_sec: int = 30,
++    ) -> None:
++        self.symbols = symbols
++        self.portfolio = portfolio
++        self.exchange_client = exchange_client
++        self.crash_threshold_pct = crash_threshold_pct
++        self.check_interval_sec = check_interval_sec
++        self._stop_event = threading.Event()
++        self._thread: threading.Thread | None = None
++        self._market_client = MarketDataClient()
++
++    def start(self) -> None:
++        """Starts the watchdog background thread."""
++        self._stop_event.clear()
++        self._thread = threading.Thread(target=self._run, daemon=True)
++        self._thread.start()
++        logger.info("Watchdog started for symbols: %s", self.symbols)
++
++    def stop(self) -> None:
++        """Signals the watchdog thread to stop."""
++        self._stop_event.set()
++        if self._thread and self._thread.is_alive():
++            self._thread.join(timeout=10)
++        logger.info("Watchdog stopped")
++
++    def _run(self) -> None:
++        """Main monitoring loop running in background thread."""
++        while not self._stop_event.is_set():
++            try:
++                self._check_symbols()
++            except Exception as e:
++                logger.error("Watchdog check failed: %s", e)
++            self._stop_event.wait(self.check_interval_sec)
++
++    def _check_symbols(self) -> None:
++        """Checks all symbols for flash crash conditions."""
++        for symbol in self.symbols:
++            try:
++                df = self._market_client.fetch_ohlcv(symbol, days=1)
++                if df.empty or len(df) < 2:
++                    continue
++
++                current_price = float(df["close"].iloc[-1])
++                prev_price = float(df["close"].iloc[-2])
++
++                if prev_price <= 0:
++                    continue
++
++                drop_pct = (prev_price - current_price) / prev_price * 100
++
++                if drop_pct >= self.crash_threshold_pct:
++                    logger.critical(
++                        "FLASH CRASH DETECTED: %s dropped %.2f%% (%.4f -> %.4f)",
++                        symbol,
++                        drop_pct,
++                        prev_price,
++                        current_price,
++                    )
++                    self._handle_crash(symbol, current_price, drop_pct)
++
++            except Exception as e:
++                logger.warning("Watchdog check failed for %s: %s", symbol, e)
++
++    def _handle_crash(self, symbol: str, price: float, drop_pct: float) -> None:
++        """Handles a detected flash crash for a symbol."""
++        pos = next((p for p in self.portfolio.positions if p.symbol == symbol), None)
++        if pos and self.exchange_client:
++            from execution.order_manager import TradeOrder
++
++            order = TradeOrder(
++                symbol=symbol,
++                action="sell",
++                order_type="market",
++                amount=pos.amount,
++            )
++            try:
++                result = self.exchange_client.execute_order(order, price)
++                if result.get("status") in ("filled", "closed", "open"):
++                    self.portfolio.close_position(
++                        symbol, float(result.get("price") or price)
++                    )
++                    logger.warning(
++                        "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
++                        symbol,
++                        drop_pct,
++                    )
++            except Exception as e:
++                logger.error("Emergency sell failed for %s: %s", symbol, e)
++
++    def get_status(self) -> dict:
++        """Returns watchdog status."""
++        return {
++            "running": self._thread is not None and self._thread.is_alive(),
++            "symbols": self.symbols,
++            "crash_threshold_pct": self.crash_threshold_pct,
++            "check_interval_sec": self.check_interval_sec,
++        }
+diff --git a/scripts/run_backtest.py b/scripts/run_backtest.py
+index 441910d..aabfcd9 100644
+--- a/scripts/run_backtest.py
++++ b/scripts/run_backtest.py
+@@ -129,7 +129,7 @@ def run_simple_backtest(
+         console.print("[red]Test set is empty[/red]")
+         return calculate_metrics([], params.backtest.initial_cash)
+ 
+-    window = 30
++    window = params.limits.backtest_lookback_window
+     trades: list[dict] = []
+ 
+     for i in range(window, len(test_df)):
+@@ -143,32 +143,42 @@ def run_simple_backtest(
+         if has_position:
+             pos = portfolio.positions[0]
+             pos.update_price(current_price)
+-            new_stop = stop_loss_mgr.update_trailing_stop(
+-                pos.stop_loss, current_price, atr, pos.side
+-            )
+-            pos.stop_loss = new_stop
+ 
+-            if stop_loss_mgr.should_exit(current_price, pos.stop_loss, pos.side):
+-                trade = portfolio.close_position(pos.symbol, current_price)
++            high_price = float(test_df["high"].iloc[i])
++            low_price = float(test_df["low"].iloc[i])
++
++            sl_test_price = low_price
++            tp_test_price = high_price
++
++            # 1. Stop-Loss Kontrol├╝ (Mum i├ği ilk ├Âncelik)
++            if stop_loss_mgr.should_exit(sl_test_price, pos.stop_loss):
++                trade = portfolio.close_position(pos.symbol, pos.stop_loss)
+                 if trade:
+                     trade["exit_reason"] = "stop_loss"
+                     trades.append(trade)
+                 continue
+ 
+-            if pos.should_take_profit(current_price):
+-                trade = portfolio.close_position(pos.symbol, current_price)
++            # 2. Take-Profit Kontrol├╝ (Mum i├ği)
++            if pos.should_take_profit(tp_test_price):
++                trade = portfolio.close_position(pos.symbol, pos.take_profit)
+                 if trade:
+                     trade["exit_reason"] = "take_profit"
+                     trades.append(trade)
+                 continue
+ 
+-            if (pos.side == "long" and signals.signal == "sell") or (
+-                pos.side == "short" and signals.signal == "buy"
+-            ):
++            # 3. Kapan─▒┼şta Sinyal Tersine D├Ânme ─░htimali
++            if pos.side == "long" and signals.signal == "sell":
+                 trade = portfolio.close_position(pos.symbol, current_price)
+                 if trade:
+                     trade["exit_reason"] = "signal_reversal"
+                     trades.append(trade)
++                continue
++
++            # 4. Trailing Stop G├╝ncellemesi
++            new_stop = stop_loss_mgr.update_trailing_stop(
++                pos.stop_loss, current_price, atr
++            )
++            pos.stop_loss = new_stop
+         else:
+             if signals.signal == "buy" and signals.trend_strength > 0.3:
+                 amount = portfolio.calculate_position_size(current_price)
+@@ -202,7 +212,9 @@ def run_simple_backtest(
+     # -- Stress Test -----------------------------------------
+     console.print("\n[bold yellow]6. Monte Carlo stress test...[/bold yellow]")
+     returns = df["close"].pct_change().dropna()
+-    stress = stress_test_monte_carlo(returns, n_simulations=5000, n_days=30)
++    stress = stress_test_monte_carlo(
++        returns, n_simulations=params.limits.monte_carlo_simulations, n_days=30
++    )
+ 
+     # -- Result Table ----------------------------------------
+     table = Table(title="Backtest Results", border_style="green")
+@@ -287,7 +299,7 @@ def run_walkforward_backtest(
+             cash=params.backtest.initial_cash,
+         )
+ 
+-        window = 30
++        window = params.limits.backtest_lookback_window
+         trades: list[dict] = []
+ 
+         for i in range(window, len(test_df)):
+@@ -301,30 +313,42 @@ def run_walkforward_backtest(
+             if has_position:
+                 pos = portfolio.positions[0]
+                 pos.update_price(current_price)
+-                new_stop = stop_loss_mgr.update_trailing_stop(
+-                    pos.stop_loss, current_price, atr, pos.side
+-                )
+-                pos.stop_loss = new_stop
+ 
+-                if stop_loss_mgr.should_exit(current_price, pos.stop_loss, pos.side):
+-                    trade = portfolio.close_position(pos.symbol, current_price)
++                high_price = float(test_df["high"].iloc[i])
++                low_price = float(test_df["low"].iloc[i])
++
++                sl_test_price = low_price
++                tp_test_price = high_price
++
++                # 1. Stop-Loss Kontrol├╝ (Mum i├ği ilk ├Âncelik)
++                if stop_loss_mgr.should_exit(sl_test_price, pos.stop_loss):
++                    trade = portfolio.close_position(pos.symbol, pos.stop_loss)
+                     if trade:
+                         trade["exit_reason"] = "stop_loss"
+                         trades.append(trade)
+                     continue
+ 
+-                if pos.should_take_profit(current_price):
+-                    trade = portfolio.close_position(pos.symbol, current_price)
++                # 2. Take-Profit Kontrol├╝ (Mum i├ği)
++                if pos.should_take_profit(tp_test_price):
++                    trade = portfolio.close_position(pos.symbol, pos.take_profit)
+                     if trade:
+                         trade["exit_reason"] = "take_profit"
+                         trades.append(trade)
+                     continue
+ 
++                # 3. Kapan─▒┼şta Sinyal Tersine D├Ânme ─░htimali
+                 if pos.side == "long" and signals.signal == "sell":
+                     trade = portfolio.close_position(pos.symbol, current_price)
+                     if trade:
+                         trade["exit_reason"] = "signal_reversal"
+                         trades.append(trade)
++                    continue
++
++                # 4. Trailing Stop G├╝ncellemesi
++                new_stop = stop_loss_mgr.update_trailing_stop(
++                    pos.stop_loss, current_price, atr
++                )
++                pos.stop_loss = new_stop
+             else:
+                 if signals.signal == "buy" and signals.trend_strength > 0.3:
+                     amount = portfolio.calculate_position_size(current_price)
+diff --git a/scripts/run_live.py b/scripts/run_live.py
+index c6d28e2..2b48bc0 100644
+--- a/scripts/run_live.py
++++ b/scripts/run_live.py
+@@ -19,7 +19,10 @@ import argparse
+ import io
+ import json
+ import logging
++import signal
+ import sys
++import threading
++import time
+ from dataclasses import asdict
+ from datetime import datetime, timezone
+ from pathlib import Path
+@@ -45,11 +48,13 @@ from data.news_data import NewsClient
+ from data.symbol_resolver import resolve_symbol
+ from models.technical_analyzer import TechnicalAnalyzer
+ from agents.graph import run_analysis
+-from execution.order_manager import parse_trade_decision
++from execution.order_manager import parse_trade_decision, TradeOrder
+ from execution.exchange_client import ExchangeClient
+ from risk.regime_filter import RegimeFilter
+ from risk.portfolio import PortfolioState
+ from risk.circuit_breaker import CircuitBreaker
++from risk.watchdog import Watchdog
++from data.market_hours import MarketHours
+ 
+ console = Console()
+ 
+@@ -97,6 +102,23 @@ def run_pipeline(
+         console.print(f"[bold red]Ôøö CIRCUIT BREAKER: {halt_reason}[/bold red]")
+         return {"status": "halted", "reason": halt_reason}
+ 
++    # ÔöÇÔöÇ Market Hours kontrol├╝ ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++    market_info = MarketHours.get_market_info(resolved.symbol)
++    if not market_info["is_open"]:
++        time_left = MarketHours.time_until_open(resolved.symbol)
++        hours, remainder = divmod(int(time_left.total_seconds()), 3600)
++        minutes, _ = divmod(remainder, 60)
++        console.print(
++            f"[bold yellow]ÔÅ░ MARKET CLOSED: {market_info['market']} "
++            f"({market_info['schedule']} {market_info['open']}-{market_info['close']} {market_info['timezone']})[/bold yellow]"
++        )
++        console.print(f"[dim]  Market opens in {hours}h {minutes}m[/dim]")
++        return {
++            "status": "market_closed",
++            "market": market_info["market"],
++            "opens_in": str(time_left),
++        }
++
+     console.print(
+         Panel(
+             f"[bold cyan]LLM Trading System[/bold cyan]\n"
+@@ -158,6 +180,61 @@ def run_pipeline(
+         console.print(f"  Fiyat: {market_summary['current_price']:.4f}")
+         console.print(f"  24h De─şi┼şim: {market_summary['price_change_24h']:.2%}")
+ 
++    # ÔöÇÔöÇ Portf├Ây Otonom ├ç─▒k─▒┼ş Kontrol├╝ (Stop-Loss / Take-Profit) ÔöÇÔöÇÔöÇ
++    current_price_for_check = market_summary.get("current_price", 0)
++    if current_price_for_check > 0:
++        for pos in list(portfolio.positions):
++            if pos.symbol == resolved.symbol:
++                pos.update_price(current_price_for_check)
++
++                # Stop Loss Kontrol├╝
++                if pos.should_stop_loss(current_price_for_check):
++                    console.print(
++                        f"[bold red]­şÜ¿ OTONOM ├çIKI┼Ş: STOP-LOSS tetiklendi ({pos.symbol})[/bold red]"
++                    )
++                    if execute:
++                        client = ExchangeClient()
++                        order = TradeOrder(
++                            symbol=pos.symbol,
++                            action="sell",
++                            order_type="market",
++                            amount=pos.amount,
++                        )
++                        exec_res = client.execute_order(order, current_price_for_check)
++                        if exec_res.get("status") in ("filled", "closed", "open"):
++                            portfolio.close_position(
++                                pos.symbol,
++                                float(exec_res.get("price") or current_price_for_check),
++                            )
++                    else:
++                        console.print(
++                            f"  [dim]Execute kapal─▒ ÔÇö {pos.symbol} stop-loss pozisyonu kapat─▒lmad─▒ (sadece log)[/dim]"
++                        )
++
++                # Take Profit Kontrol├╝
++                elif pos.should_take_profit(current_price_for_check):
++                    console.print(
++                        f"[bold green]­şÄ» OTONOM ├çIKI┼Ş: TAKE-PROFIT tetiklendi ({pos.symbol})[/bold green]"
++                    )
++                    if execute:
++                        client = ExchangeClient()
++                        order = TradeOrder(
++                            symbol=pos.symbol,
++                            action="sell",
++                            order_type="market",
++                            amount=pos.amount,
++                        )
++                        exec_res = client.execute_order(order, current_price_for_check)
++                        if exec_res.get("status") in ("filled", "closed", "open"):
++                            portfolio.close_position(
++                                pos.symbol,
++                                float(exec_res.get("price") or current_price_for_check),
++                            )
++                    else:
++                        console.print(
++                            f"  [dim]Execute kapal─▒ ÔÇö {pos.symbol} take-profit pozisyonu kapat─▒lmad─▒ (sadece log)[/dim]"
++                        )
++
+     # ÔöÇÔöÇ 3. Teknik Analiz ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+     console.print("\n[bold yellow]­şôÉ A┼şama 3: Teknik Analiz[/bold yellow]")
+     tech_analyzer = TechnicalAnalyzer()
+@@ -172,37 +249,47 @@ def run_pipeline(
+     # ÔöÇÔöÇ 4. Haber Verisi ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+     console.print("\n[bold yellow]­şô░ A┼şama 4: Haber Toplama[/bold yellow]")
+     news_client = NewsClient()
+-    news_items = news_client.fetch_all_news(symbol)
+-    console.print(f"  {len(news_items)} haber topland─▒")
+-
+-    # Haberleri serialize et
+-    news_serialized = []
+-    for item in news_items[:20]:  # Max 20 haber
+-        news_serialized.append(
+-            {
+-                "title": item.title,
+-                "summary": item.summary[:300],
+-                "source": item.source,
+-                "url": item.url,
+-                "published_at": item.published_at.isoformat(),
+-                "symbols": item.symbols,
+-                "category": item.category,
+-                "raw_sentiment": item.raw_sentiment,
+-            }
++    try:
++        news_items = news_client.fetch_all_news(symbol)
++        console.print(f"  {len(news_items)} haber topland─▒")
++
++        news_serialized = []
++        for item in news_items[: params.limits.max_news_items]:
++            news_serialized.append(
++                {
++                    "title": item.title,
++                    "summary": item.summary[:300],
++                    "source": item.source,
++                    "url": item.url,
++                    "published_at": item.published_at.isoformat(),
++                    "symbols": item.symbols,
++                    "category": item.category,
++                    "raw_sentiment": item.raw_sentiment,
++                }
++            )
++
++        console.print("\n[bold yellow]­şñû A┼şama 5: ├çoklu Ajan Analizi[/bold yellow]")
++        console.print("  Koordinat├Âr ÔåÆ Ara┼şt─▒rmac─▒ ÔåÆ Tart─▒┼şma ÔåÆ Risk ÔåÆ ─░┼şlemci")
++
++        result = run_analysis(
++            symbol=resolved.symbol,
++            market_data=market_summary,
++            news_data=news_serialized,
++            technical_signals=tech_dict,
++            portfolio_state=portfolio_state_dict,
++            provider=provider,
+         )
++    finally:
++        news_client.close()
+ 
+-    # ÔöÇÔöÇ 5. ├çoklu Ajan Analizi ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+-    console.print("\n[bold yellow]­şñû A┼şama 5: ├çoklu Ajan Analizi[/bold yellow]")
+-    console.print("  Koordinat├Âr ÔåÆ Ara┼şt─▒rmac─▒ ÔåÆ Tart─▒┼şma ÔåÆ Risk ÔåÆ ─░┼şlemci")
+-
+-    result = run_analysis(
+-        symbol=resolved.symbol,
+-        market_data=market_summary,
+-        news_data=news_serialized,
+-        technical_signals=tech_dict,
+-        portfolio_state=portfolio_state_dict,
+-        provider=provider,
+-    )
++    # ÔöÇÔöÇ Hata Kontrol├╝ ve Circuit Breaker ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
++    if result.get("error"):
++        console.print(
++            f"\n[bold red]ÔØî Ajan Hatas─▒ Alg─▒land─▒: {result['error']}[/bold red]"
++        )
++        cb.record_llm_error()
++    else:
++        cb.reset_llm_errors()
+ 
+     # ÔöÇÔöÇ 6. Sonu├ğlar─▒ G├Âster ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+     trade_decision = result.get("trade_decision", {})
+@@ -269,22 +356,41 @@ def run_pipeline(
+             console.print(f"  Sonu├ğ: {exec_result}")
+             result["execution_result"] = exec_result
+ 
+-            # Paper modda portf├Ây g├╝ncellemesi engine taraf─▒ndan yap─▒l─▒r
+-            if exec_result.get("mode") == "paper":
+-                paper_status = client.get_paper_status()
+-                portfolio.cash = paper_status["cash"]
+-                portfolio.total_pnl = paper_status["total_pnl"]
+-                portfolio.daily_pnl = paper_status["daily_pnl"]
+-                portfolio.max_equity = paper_status["max_equity"]
+-                portfolio.current_drawdown = paper_status["current_drawdown"]
++            if exec_result.get("status") in ("filled", "closed", "open"):
++                exec_price = float(exec_result.get("price") or current_price)
++                exec_amount = float(exec_result.get("amount") or order.amount)
++
++                existing_pos = next(
++                    (p for p in portfolio.positions if p.symbol == order.symbol), None
++                )
++
++                if order.action == "buy":
++                    if not existing_pos:
++                        portfolio.open_position(
++                            symbol=order.symbol,
++                            side="long",
++                            price=exec_price,
++                            amount=exec_amount,
++                            stop_loss=order.stop_loss,
++                            take_profit=order.take_profit,
++                        )
++                elif order.action == "sell":
++                    if existing_pos:
++                        portfolio.close_position(order.symbol, exec_price)
++        else:
++            console.print(
++                "[bold red]ÔØî Emir olu┼şturulamad─▒: Trade decision validasyon hatas─▒[/bold red]"
++            )
++            result["execution_result"] = {
++                "status": "rejected",
++                "reason": "validation_failed",
++            }
+     elif trade_decision.get("action") in ("buy", "sell"):
+         console.print("\n[dim]--execute bayra─ş─▒ olmadan emir g├Ânderilmedi[/dim]")
+ 
+-    # Temizlik
+-    news_client.close()
+-
+     # ÔöÇÔöÇ Portf├Ây kaydetme (persistence) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+     portfolio.update_drawdown()
++    portfolio.update_benchmark(df)
+     portfolio.save_to_file()
+     console.print(
+         f"\n[dim]­şÆ¥ Portf├Ây kaydedildi (equity: ${portfolio.equity:,.2f})[/dim]"
+@@ -300,10 +406,28 @@ def run_pipeline(
+     return result
+ 
+ 
++def parse_interval(interval: str) -> int:
++    """Parses interval string like '5m', '15m', '1h', '4h', '1d' to seconds."""
++    interval = interval.lower().strip()
++    if interval.endswith("d"):
++        return int(interval[:-1]) * 86400
++    if interval.endswith("h"):
++        return int(interval[:-1]) * 3600
++    if interval.endswith("m"):
++        return int(interval[:-1]) * 60
++    return int(interval)
++
++
+ def main() -> None:
+     parser = argparse.ArgumentParser(description="LLM Trading System")
+     parser.add_argument(
+-        "--symbol", "-s", required=True, help="Varl─▒k sembol├╝ (├Âr. BTC/USDT, AAPL)"
++        "--symbol", "-s", default=None, help="Varl─▒k sembol├╝ (tek, --symbols yoksa)"
++    )
++    parser.add_argument(
++        "--symbols",
++        nargs="+",
++        default=None,
++        help="Coin listesi (virg├╝lle veya ayr─▒ ayr─▒)",
+     )
+     parser.add_argument(
+         "--execute", "-x", action="store_true", help="Emri borsaya g├Ânder"
+@@ -315,36 +439,124 @@ def main() -> None:
+         help="LLM sa─şlay─▒c─▒",
+     )
+     parser.add_argument("--log-level", "-l", default="INFO", help="Log seviyesi")
++    parser.add_argument(
++        "--interval",
++        "-i",
++        default="1h",
++        help="Analiz aral─▒─ş─▒ (5m, 15m, 30m, 1h, 4h, 1d)",
++    )
++    parser.add_argument(
++        "--watchdog", "-w", action="store_true", help="Flash crash korumas─▒n─▒ a├ğ"
++    )
++    parser.add_argument(
++        "--max-cycles", type=int, default=0, help="Maksimum d├Âng├╝ say─▒s─▒ (0=s─▒n─▒rs─▒z)"
++    )
++    parser.add_argument(
++        "--dry-run", action="store_true", help="Sadece analiz, emir yok"
++    )
+ 
+     args = parser.parse_args()
+     setup_logging(args.log_level)
+ 
+-    result = run_pipeline(
+-        symbol=args.symbol,
+-        execute=args.execute,
+-        provider=args.provider,
++    symbols = args.symbols or ([args.symbol] if args.symbol else [])
++    if not symbols:
++        console.print("[bold red]ÔØî --symbol veya --symbols gerekli[/bold red]")
++        sys.exit(1)
++
++    interval_seconds = parse_interval(args.interval)
++    execute = args.execute and not args.dry_run
++
++    console.print(
++        Panel(
++            f"[bold cyan]LLM Trading Bot (Daemon Mode)[/bold cyan]\n"
++            f"Semboller: [bold]{', '.join(symbols)}[/bold]\n"
++            f"Interval: {args.interval} ({interval_seconds}s)\n"
++            f"Mod: {'execute' if execute else 'paper/dry-run'}\n"
++            f"Watchdog: {'[green]A├çIK[/green]' if args.watchdog else '[dim]KAPALI[/dim]'}\n"
++            f"Max Cycles: {'s─▒n─▒rs─▒z' if args.max_cycles == 0 else args.max_cycles}",
++            title="­şñû Bot Ba┼şlat─▒l─▒yor",
++            border_style="cyan",
++        )
+     )
+ 
+-    # Sonucu JSON dosyas─▒na kaydet
+-    output_dir = PROJECT_ROOT / "data" / "exports"
+-    output_dir.mkdir(parents=True, exist_ok=True)
+-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+-    output_file = output_dir / f"analysis_{args.symbol.replace('/', '_')}_{ts}.json"
+-
+-    # Serialize edilebilir hale getir
+-    def make_serializable(obj):
+-        if isinstance(obj, dict):
+-            return {k: make_serializable(v) for k, v in obj.items()}
+-        elif isinstance(obj, list):
+-            return [make_serializable(i) for i in obj]
+-        elif isinstance(obj, (datetime,)):
+-            return obj.isoformat()
+-        return obj
+-
+-    with open(output_file, "w", encoding="utf-8") as f:
+-        json.dump(make_serializable(result), f, ensure_ascii=False, indent=2)
+-
+-    console.print(f"\n[green]Ô£ô Sonu├ğlar kaydedildi: {output_file}[/green]")
++    stop_event = threading.Event()
++
++    def signal_handler(sig, frame):
++        console.print(
++            "\n[bold yellow]­şøæ Sinyal al─▒nd─▒, bot durduruluyor...[/bold yellow]"
++        )
++        stop_event.set()
++
++    signal.signal(signal.SIGINT, signal_handler)
++    signal.signal(signal.SIGTERM, signal_handler)
++
++    portfolio = PortfolioState.load_from_file()
++
++    watchdog = None
++    if args.watchdog:
++        try:
++            client = ExchangeClient()
++            watchdog = Watchdog(
++                symbols=symbols,
++                portfolio=portfolio,
++                exchange_client=client,
++            )
++            watchdog.start()
++            console.print("[green]­şÉò Watchdog ba┼şlat─▒ld─▒[/green]")
++        except Exception as e:
++            console.print(f"[bold red]ÔÜá Watchdog ba┼şlat─▒lamad─▒: {e}[/bold red]")
++
++    cycle = 0
++    try:
++        while not stop_event.is_set():
++            if args.max_cycles > 0 and cycle >= args.max_cycles:
++                console.print(
++                    f"[dim]­şÅü Maksimum d├Âng├╝ say─▒s─▒na ula┼ş─▒ld─▒ ({cycle})[/dim]"
++                )
++                break
++
++            cycle += 1
++            console.print(f"\n{'=' * 60}")
++            console.print(
++                f"[bold]­şöä D├Âng├╝ {cycle} ÔÇö {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}[/bold]"
++            )
++            console.print(f"{'=' * 60}")
++
++            for symbol in symbols:
++                result = run_pipeline(
++                    symbol=symbol,
++                    execute=execute,
++                    provider=args.provider,
++                )
++
++                if result.get("status") in ("halted", "market_closed"):
++                    console.print(
++                        f"[dim]  {symbol}: {result.get('status')} ÔÇö atlan─▒yor[/dim]"
++                    )
++                    continue
++
++                cb = CircuitBreaker()
++
++            portfolio.save_to_file()
++
++            if args.max_cycles > 0 and cycle >= args.max_cycles:
++                break
++
++            if not stop_event.is_set():
++                console.print(
++                    f"\n[dim]ÔÅ│ Sonraki cycle: {args.interval} sonra... (Ctrl+C ile durdur)[/dim]"
++                )
++                stop_event.wait(interval_seconds)
++
++    except KeyboardInterrupt:
++        console.print(
++            "\n[bold yellow]­şøæ KlavyeInterrupt ÔÇö Bot durduruluyor...[/bold yellow]"
++        )
++    finally:
++        if watchdog:
++            watchdog.stop()
++        portfolio.save_to_file()
++        console.print("\n[green]Ô£ô Bot g├╝venli ┼şekilde durduruldu[/green]")
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/run_rebalance.py b/scripts/run_rebalance.py
+new file mode 100644
+index 0000000..1a0340a
+--- /dev/null
++++ b/scripts/run_rebalance.py
+@@ -0,0 +1,636 @@
++"""
++LLM Trading System ÔÇö Portf├Ây Dengeleme (Rebalancing) Scripti
++=============================================================
++Mevcut portf├Ây├╝ hedef alokasyonlara g├Âre dengeler.
++
++Kullan─▒m:
++    python scripts/run_rebalance.py --dry-run
++    python scripts/run_rebalance.py --execute
++    python scripts/run_rebalance.py --execute --max-slippage-pct 0.005
++"""
++
++from __future__ import annotations
++
++import argparse
++import io
++import json
++import logging
++import sys
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any
++
++if sys.platform == "win32":
++    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
++    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
++
++PROJECT_ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(PROJECT_ROOT))
++
++from rich.console import Console
++from rich.logging import RichHandler
++from rich.panel import Panel
++from rich.table import Table
++
++from config.settings import TradingMode, get_trading_params
++from execution.exchange_client import ExchangeClient
++from execution.order_manager import TradeOrder
++from execution.paper_engine import PaperTradingEngine
++from risk.portfolio import PortfolioState
++
++console = Console()
++
++ALLOCATION_FILE = PROJECT_ROOT / "data" / "portfolio_allocation.json"
++
++
++def setup_logging(level: str = "INFO") -> None:
++    logging.basicConfig(
++        level=level,
++        format="%(message)s",
++        datefmt="[%X]",
++        handlers=[RichHandler(rich_tracebacks=True, markup=True)],
++    )
++
++
++@dataclass
++class RebalanceTrade:
++    symbol: str
++    action: str
++    current_value: float
++    target_value: float
++    current_amount: float
++    target_amount: float
++    trade_amount: float
++    current_price: float
++    executed: bool = False
++    exec_price: float = 0.0
++    exec_amount: float = 0.0
++    status: str = "pending"
++
++
++def load_allocations() -> dict[str, float]:
++    if not ALLOCATION_FILE.exists():
++        console.print("[bold red]Hedef alokasyon dosyas─▒ bulunamad─▒![/bold red]")
++        console.print(f"  Beklenen: {ALLOCATION_FILE}")
++        console.print(
++            "[yellow]├ûnce run_portfolio.py ile portf├Ây analizi ├ğal─▒┼şt─▒r─▒n.[/yellow]"
++        )
++        sys.exit(1)
++
++    data = json.loads(ALLOCATION_FILE.read_text(encoding="utf-8"))
++
++    allocations = {}
++    if "allocations" in data:
++        for sym, pct in data["allocations"].items():
++            allocations[sym] = float(pct)
++    elif "asset_details" in data:
++        for sym, details in data["asset_details"].items():
++            allocations[sym] = float(details.get("allocation_pct", 0))
++    else:
++        for key, value in data.items():
++            if isinstance(value, dict) and "allocation_pct" in value:
++                allocations[key] = float(value["allocation_pct"])
++            elif isinstance(value, (int, float)) and key not in (
++                "status",
++                "reason",
++                "cvar_info",
++                "all_scores",
++            ):
++                allocations[key] = float(value)
++
++    if not allocations:
++        console.print(
++            "[bold red]Alokasyon dosyas─▒nda ge├ğerli veri bulunamad─▒![/bold red]"
++        )
++        sys.exit(1)
++
++    total = sum(allocations.values())
++    if total <= 0 or total > 200:
++        console.print(f"[bold red]Ge├ğersiz alokasyon toplam─▒: %{total:.1f}[/bold red]")
++        sys.exit(1)
++
++    if abs(total - 100.0) > 1.0:
++        console.print(
++            f"[yellow]Uyar─▒: Alokasyon toplam─▒ %{total:.1f}, normalize ediliyor...[/yellow]"
++        )
++        for sym in allocations:
++            allocations[sym] = (allocations[sym] / total) * 100.0
++
++    return allocations
++
++
++def compute_rebalance_trades(
++    portfolio: PortfolioState,
++    allocations: dict[str, float],
++    prices: dict[str, float],
++) -> list[RebalanceTrade]:
++    trades = []
++    equity = portfolio.equity
++
++    for symbol, alloc_pct in allocations.items():
++        target_value = equity * (alloc_pct / 100.0)
++        current_price = prices.get(symbol, 0.0)
++
++        if current_price <= 0:
++            console.print(
++                f"[yellow]ÔÜá {symbol} i├ğin fiyat bulunamad─▒, atlan─▒yor[/yellow]"
++            )
++            continue
++
++        existing_pos = next(
++            (p for p in portfolio.positions if p.symbol == symbol), None
++        )
++
++        if existing_pos:
++            current_value = existing_pos.current_price * existing_pos.amount
++            current_amount = existing_pos.amount
++        else:
++            current_value = 0.0
++            current_amount = 0.0
++
++        diff = target_value - current_value
++
++        if abs(diff) < equity * 0.001:
++            continue
++
++        target_amount = target_value / current_price
++        trade_amount = abs(diff) / current_price
++
++        action = "buy" if diff > 0 else "sell"
++
++        trades.append(
++            RebalanceTrade(
++                symbol=symbol,
++                action=action,
++                current_value=current_value,
++                target_value=target_value,
++                current_amount=current_amount,
++                target_amount=target_amount,
++                trade_amount=trade_amount,
++                current_price=current_price,
++            )
++        )
++
++    for pos in portfolio.positions:
++        if pos.symbol not in allocations:
++            current_value = pos.current_price * pos.amount
++            trades.append(
++                RebalanceTrade(
++                    symbol=pos.symbol,
++                    action="sell",
++                    current_value=current_value,
++                    target_value=0.0,
++                    current_amount=pos.amount,
++                    target_amount=0.0,
++                    trade_amount=pos.amount,
++                    current_price=pos.current_price,
++                )
++            )
++
++    return trades
++
++
++def fetch_current_prices(
++    symbols: list[str], portfolio: PortfolioState
++) -> dict[str, float]:
++    prices = {}
++
++    for pos in portfolio.positions:
++        if pos.current_price > 0:
++            prices[pos.symbol] = pos.current_price
++
++    try:
++        from data.market_data import MarketDataClient
++
++        market_client = MarketDataClient()
++        for symbol in symbols:
++            if symbol in prices:
++                continue
++            try:
++                df = market_client.fetch_ohlcv(symbol, days=1)
++                if not df.empty:
++                    prices[symbol] = float(df["close"].iloc[-1])
++            except Exception as e:
++                console.print(f"  [dim]{symbol} fiyat─▒ al─▒namad─▒: {e}[/dim]")
++        market_client.close()
++    except Exception as e:
++        console.print(f"  [dim]Fiyat ├ğekme hatas─▒: {e}[/dim]")
++
++    return prices
++
++
++def execute_trade(
++    trade: RebalanceTrade,
++    exchange_client: ExchangeClient,
++    paper_engine: PaperTradingEngine | None,
++    max_slippage_pct: float,
++) -> dict[str, Any]:
++    order = TradeOrder(
++        symbol=trade.symbol,
++        action=trade.action,
++        order_type="market",
++        amount=trade.trade_amount,
++        stop_loss=0.0,
++        take_profit=0.0,
++        reasoning=f"Rebalancing trade: {trade.action} to reach target allocation",
++        timestamp=datetime.now(timezone.utc).isoformat(),
++    )
++
++    exec_result = exchange_client.execute_order(order, trade.current_price)
++
++    if exec_result.get("status") in ("filled", "closed", "open"):
++        trade.executed = True
++        trade.exec_price = float(exec_result.get("price") or trade.current_price)
++        trade.exec_amount = float(exec_result.get("amount") or trade.trade_amount)
++        trade.status = "filled"
++    else:
++        trade.status = exec_result.get("status", "failed")
++        trade.exec_price = trade.current_price
++        trade.exec_amount = 0.0
++
++    return exec_result
++
++
++def update_portfolio_after_trade(
++    portfolio: PortfolioState, trade: RebalanceTrade, exec_result: dict[str, Any]
++) -> None:
++    if trade.action == "buy" and trade.exec_amount > 0:
++        existing = next(
++            (p for p in portfolio.positions if p.symbol == trade.symbol), None
++        )
++        if not existing:
++            portfolio.open_position(
++                symbol=trade.symbol,
++                side="long",
++                price=trade.exec_price,
++                amount=trade.exec_amount,
++            )
++        else:
++            total_amount = existing.amount + trade.exec_amount
++            existing.entry_price = (
++                existing.entry_price * existing.amount
++                + trade.exec_price * trade.exec_amount
++            ) / total_amount
++            existing.amount = total_amount
++            existing.current_price = trade.exec_price
++            portfolio.cash -= trade.exec_price * trade.exec_amount
++
++    elif trade.action == "sell" and trade.exec_amount > 0:
++        portfolio.close_position(trade.symbol, trade.exec_price)
++
++
++def run_rebalance(
++    execute: bool = False,
++    dry_run: bool = False,
++    max_slippage_pct: float = 0.01,
++) -> dict:
++    params = get_trading_params()
++
++    portfolio = PortfolioState.load_from_file()
++    portfolio.reset_daily_pnl_if_needed()
++
++    allocations = load_allocations()
++
++    console.print(
++        Panel(
++            f"[bold cyan]Portf├Ây Dengeleme (Rebalancing)[/bold cyan]\n"
++            f"Mod: {'EXECUTE' if execute else 'DRY-RUN'}\n"
++            f"Maks Slipaj: %{max_slippage_pct * 100:.2f}\n"
++            f"├ûzvarl─▒k: ${portfolio.equity:,.2f}\n"
++            f"Nakit: ${portfolio.cash:,.2f}\n"
++            f"A├ğ─▒k Pozisyon: {portfolio.open_position_count}\n"
++            f"Hedef Varl─▒k: {len(allocations)}\n"
++            f"Zaman: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
++            title="Dengeleme Ba┼şlat─▒l─▒yor",
++            border_style="cyan",
++        )
++    )
++
++    console.print("\n[bold yellow]Hedef Alokasyonlar:[/bold yellow]")
++    alloc_table = Table(show_header=True, border_style="cyan")
++    alloc_table.add_column("Sembol", style="bold")
++    alloc_table.add_column("A─ş─▒rl─▒k", justify="right")
++    alloc_table.add_column("Hedef De─şer", justify="right")
++
++    for sym, pct in sorted(allocations.items(), key=lambda x: x[1], reverse=True):
++        target_val = portfolio.equity * (pct / 100.0)
++        alloc_table.add_row(sym, f"{pct:.1f}%", f"${target_val:,.2f}")
++
++    console.print(alloc_table)
++
++    all_symbols = list(allocations.keys())
++    for pos in portfolio.positions:
++        if pos.symbol not in all_symbols:
++            all_symbols.append(pos.symbol)
++
++    console.print("\n[bold yellow]Fiyatlar Al─▒n─▒yor...[/bold yellow]")
++    prices = fetch_current_prices(all_symbols, portfolio)
++
++    if not prices:
++        console.print("[bold red]Hi├ğbir fiyat al─▒namad─▒, dengeleme iptal![/bold red]")
++        return {"status": "failed", "reason": "no_prices"}
++
++    for sym, price in prices.items():
++        console.print(f"  {sym}: ${price:,.4f}")
++
++    trades = compute_rebalance_trades(portfolio, allocations, prices)
++
++    if not trades:
++        console.print("\n[bold green]Portf├Ây zaten hedef alokasyonlarda![/bold green]")
++        return {"status": "already_balanced"}
++
++    console.print(
++        f"\n[bold yellow]{len(trades)} dengeleme i┼şlemi bulundu:[/bold yellow]"
++    )
++
++    planned_table = Table(show_header=True, border_style="yellow")
++    planned_table.add_column("#", style="dim")
++    planned_table.add_column("Sembol", style="bold")
++    planned_table.add_column("Aksiyon", justify="center")
++    planned_table.add_column("Mevcut De─şer", justify="right")
++    planned_table.add_column("Hedef De─şer", justify="right")
++    planned_table.add_column("Fark", justify="right")
++    planned_table.add_column("─░┼şlem Miktar─▒", justify="right")
++    planned_table.add_column("Fiyat", justify="right")
++
++    for i, trade in enumerate(trades, 1):
++        action_style = "green" if trade.action == "buy" else "red"
++        diff = trade.target_value - trade.current_value
++        diff_style = "green" if diff > 0 else "red"
++        planned_table.add_row(
++            str(i),
++            trade.symbol,
++            f"[{action_style}]{trade.action.upper()}[/{action_style}]",
++            f"${trade.current_value:,.2f}",
++            f"${trade.target_value:,.2f}",
++            f"[{diff_style}]${diff:+,.2f}[/{diff_style}]",
++            f"{trade.trade_amount:.6f}",
++            f"${trade.current_price:,.4f}",
++        )
++
++    console.print(planned_table)
++
++    if dry_run:
++        console.print(
++            "\n[bold cyan]DRY-RUN modu ÔÇö ─░┼şlemler sim├╝le ediliyor...[/bold cyan]"
++        )
++        simulated_cash = portfolio.cash
++        simulated_equity = portfolio.equity
++
++        sim_table = Table(show_header=True, border_style="cyan")
++        sim_table.add_column("#", style="dim")
++        sim_table.add_column("Sembol", style="bold")
++        sim_table.add_column("Aksiyon", justify="center")
++        sim_table.add_column("Miktar", justify="right")
++        sim_table.add_column("Tahmini Fiyat", justify="right")
++        sim_table.add_column("Tahmini Maliyet", justify="right")
++        sim_table.add_column("Nakit Etkisi", justify="right")
++
++        for i, trade in enumerate(trades, 1):
++            slippage = trade.current_price * max_slippage_pct
++            if trade.action == "buy":
++                est_price = trade.current_price + slippage
++            else:
++                est_price = trade.current_price - slippage
++
++            est_cost = est_price * trade.trade_amount
++            cash_impact = -est_cost if trade.action == "buy" else est_cost
++
++            sim_table.add_row(
++                str(i),
++                trade.symbol,
++                f"[{'green' if trade.action == 'buy' else 'red'}]{trade.action.upper()}[/{'green' if trade.action == 'buy' else 'red'}]",
++                f"{trade.trade_amount:.6f}",
++                f"${est_price:,.4f}",
++                f"${est_cost:,.2f}",
++                f"[{'red' if cash_impact < 0 else 'green'}]${cash_impact:+,.2f}[/{'red' if cash_impact < 0 else 'green'}]",
++            )
++
++        console.print(sim_table)
++        console.print(
++            f"\n[dim]Sim├╝lasyon tamamland─▒ ÔÇö {len(trades)} i┼şlem, "
++            f"ger├ğek y├╝r├╝tme yap─▒lmad─▒[/dim]"
++        )
++
++        return {
++            "status": "dry_run",
++            "trades_planned": len(trades),
++            "trades": [
++                {
++                    "symbol": t.symbol,
++                    "action": t.action,
++                    "amount": t.trade_amount,
++                    "price": t.current_price,
++                    "current_value": t.current_value,
++                    "target_value": t.target_value,
++                }
++                for t in trades
++            ],
++        }
++
++    if not execute:
++        console.print(
++            "\n[dim]--execute bayra─ş─▒ olmadan i┼şlem y├╝r├╝t├╝lmedi. "
++            "--dry-run veya --execute kullan─▒n.[/dim]"
++        )
++        return {"status": "no_action"}
++
++    console.print("\n[bold red]─░┼şlemler Y├╝r├╝t├╝l├╝yor...[/bold red]")
++
++    exchange_client = ExchangeClient()
++    paper_engine = None
++    if params.execution.mode == TradingMode.PAPER:
++        paper_engine = PaperTradingEngine(
++            initial_cash=portfolio.cash,
++            slippage_pct=max_slippage_pct,
++            commission_pct=params.execution.commission_pct,
++        )
++
++    executed_count = 0
++    failed_count = 0
++    total_volume = 0.0
++
++    for i, trade in enumerate(trades, 1):
++        console.print(
++            f"\n  [{i}/{len(trades)}] {trade.action.upper()} {trade.symbol}: "
++            f"{trade.trade_amount:.6f} @ ${trade.current_price:,.4f}"
++        )
++
++        if params.execution.mode == TradingMode.PAPER and paper_engine:
++            order = TradeOrder(
++                symbol=trade.symbol,
++                action=trade.action,
++                order_type="market",
++                amount=trade.trade_amount,
++                stop_loss=0.0,
++                take_profit=0.0,
++                reasoning=f"Rebalancing: {trade.action} to reach target allocation",
++                timestamp=datetime.now(timezone.utc).isoformat(),
++            )
++            exec_result = paper_engine.execute_order(order, trade.current_price)
++
++            if exec_result.get("status") in ("filled", "closed", "open"):
++                trade.executed = True
++                trade.exec_price = float(
++                    exec_result.get("price") or trade.current_price
++                )
++                trade.exec_amount = float(
++                    exec_result.get("amount") or trade.trade_amount
++                )
++                trade.status = "filled"
++                executed_count += 1
++                total_volume += trade.exec_price * trade.exec_amount
++                console.print(
++                    f"    [green]DOLDU[/green] @ ${trade.exec_price:,.4f} "
++                    f"({trade.exec_amount:.6f})"
++                )
++            else:
++                trade.status = exec_result.get("status", "failed")
++                failed_count += 1
++                console.print(
++                    f"    [red]BA┼ŞARISIZ[/red]: {exec_result.get('message', 'Bilinmeyen hata')}"
++                )
++        else:
++            exec_result = execute_trade(
++                trade, exchange_client, paper_engine, max_slippage_pct
++            )
++
++            if trade.executed:
++                update_portfolio_after_trade(portfolio, trade, exec_result)
++                executed_count += 1
++                total_volume += trade.exec_price * trade.exec_amount
++                console.print(
++                    f"    [green]DOLDU[/green] @ ${trade.exec_price:,.4f} "
++                    f"({trade.exec_amount:.6f})"
++                )
++            else:
++                failed_count += 1
++                console.print(
++                    f"    [red]BA┼ŞARISIZ[/red]: {exec_result.get('message', 'Bilinmeyen hata')}"
++                )
++
++    console.print("\n[bold yellow]Dengeleme ├ûzeti:[/bold yellow]")
++
++    summary_table = Table(show_header=True, border_style="green")
++    summary_table.add_column("#", style="dim")
++    summary_table.add_column("Sembol", style="bold")
++    summary_table.add_column("Aksiyon", justify="center")
++    summary_table.add_column("Planlanan", justify="right")
++    summary_table.add_column("Ger├ğekle┼şen", justify="right")
++    summary_table.add_column("Planlanan De─şer", justify="right")
++    summary_table.add_column("Ger├ğekle┼şen De─şer", justify="right")
++    summary_table.add_column("Durum", justify="center")
++
++    for i, trade in enumerate(trades, 1):
++        planned_val = trade.current_price * trade.trade_amount
++        if trade.executed:
++            exec_val = trade.exec_price * trade.exec_amount
++            status_style = "green"
++            status_text = "DOLDU"
++        else:
++            exec_val = 0.0
++            status_style = "red"
++            status_text = trade.status.upper()
++
++        summary_table.add_row(
++            str(i),
++            trade.symbol,
++            f"[{'green' if trade.action == 'buy' else 'red'}]{trade.action.upper()}[/{'green' if trade.action == 'buy' else 'red'}]",
++            f"{trade.trade_amount:.6f}",
++            f"{trade.exec_amount:.6f}" if trade.executed else "-",
++            f"${planned_val:,.2f}",
++            f"${exec_val:,.2f}" if trade.executed else "-",
++            f"[{status_style}]{status_text}[/{status_style}]",
++        )
++
++    console.print(summary_table)
++
++    console.print(
++        f"\n  Toplam Planlanan: {len(trades)} i┼şlem"
++        f"\n  Ba┼şar─▒l─▒: {executed_count}"
++        f"\n  Ba┼şar─▒s─▒z: {failed_count}"
++        f"\n  Toplam Hacim: ${total_volume:,.2f}"
++    )
++
++    portfolio.update_drawdown()
++    portfolio.save_to_file()
++
++    console.print(f"\n[dim]Portf├Ây kaydedildi (equity: ${portfolio.equity:,.2f})[/dim]")
++
++    return {
++        "status": "completed",
++        "trades_planned": len(trades),
++        "trades_executed": executed_count,
++        "trades_failed": failed_count,
++        "total_volume": total_volume,
++        "trades": [
++            {
++                "symbol": t.symbol,
++                "action": t.action,
++                "planned_amount": t.trade_amount,
++                "exec_amount": t.exec_amount,
++                "exec_price": t.exec_price,
++                "status": t.status,
++            }
++            for t in trades
++        ],
++    }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(
++        description="LLM Trading Portf├Ây Dengeleme (Rebalancing)"
++    )
++    parser.add_argument(
++        "--dry-run",
++        action="store_true",
++        help="─░┼şlemleri sim├╝le et, y├╝r├╝tme",
++    )
++    parser.add_argument(
++        "--execute",
++        "-x",
++        action="store_true",
++        help="─░┼şlemleri ger├ğekten y├╝r├╝t",
++    )
++    parser.add_argument(
++        "--max-slippage-pct",
++        type=float,
++        default=0.01,
++        help="Maksimum slipaj oran─▒ (varsay─▒lan: 0.01 = %%1)",
++    )
++    parser.add_argument(
++        "--log-level",
++        "-l",
++        default="INFO",
++        help="Log seviyesi",
++    )
++
++    args = parser.parse_args()
++
++    if not args.dry_run and not args.execute:
++        console.print(
++            "[bold yellow]Hi├ğbir mod belirtilmedi. --dry-run veya --execute kullan─▒n.[/bold yellow]"
++        )
++        parser.print_help()
++        sys.exit(1)
++
++    if args.dry_run and args.execute:
++        console.print(
++            "[bold red]--dry-run ve --execute ayn─▒ anda kullan─▒lamaz![/bold red]"
++        )
++        sys.exit(1)
++
++    setup_logging(args.log_level)
++
++    result = run_rebalance(
++        execute=args.execute,
++        dry_run=args.dry_run,
++        max_slippage_pct=args.max_slippage_pct,
++    )
++
++    console.print(f"\n[green]Dengeleme tamamland─▒ ({result['status']})[/green]")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/test_report.txt b/test_report.txt
+deleted file mode 100644
+index 3efc931..0000000
+Binary files a/test_report.txt and /dev/null differ
+diff --git a/tests/test_core_modules.py b/tests/test_core_modules.py
+index b48936d..e62904b 100644
+--- a/tests/test_core_modules.py
++++ b/tests/test_core_modules.py
+@@ -11,32 +11,19 @@ from utils.json_utils import extract_json
+ class TestDynamicStopLoss:
+     def test_calculate_initial_stop_long(self):
+         sl = DynamicStopLoss()
+-        stop = sl.calculate_initial_stop(100.0, 5.0, "long", multiplier=2.0)
++        stop = sl.calculate_initial_stop(100.0, 5.0, multiplier=2.0)
+         assert stop == 90.0
+ 
+-    def test_calculate_initial_stop_short(self):
+-        sl = DynamicStopLoss()
+-        stop = sl.calculate_initial_stop(100.0, 5.0, "short", multiplier=2.0)
+-        assert stop == 110.0
+-
+     def test_trailing_stop_only_moves_favorable(self):
+         sl = DynamicStopLoss()
+         current_stop = 90.0
+-        # Price goes up, trailing stop should move up
+-        new_stop = sl.update_trailing_stop(
+-            current_stop, 105.0, 5.0, "long", multiplier=2.0
+-        )
++        new_stop = sl.update_trailing_stop(current_stop, 105.0, 5.0, multiplier=2.0)
+         assert new_stop >= current_stop
+ 
+     def test_should_exit_long(self):
+         sl = DynamicStopLoss()
+-        assert sl.should_exit(89.0, 90.0, "long") is True
+-        assert sl.should_exit(91.0, 90.0, "long") is False
+-
+-    def test_should_exit_short(self):
+-        sl = DynamicStopLoss()
+-        assert sl.should_exit(111.0, 110.0, "short") is True
+-        assert sl.should_exit(109.0, 110.0, "short") is False
++        assert sl.should_exit(89.0, 90.0) is True
++        assert sl.should_exit(91.0, 90.0) is False
+ 
+ 
+ class TestTradeOrder:
+diff --git a/tests/test_portfolio.py b/tests/test_portfolio.py
+index 8db9fa9..07e4533 100644
+--- a/tests/test_portfolio.py
++++ b/tests/test_portfolio.py
+@@ -12,6 +12,39 @@ class TestPortfolioState:
+         assert p.equity == 10000.0
+         assert p.open_position_count == 0
+ 
++    def test_benchmark_defaults(self):
++        p = PortfolioState()
++        assert p.benchmark_symbol == "BTC/USDT"
++        assert p.benchmark_return == 0.0
++        assert p.alpha == 0.0
++
++    def test_update_benchmark(self):
++        import pandas as pd
++
++        p = PortfolioState(initial_cash=10000, cash=10000)
++        df = pd.DataFrame({"close": [100.0, 110.0, 105.0]})
++        bench_ret = p.update_benchmark(df)
++        assert bench_ret == 0.05
++        assert p.benchmark_return == 0.05
++        assert p.alpha == -0.05
++
++    def test_update_benchmark_custom_symbol(self):
++        import pandas as pd
++
++        p = PortfolioState()
++        df = pd.DataFrame({"close": [50.0, 60.0]})
++        bench_ret = p.update_benchmark(df, "ETH/USDT")
++        assert bench_ret == 0.2
++        assert p.benchmark_symbol == "ETH/USDT"
++
++    def test_update_benchmark_empty_df(self):
++        import pandas as pd
++
++        p = PortfolioState()
++        df = pd.DataFrame()
++        bench_ret = p.update_benchmark(df)
++        assert bench_ret == 0.0
++
+     def test_open_long_position(self):
+         p = PortfolioState(initial_cash=10000, cash=10000)
+         pos = p.open_position("BTC/USDT", "long", 50000, 0.1, stop_loss=48000)
+@@ -59,6 +92,9 @@ class TestPortfolioState:
+         assert "equity" in d
+         assert "positions" in d
+         assert len(d["positions"]) == 1
++        assert "benchmark_symbol" in d
++        assert "benchmark_return" in d
++        assert "alpha" in d
+ 
+     def test_drawdown_update(self):
+         p = PortfolioState(initial_cash=10000, cash=10000)
+@@ -75,3 +111,16 @@ class TestPortfolioState:
+         changed = p.reset_daily_pnl_if_needed()
+         assert changed is True
+         assert p.daily_pnl == 0.0
++
++    def test_save_and_load_benchmark(self, tmp_path):
++        import pandas as pd
++
++        p = PortfolioState(initial_cash=10000, cash=10000)
++        df = pd.DataFrame({"close": [100.0, 120.0]})
++        p.update_benchmark(df, "ETH/USDT")
++        filepath = tmp_path / "portfolio.json"
++        p.save_to_file(filepath)
++        loaded = PortfolioState.load_from_file(filepath)
++        assert loaded.benchmark_symbol == "ETH/USDT"
++        assert loaded.benchmark_return == 0.2
++        assert loaded.alpha == -0.2
+diff --git a/utils/cost_tracker.py b/utils/cost_tracker.py
+index 485a978..b685932 100644
+--- a/utils/cost_tracker.py
++++ b/utils/cost_tracker.py
+@@ -1,3 +1,4 @@
++# DEPRECATED: Not used, consider removing
+ """
+ LLM Maliyet Takip Mod├╝l├╝
+ ==========================

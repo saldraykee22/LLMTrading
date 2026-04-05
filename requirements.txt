@@ -21,6 +21,9 @@ pandas-ta>=0.3.14b
 # ── Risk & Optimization ───────────────────────────────────
 scipy>=1.14.0
 
+# ── RAG & Vector Store ────────────────────────────────────
+chromadb>=0.4.0
+
 # ── Configuration & Utilities ──────────────────────────────
 pydantic>=2.9.0
 pydantic-settings>=2.5.0

@@ -2,7 +2,7 @@
 
 Bu belge, diger yazilimlarin ve LLM Temsilcilerinin sistemi kavrayabilmesi icin yuksek seviye mimariyi ve dosya dokumunu listeler.
 
-> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5, 6 tamamlandi)
 
 ## Yuksek Seviye Mimari (High-Level Architecture)
 
@@ -16,6 +16,9 @@ Sistem 6 Katmanli (6-Tier) bir yapi uzerinden insa edilmistir:
    - **[FAZ 5] Watchdog (`risk/watchdog.py`):** Ayri thread'de flash crash korumasi, 30 saniyede bir fiyat kontrolu
 6. **Execution & UI Layer (`execution/`, `dashboard/`):** Karar alan islemler CCXT ile Binance (MOCK veya CANLI) sistemine gonderilirken tum veriler Dashboard'a aktarilir.
 7. **[FAZ 5] Cost Optimization Layer:** Prompt sikistirma (~%40-50), sentiment cache, max_tokens sinirlari, JSON mode ile API maliyetlerinde ~%72-88 azalma.
+8. **[FAZ 6] RAG & Memory Layer (`data/vector_store.py`):** ChromaDB tabanlı vektör veritabanı ile ajan kararları ve piyasa durumları saklanır. Benzer geçmiş durumlar sorgulanarak LLM'e bağlam sağlanır.
+9. **[FAZ 6] Evaluation & Drift Layer (`evaluation/drift_monitor.py`):** LLM sentiment tahminlerini gerçek fiyat hareketleriyle karşılaştırarak ajan isabet oranını hesaplar. Concept drift tespiti yapar.
+10. **[FAZ 6] Reliability Layer:** LLM retry/backoff (`utils/llm_retry.py`), TTL cache (`models/sentiment_analyzer.py`), thread-safe portfolio (`risk/portfolio.py`), market holidays (`data/market_hours.py`)
 
 ---
 
@@ -35,7 +38,12 @@ LLMTrading/
 |   |-- news_data.py           # HTTP tabanli haber entegrasyonu (httpx)
 |   |-- sentiment_store.py     # Onceden islenen haber duyarliligi kayit (JSONL) veritabani
 |   |                            [GUNCELLEME] Duplicate kontrolu (min_interval_minutes) eklendi
-|   `-- symbol_resolver.py     # AAPL vs BTC/USDT otomatik borsa tespiti araci
+|   |                            [FAZ 6] RAM cache eklendi — disk I/O darboğazı giderildi
+|   |                            [FAZ 6] reload_cache() metodu eklendi
+|   |-- symbol_resolver.py     # AAPL vs BTC/USDT otomatik borsa tespiti araci
+|   |                            [FAZ 6] refresh_crypto_bases() — canlı borsa listesinden fetch
+|   `-- vector_store.py        # [FAZ 6 - YENİ] ChromaDB tabanlı RAG hafıza sistemi
+|                                AgentMemoryStore: store_decision(), query_similar_conditions()
 |-- models/
 |   |-- sentiment_analyzer.py  # LLM Destekli CoT Haber Analisti
 |   |                            [GUNCELLEME] request_timeout ve max_retries eklendi
@@ -45,12 +53,10 @@ LLMTrading/
 |   |                            [FAZ 5] SentimentRecord'a price alani eklendi
 |   |                            [FAZ 5] Prompt sikistirildi (~%40 kuculme)
 |   |                            [FAZ 5] max_tokens=300, JSON mode aktif
+|   |                            [FAZ 6] TTLCache eklendi (30dk TTL, 500 entry max)
+|   |                            [FAZ 6] Thread-safe cache operations
 |   |-- technical_analyzer.py  # Pandas-TA gostergeleri analizcisi
 |   |                            [GUNCELLEME] MACD/BBands kolon isimleri guvenli hale getirildi
-|   |-- llm_fallback.py        # Provider fallback zinciri
-|   |                            [FAZ 4] `_create_llm` → `create_llm` import güncellendi
-|   |                            [FAZ 5] max_tokens parametresi desteklendi
-|   |                            [FAZ 5] response_format={"type": "json_object"} eklendi
 |   `-- prompts/               # .txt halinde sistem promptlari
 |       |-- sentiment_system.txt    # [FAZ 5] Sikistirildi, max_tokens=300
 |       |-- research_analyst.txt    # [FAZ 5] Sikistirildi, max_tokens=500
@@ -60,22 +66,32 @@ LLMTrading/
 |-- agents/
 |   |-- state.py               # StateGraph (TypedDict) hafizasi
 |   |                            [FAZ 4] `provider` alani eklendi
+|   |                            [FAZ 6] `historical_context`, `agent_accuracy` alanlari eklendi
+|   |                            [FAZ 6] MAX_MESSAGES=50, trim_messages() helper
 |   |-- graph.py               # Node'larin birlestigi Compiler dosyasi
 |   |                            [GUNCELLEME] Retry loop kaldirildi
 |   |                            [YENİ] hold_decision dugumu: risk red -> direkt sonlanma
 |   |                            [FAZ 4] Phase isimleri standartlastirildi ("complete")
 |   |                            [FAZ 4] `run_analysis()` provider parametresi aliyor
+|   |                            [FAZ 6] RAG: Kararları AgentMemoryStore'a kaydet
+|   |                            [FAZ 6] DriftMonitor accuracy entegrasyonu
 |   |-- coordinator.py
 |   |-- research_analyst.py    # [FAZ 4] provider state'ten okunuyor
+|   |                            [FAZ 6] RAG: query_similar_conditions() ile geçmiş bağlam
+|   |                            [FAZ 6] LLM retry/backoff entegrasyonu
 |   |-- debate.py              # Bull vs Bear tartisma
 |   |                            [FAZ 4] provider state'ten okunuyor
+|   |                            [FAZ 6] LLM retry/backoff (5 cagriya uygulandi)
 |   |-- risk_manager.py        # [FAZ 4] research_report prompt'a eklendi
 |   |                            [FAZ 4] provider state'ten okunuyor
 |   |                            [YENİ] Deterministik: Drawdown limiti kontrolu
 |   |                            [YENİ] Deterministik: Gunluk kayip limiti kontrolu
 |   |                            [YENİ] Deterministik: Pozisyon boyutu limiti (LLM sonrasi)
+|   |                            [FAZ 6] Drift Kontrolu: LLM isabet orani < %40 -> red
+|   |                            [FAZ 6] LLM retry/backoff entegrasyonu
 |   |-- trader.py              # Nihai Karar verici
 |   |                            [FAZ 4] provider state'ten okunuyor
+|   |                            [FAZ 6] LLM retry/backoff entegrasyonu
 |   `-- portfolio_manager.py   # [FAZ 4] Multi-asset portföy yöneticisi
 |                                Paralel analiz (ThreadPoolExecutor)
 |                                Bileşik skorlama (debate+sentiment+trend+RSI)
@@ -86,16 +102,18 @@ LLMTrading/
 |   |                            [YENİ] Gunluk P&L otomatik sifirlama (reset_daily_pnl_if_needed)
 |   |                            [YENİ] daily_pnl_date alani eklendi
 |   |                            [DUZELTME] Short pozisyon equity ve close_position hesabi duzeltildi
+|   |                            [FAZ 6] Thread-safe: _portfolio_lock ile file locking
 |   |-- circuit_breaker.py     # [YENİ] Kill switch mekanizmasi
 |   |                            Art arda kayip, gunluk limit, manuel STOP dosyasi
 |   |-- cvar_optimizer.py      # CVaR (Conditional Value at Risk)
+|   |                            [FAZ 6] Monte Carlo seed parametresi (reproducible)
 |   |-- regime_filter.py       # VIX endeks filtresi
 |   |-- stop_loss.py           # ATR bazli dinamik/trailing stop loss
-|   `-- watchdog.py            # [FAZ 5] Flash crash korumasi (ayri thread)
-|                                30 saniyede bir fiyat kontrolu
-|                                1dk > %3 dusus -> acil satis
-|                                5dk > %5 dusus -> acil satis
-|                                5dk %2-5 dusus -> uyari
+|   |-- watchdog.py            # [FAZ 5] Flash crash korumasi (ayri thread)
+|   |                            [FAZ 6] Thread-safe: _lock mutex ile _handle_crash
+|   `-- drift_monitor.py       # [FAZ 6 - YENİ] LLM Concept Drift & İsabet Takipçisi
+|                                Sentiment → fiyat yönü karşılaştırması
+|                                Accuracy cache (JSON tabanlı)
 |-- backtest/
 |   `-- walk_forward.py        # Walk-forward validasyon ve trade log analizozu
 |-- execution/
@@ -110,7 +128,8 @@ LLMTrading/
 |                                [YENİ] current_price ve atr_value parametreleri
 |-- utils/
 |   |-- json_utils.py          # [YENİ] extract_json - tum ajanlar icin merkezi JSON ayristirici
-|   `-- cost_tracker.py        # LLM API maliyet takipcisi
+|   |                            [FAZ 6] __parse_error__ flag + error level log
+|   `-- llm_retry.py           # [FAZ 6 - YENİ] invoke_with_retry — exponential backoff wrapper
 |-- config/
 |   `-- trading_params.yaml    # [FAZ 5] watchdog bolumu eklendi
 |                                [FAZ 5] limits bolumu eklendi (max_tokens degerleri)
@@ -177,24 +196,31 @@ MarketDataClient -> TechnicalAnalyzer -> NewsClient
 [FAZ 5] Sentiment Cache Kontrolu  <- Son analiz < cache_minutes ise cache'den don
         |
         v
+[FAZ 6] RAG Hafiza Sorgusu        <- AgentMemoryStore.query_similar_conditions()
+        |                             Geçmiş benzer durumlar ve başarı oranları
+        |
+        v
 LangGraph Pipeline:
   coordinator -> research_analyst -> debate -> risk_manager
-                                                   |
-                                       +-----------+-----------+
-                                    approved               rejected
-                                       |                       |
-                                     trader            hold_decision -> END
-                                       |
-                                       v
-                              ExchangeClient.execute_order(order, current_price)
-                                |  PAPER mod      |  LIVE mod
-                                v                 v
-                          PaperTradingEngine    CCXT/Binance
-        |
-        v
+                                                    |
+                                        +-----------+-----------+
+                                     approved               rejected
+                                        |                       |
+                                      trader            hold_decision -> END
+                                        |
+                                        v
+                               ExchangeClient.execute_order(order, current_price)
+                                 |  PAPER mod      |  LIVE mod
+                                 v                 v
+                           PaperTradingEngine    CCXT/Binance
+         |
+         v
 PortfolioState.save_to_file()     <- JSON'a kaydet
-        |
-        v
+         |
+         v
+[FAZ 6] RAG: AgentMemoryStore.store_decision()  <- Karar vektör DB'ye kaydedilir
+         |
+         v
 [FAZ 5] Dongu -> bir sonraki interval (Ctrl+C ile guvenli kapanis)
 ```
 
@@ -248,6 +274,14 @@ Portföy Dağılımı JSON -> dashboard + file export
 | **Sentiment cache** | Son analiz cache_minutes icinde ise LLM cagirmadan cache'den doner |
 | **Prompt sikistirma** | Tum promptlar ~%40-50 kucultuldu, "be concise" ve "ONLY return JSON" kurallari eklendi |
 | **JSON mode + max_tokens** | Tum LLM cagrilar `response_format=json_object` ve cikti token siniri ile yapilir |
+| **LLM Retry/Backoff** | Tum ajanlara `invoke_with_retry()` — exponential backoff (2s, 4s, 8s) |
+| **Thread-Safety** | Portfolio `_portfolio_lock`, Watchdog `_lock` mutex |
+| **Sentiment RAM Cache** | Disk I/O yerine RAM cache — `load()` diskten sadece ilk kez okur |
+| **TTL Cache** | LLM cache 30dk TTL + 500 entry max — memory leak onlenir |
+| **Error Flag** | JSON parse hatasinda `__parse_error__` flag — sessiz basarisizlik yok |
+| **RAG Hafiza** | ChromaDB ile karar gecmisi saklanir, benzer durumlar sorgulanir |
+| **Drift Monitor** | Sentiment tahmini vs gercek fiyat karsilastirilir, isabet orani takip edilir |
+| **Market Holidays** | US ve BIST resmi tatilleri `is_market_open()` icinde kontrol edilir |
 
 ---
 

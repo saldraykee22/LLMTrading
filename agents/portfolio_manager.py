@@ -334,6 +334,8 @@ class PortfolioManager:
         try:
             from data.news_data import NewsClient
 
+            params = get_trading_params()
+
             client = NewsClient()
             try:
                 items = client.fetch_all_news(symbol)

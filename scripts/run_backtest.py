@@ -183,9 +183,7 @@ def run_simple_backtest(
             if signals.signal == "buy" and signals.trend_strength > 0.3:
                 amount = portfolio.calculate_position_size(current_price)
                 if amount > 0:
-                    stop = stop_loss_mgr.calculate_initial_stop(
-                        current_price, atr, "long"
-                    )
+                    stop = stop_loss_mgr.calculate_initial_stop(current_price, atr)
                     tp = current_price + (current_price - stop) * 2
                     portfolio.open_position(
                         symbol=resolved.symbol,
@@ -353,9 +351,7 @@ def run_walkforward_backtest(
                 if signals.signal == "buy" and signals.trend_strength > 0.3:
                     amount = portfolio.calculate_position_size(current_price)
                     if amount > 0:
-                        stop = stop_loss_mgr.calculate_initial_stop(
-                            current_price, atr, "long"
-                        )
+                        stop = stop_loss_mgr.calculate_initial_stop(current_price, atr)
                         tp = current_price + (current_price - stop) * 2
                         portfolio.open_position(
                             symbol=resolved.symbol,

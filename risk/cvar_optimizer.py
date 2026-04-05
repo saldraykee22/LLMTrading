@@ -158,6 +158,7 @@ def stress_test_monte_carlo(
     n_simulations: int = 10000,
     n_days: int = 30,
     confidence: float = 0.95,
+    seed: int | None = None,
 ) -> dict:
     """
     Monte Carlo simülasyonu ile stres testi.
@@ -178,6 +179,7 @@ def stress_test_monte_carlo(
     std_return = np.std(returns)
 
     # Simüle edilmiş kümülatif getiriler
+    np.random.seed(seed)
     simulated = np.random.normal(mean_return, std_return, (n_simulations, n_days))
     cumulative = np.cumprod(1 + simulated, axis=1)
     final_values = cumulative[:, -1]

@@ -38,6 +38,7 @@ class Watchdog:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._market_client = MarketDataClient()
+        self._lock = threading.Lock()
 
     def start(self) -> None:
         """Starts the watchdog background thread."""
@@ -93,29 +94,32 @@ class Watchdog:
 
     def _handle_crash(self, symbol: str, price: float, drop_pct: float) -> None:
         """Handles a detected flash crash for a symbol."""
-        pos = next((p for p in self.portfolio.positions if p.symbol == symbol), None)
-        if pos and self.exchange_client:
-            from execution.order_manager import TradeOrder
-
-            order = TradeOrder(
-                symbol=symbol,
-                action="sell",
-                order_type="market",
-                amount=pos.amount,
+        with self._lock:
+            pos = next(
+                (p for p in self.portfolio.positions if p.symbol == symbol), None
             )
-            try:
-                result = self.exchange_client.execute_order(order, price)
-                if result.get("status") in ("filled", "closed", "open"):
-                    self.portfolio.close_position(
-                        symbol, float(result.get("price") or price)
-                    )
-                    logger.warning(
-                        "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
-                        symbol,
-                        drop_pct,
-                    )
-            except Exception as e:
-                logger.error("Emergency sell failed for %s: %s", symbol, e)
+            if pos and self.exchange_client:
+                from execution.order_manager import TradeOrder
+
+                order = TradeOrder(
+                    symbol=symbol,
+                    action="sell",
+                    order_type="market",
+                    amount=pos.amount,
+                )
+                try:
+                    result = self.exchange_client.execute_order(order, price)
+                    if result.get("status") in ("filled", "closed", "open"):
+                        self.portfolio.close_position(
+                            symbol, float(result.get("price") or price)
+                        )
+                        logger.warning(
+                            "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
+                            symbol,
+                            drop_pct,
+                        )
+                except Exception as e:
+                    logger.error("Emergency sell failed for %s: %s", symbol, e)
 
     def get_status(self) -> dict:
         """Returns watchdog status."""

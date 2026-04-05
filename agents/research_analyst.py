@@ -17,6 +17,7 @@ from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
 from models.sentiment_analyzer import SentimentAnalyzer, create_agent_llm
 from utils.json_utils import extract_json
+from utils.llm_retry import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,11 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
         "news_count": sentiment_record.news_count,
     }
 
+    # ── RAG Hafıza Sorgusu (Geçmiş Senaryolar) ────────────
+    from data.vector_store import AgentMemoryStore
+    memory_store = AgentMemoryStore()
+    historical_context = memory_store.query_similar_conditions(state, n_results=3)
+
     # ── 2. Kapsamlı Araştırma Raporu ──────────────────────
     research_prompt_path = PROMPTS_DIR / "research_analyst.txt"
     system_prompt = ""
@@ -109,17 +115,24 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
 ## Piyasa Verisi Özeti
 {json.dumps(market, indent=2, ensure_ascii=False) if market else "Mevcut değil"}
 
+## Tarihsel Ajan Hafızası (RAG)
+Geçmiş benzer durumlarda ajanların aldığı kararlar ve başarı oranları:
+{json.dumps(historical_context, indent=2, ensure_ascii=False) if historical_context else "Buna benzer bir geçmiş deneyim bulunamadı."}
+
 Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla."""
 
     llm = create_agent_llm(provider=provider, model=params.agents.analyst_model)
     try:
-        response = llm.invoke(
+        response = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
             ],
             max_tokens=500,
             response_format={"type": "json_object"},
+            max_retries=3,
+            base_delay=2.0,
         )
         research_result = extract_json(response.content)
     except Exception as e:
@@ -143,5 +156,6 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
         "messages": [{"role": "research_analyst", "content": analyst_msg}],
         "sentiment": sentiment_data,
         "research_report": research_result,
+        "historical_context": historical_context,
         "phase": "debate",
     }

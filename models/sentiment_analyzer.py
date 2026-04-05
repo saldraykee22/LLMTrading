@@ -22,9 +22,44 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.globals import set_llm_cache
 from langchain_core.caches import InMemoryCache
+import time
+import threading
+from typing import Any
 
-# Bellek içi AI caching (Özellikle Walk-Forward benzer pencerelerde API israfını önlemek için)
-set_llm_cache(InMemoryCache())
+
+class TTLCache(InMemoryCache):
+    """InMemoryCache with TTL and max size eviction."""
+
+    def __init__(self, ttl_seconds: int = 1800, max_size: int = 500) -> None:
+        super().__init__()
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+        self._timestamps: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def lookup(self, prompt: Any, llm_string: str) -> Any | None:
+        key = str(prompt) + llm_string
+        with self._lock:
+            ts = self._timestamps.get(key)
+            if ts is not None and (time.time() - ts) > self._ttl:
+                self._cache.pop(key, None)
+                self._timestamps.pop(key, None)
+                return None
+            return super().lookup(prompt, llm_string)
+
+    def update(self, prompt: Any, llm_string: str, return_val: Any) -> None:
+        key = str(prompt) + llm_string
+        with self._lock:
+            if len(self._cache) >= self._max_size:
+                oldest_key = min(self._timestamps, key=self._timestamps.get)
+                self._cache.pop(oldest_key, None)
+                self._timestamps.pop(oldest_key, None)
+            self._timestamps[key] = time.time()
+            super().update(prompt, llm_string, return_val)
+
+
+# TTL-based LLM cache (30 min TTL, max 500 entries)
+set_llm_cache(TTLCache(ttl_seconds=1800, max_size=500))
 
 from config.settings import (
     LLMProvider,

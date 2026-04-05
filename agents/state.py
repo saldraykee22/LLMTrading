@@ -11,6 +11,8 @@ import operator
 from dataclasses import dataclass, field
 from typing import Annotated, Any, NotRequired, TypedDict
 
+MAX_MESSAGES = 50  # Max messages to keep in state
+
 
 class TradingState(TypedDict):
     messages: Annotated[list[dict], operator.add]
@@ -29,6 +31,9 @@ class TradingState(TypedDict):
     trade_decision: NotRequired[dict[str, Any]]
 
     portfolio_state: NotRequired[dict[str, Any]]
+
+    historical_context: NotRequired[list[dict]]
+    agent_accuracy: NotRequired[float]
 
     iteration: NotRequired[int]
     error: NotRequired[str]
@@ -58,8 +63,17 @@ def create_initial_state(
         risk_approved=False,
         trade_decision={},
         portfolio_state=portfolio_state or {},
+        historical_context=[],
+        agent_accuracy=1.0,
         iteration=0,
         error="",
         phase="init",
         provider=provider or "",
     )
+
+
+def trim_messages(messages: list[dict]) -> list[dict]:
+    """Keep only the last MAX_MESSAGES to prevent unbounded growth."""
+    if len(messages) > MAX_MESSAGES:
+        return messages[-MAX_MESSAGES:]
+    return messages

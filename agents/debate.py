@@ -19,6 +19,7 @@ from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
+from utils.llm_retry import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     # ── Tur 1: İlk argümanlar ────────────────────────────
     # Bull
     try:
-        bull_resp = llm.invoke(
+        bull_resp = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=BULL_SYSTEM),
                 HumanMessage(
@@ -114,6 +116,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
             ],
             max_tokens=400,
             response_format={"type": "json_object"},
+            max_retries=2,
+            base_delay=2.0,
         )
         bull_args = bull_resp.content
     except Exception as e:
@@ -122,7 +126,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
 
     # Bear
     try:
-        bear_resp = llm.invoke(
+        bear_resp = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=BEAR_SYSTEM),
                 HumanMessage(
@@ -131,6 +136,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
             ],
             max_tokens=400,
             response_format={"type": "json_object"},
+            max_retries=2,
+            base_delay=2.0,
         )
         bear_args = bear_resp.content
     except Exception as e:
@@ -147,7 +154,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
     # ── Tur 2: Karşılıklı yanıtlar (max_rounds > 1 ise) ──
     if max_rounds >= 2:
         try:
-            bull_rebuttal = llm.invoke(
+            bull_rebuttal = invoke_with_retry(
+                llm.invoke,
                 [
                     SystemMessage(content=BULL_SYSTEM),
                     HumanMessage(
@@ -157,13 +165,16 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 ],
                 max_tokens=400,
                 response_format={"type": "json_object"},
+                max_retries=2,
+                base_delay=2.0,
             )
             bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
         except Exception:
             pass
 
         try:
-            bear_rebuttal = llm.invoke(
+            bear_rebuttal = invoke_with_retry(
+                llm.invoke,
                 [
                     SystemMessage(content=BEAR_SYSTEM),
                     HumanMessage(
@@ -173,6 +184,8 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 ],
                 max_tokens=400,
                 response_format={"type": "json_object"},
+                max_retries=2,
+                base_delay=2.0,
             )
             bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
         except Exception:
@@ -190,13 +203,16 @@ def debate_node(state: TradingState) -> dict[str, Any]:
 Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
 
     try:
-        mod_resp = llm.invoke(
+        mod_resp = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=MODERATOR_SYSTEM),
                 HumanMessage(content=moderator_input),
             ],
             max_tokens=400,
             response_format={"type": "json_object"},
+            max_retries=2,
+            base_delay=2.0,
         )
         debate_result = extract_json(mod_resp.content)
     except Exception as e:

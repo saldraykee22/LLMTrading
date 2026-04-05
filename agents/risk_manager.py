@@ -18,6 +18,7 @@ from agents.state import TradingState
 from config.settings import PROMPTS_DIR, get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
+from utils.llm_retry import invoke_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,20 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     else:
         checks_passed.append(f"Drawdown limiti içinde: {current_dd:.2%}")
 
+    # 6.5. LLM Sapma (Concept Drift) Kontrolü
+    try:
+        from evaluation.drift_monitor import DriftMonitor
+        drift_monitor = DriftMonitor()
+        acc = drift_monitor.get_agent_accuracy(symbol)
+        if acc < 0.40:
+            checks_failed.append(f"LLM İsabet Oranı Çok Düşük (Drift): %{acc*100:.1f} < %40")
+        elif acc < 0.60:
+            warnings.append(f"LLM isabet oranı düşüyor: %{acc*100:.1f}")
+        else:
+            checks_passed.append(f"LLM İsabet Oranı iyi: %{acc*100:.1f}")
+    except Exception as e:
+        warnings.append(f"Drift monitor hatası: {e}")
+
     # 6. Günlük kayıp kontrolü (deterministik)
     equity = portfolio.get("equity", 10000)
     daily_pnl = portfolio.get("daily_pnl", 0)
@@ -174,13 +189,16 @@ Deterministik kontrol sonuçlarını ve araştırma raporunu dikkate al ve nihai
     )
 
     try:
-        response = llm.invoke(
+        response = invoke_with_retry(
+            llm.invoke,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
             ],
             max_tokens=params.limits.max_tokens_risk,
             response_format={"type": "json_object"},
+            max_retries=3,
+            base_delay=2.0,
         )
         llm_assessment = extract_json(response.content)
     except Exception as e:
