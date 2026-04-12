@@ -11,11 +11,19 @@ import operator
 from dataclasses import dataclass, field
 from typing import Annotated, Any, NotRequired, TypedDict
 
-MAX_MESSAGES = 50  # Max messages to keep in state
+MAX_MESSAGES = 100  # Max messages to keep in state
+
+
+def merge_and_trim_messages(left: list[dict], right: list[dict]) -> list[dict]:
+    """Merges new messages and ensures the total count does not exceed MAX_MESSAGES."""
+    combined = (left or []) + (right or [])
+    if len(combined) > MAX_MESSAGES:
+        return combined[-MAX_MESSAGES:]
+    return combined
 
 
 class TradingState(TypedDict):
-    messages: Annotated[list[dict], operator.add]
+    messages: Annotated[list[dict], merge_and_trim_messages]
     symbol: str
 
     market_data: NotRequired[dict[str, Any]]
@@ -31,6 +39,9 @@ class TradingState(TypedDict):
     trade_decision: NotRequired[dict[str, Any]]
 
     portfolio_state: NotRequired[dict[str, Any]]
+
+    rl_recommendation: NotRequired[dict[str, Any]]
+    rl_confidence: NotRequired[float]
 
     historical_context: NotRequired[list[dict]]
     agent_accuracy: NotRequired[float]
@@ -63,6 +74,8 @@ def create_initial_state(
         risk_approved=False,
         trade_decision={},
         portfolio_state=portfolio_state or {},
+        rl_recommendation={},
+        rl_confidence=0.0,
         historical_context=[],
         agent_accuracy=1.0,
         iteration=0,
@@ -73,7 +86,10 @@ def create_initial_state(
 
 
 def trim_messages(messages: list[dict]) -> list[dict]:
-    """Keep only the last MAX_MESSAGES to prevent unbounded growth."""
+    """Keep only the last MAX_MESSAGES to prevent unbounded growth.
+
+    Should be called at the end of each graph node to cap message list size.
+    """
     if len(messages) > MAX_MESSAGES:
         return messages[-MAX_MESSAGES:]
     return messages

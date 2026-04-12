@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,10 +43,12 @@ class SentimentRecord:
 class SentimentStore:
     """JSON tabanlı duyarlılık deposu — RAM cache ile optimize edilmiş."""
 
+    MAX_CACHE_PER_SYMBOL = 500
+
     def __init__(self, store_dir: Path | None = None) -> None:
         self._dir = store_dir or STORE_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
-        # RAM cache: {symbol: [SentimentRecord, ...]}
+        self._lock = threading.Lock()
         self._cache: dict[str, list[SentimentRecord]] = {}
 
     def _file_path(self, symbol: str) -> Path:
@@ -58,39 +61,47 @@ class SentimentStore:
     ) -> bool:
         """
         Yeni kaydı dosyaya ekler (append) + RAM cache günceller.
+        Thread-safe: Lock ile korunmuştur.
         """
         from config.settings import get_trading_params
 
         if min_interval_minutes is None:
             min_interval_minutes = get_trading_params().limits.sentiment_cache_minutes
 
-        # Duplicate kontrolü — RAM cache'den (hızlı)
-        cached = self._cache.get(record.symbol)
-        if cached:
-            latest = cached[-1]
-            last_time = datetime.fromisoformat(latest.timestamp)
-            now = datetime.now(timezone.utc)
-            if (now - last_time).total_seconds() < min_interval_minutes * 60:
-                logger.debug(
-                    "Sentiment çok yakın, atlanıyor (%s, son: %s)",
-                    record.symbol,
-                    latest.timestamp,
-                )
-                return False
+        with self._lock:
+            # Duplicate kontrolü — RAM cache'den (hızlı)
+            cached = self._cache.get(record.symbol)
+            if cached:
+                latest = cached[-1]
+                last_time = datetime.fromisoformat(latest.timestamp)
+                now = datetime.now(timezone.utc)
+                if (now - last_time).total_seconds() < min_interval_minutes * 60:
+                    logger.debug(
+                        "Sentiment çok yakın, atlanıyor (%s, son: %s)",
+                        record.symbol,
+                        latest.timestamp,
+                    )
+                    return False
 
-        path = self._file_path(record.symbol)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+            path = self._file_path(record.symbol)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
 
-        # RAM cache güncelle
-        if record.symbol not in self._cache:
-            self._cache[record.symbol] = []
-        self._cache[record.symbol].append(record)
+            # RAM cache güncelle
+            if record.symbol not in self._cache:
+                self._cache[record.symbol] = []
+            self._cache[record.symbol].append(record)
 
-        logger.debug(
-            "Sentiment kaydedildi: %s → %.2f", record.symbol, record.sentiment_score
-        )
-        return True
+            # RAM cache boyut limiti
+            if len(self._cache[record.symbol]) > self.MAX_CACHE_PER_SYMBOL:
+                self._cache[record.symbol] = self._cache[record.symbol][
+                    -self.MAX_CACHE_PER_SYMBOL // 2 :
+                ]
+
+            logger.debug(
+                "Sentiment kaydedildi: %s → %.2f", record.symbol, record.sentiment_score
+            )
+            return True
 
     def load(
         self,

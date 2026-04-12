@@ -64,6 +64,23 @@ BIST_SYMBOLS = {
     "SASA",
     "GUBRF",
     "KONTR",
+    "HEKTS",
+    "ENJSA",
+    "OYAKC",
+    "TTKOM",
+    "TCELL",
+    "SOKM",
+    "MAVI",
+    "ALARK",
+    "BAGFS",
+    "CANTE",
+    "DOAS",
+    "EGEEN",
+    "GENIL",
+    "HEKTS",
+    "IPEKE",
+    "KORDS",
+    "MGROS",
 }
 
 # ── Kripto çift pattern ───────────────────────────────────
@@ -221,6 +238,9 @@ def refresh_crypto_bases(exchange_name: str = "binance") -> set[str]:
             ):
                 bases.add(market["base"])
 
+        CRYPTO_BASES.clear()
+        CRYPTO_BASES.update(bases)
+        logger.info("Crypto bases refreshed: %d bases found", len(bases))
         return bases
     except Exception as e:
         import logging

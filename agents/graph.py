@@ -3,13 +3,13 @@ Ana Ajan Grafiği (LangGraph StateGraph)
 =========================================
 Çoklu ajan iş akışını tanımlar:
 
-   Coordinator → Research Analyst → Debate → Risk Manager
-                                                  │
-                                     ┌────────────┴────────────┐
-                                     ↓                         ↓
-                                 (Approved)                (Rejected)
-                                     ↓                         ↓
-                                  Trader → END          Hold Decision → END
+   Coordinator → Research Analyst → Debate → Risk Manager → Trader → END
+                                                           │
+                                              ┌────────────┴────────────┐
+                                              ↓                         ↓
+                                          (Approved)                (Rejected)
+                                              ↓                         ↓
+                                        Trader → END          Hold Decision → END
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from agents.coordinator import coordinator_node
 from agents.debate import debate_node
 from agents.research_analyst import research_analyst_node
 from agents.risk_manager import risk_manager_node
-from agents.state import TradingState
+from agents.rl_advisor import rl_advisor_node
+from agents.state import TradingState, trim_messages
 from agents.trader import trader_node
 from config.settings import get_trading_params
 
@@ -45,24 +46,40 @@ def _should_continue_after_risk(state: TradingState) -> str:
 
     Akış mantığı:
     - Risk onaylandıysa → trader (emir oluştur)
-    - Risk reddedildiyse → direkt hold kararı ile bitir (END)
-      (Aynı veriyle yeniden analiz anlamsız — veri değişmiyor)
+    - Risk reddedildiyse ama açık pozisyon varsa → monitor_positions (pozisyonları izle)
+    - Risk reddedildiyse ve açık pozisyon yoksa → direkt hold kararı ile bitir (END)
     """
     risk_approved = state.get("risk_approved", False)
+    has_open_positions = state.get("portfolio_state", {}).get("open_positions", 0) > 0
 
     if risk_approved:
-        logger.info("Risk onaylandı → Trader'a yönlendiriliyor")
-        return "trader"
+        logger.info("Risk onaylandı → RL Advisor'a yönlendiriliyor")
+        return "rl_advisor"
+    elif has_open_positions:
+        # Risk reddedildi ama açık pozisyon var → monitor mode
+        logger.info("Risk reddedildi, açık pozisyonlar izleniyor → Monitor'a yönlendiriliyor")
+        return "monitor_positions"
+    else:
+        # Red → hold kararı ile sonlandır
+        risk_data = state.get("risk_assessment", {})
+        failed_checks = risk_data.get("checks_failed", [])
+        logger.warning(
+            "Risk reddedildi → HOLD kararı ile sonlandırılıyor. Nedenler: %s",
+            failed_checks,
+        )
+        return "hold_decision"
 
-    # Red → hold kararı ile sonlandır
-    risk_data = state.get("risk_assessment", {})
-    failed_checks = risk_data.get("checks_failed", [])
-    logger.warning(
-        "Risk reddedildi → HOLD kararı ile sonlandırılıyor. Nedenler: %s",
-        failed_checks,
-    )
-    return "hold_decision"
-
+def _monitor_positions_node(state: TradingState) -> dict[str, Any]:
+    """Açık pozisyonları izle, stop-loss/take-profit kontrol et"""
+    symbol = state["symbol"]
+    
+    msg = f"[Monitor] {symbol} pozisyonları izleniyor, risk kapalı olduğu için yeni emir yok."
+    logger.info(msg)
+    
+    return {
+        "messages": [{"role": "monitor", "content": msg}],
+        "phase": "monitoring",
+    }
 
 def _hold_decision_node(state: TradingState) -> dict[str, Any]:
     """
@@ -99,12 +116,12 @@ def build_trading_graph() -> StateGraph:
 
     Akış:
     coordinator → research_analyst → debate → risk_manager
-                                       │
-                         ┌─────────────┴─────────────┐
-                         ↓                           ↓
-                     (Approved)                  (Rejected)
-                         ↓                           ↓
-                      trader → END          hold_decision → END
+                                               │
+                                  ┌────────────┴────────────┬─────────────┐
+                                  ↓                         ↓             ↓
+                              (Approved)           (Rejected+Open)   (Rejected)
+                                  ↓                         ↓             ↓
+                            trader → END      monitor_positions → END   hold_decision → END
     """
     graph = StateGraph(TradingState)
 
@@ -113,7 +130,9 @@ def build_trading_graph() -> StateGraph:
     graph.add_node("research_analyst", research_analyst_node)
     graph.add_node("debate", debate_node)
     graph.add_node("risk_manager", risk_manager_node)
+    graph.add_node("rl_advisor", rl_advisor_node)
     graph.add_node("trader", trader_node)
+    graph.add_node("monitor_positions", _monitor_positions_node)
     graph.add_node("hold_decision", _hold_decision_node)
 
     # ── Kenarları tanımla ─────────────────────────────────
@@ -128,12 +147,16 @@ def build_trading_graph() -> StateGraph:
         "risk_manager",
         _should_continue_after_risk,
         {
-            "trader": "trader",
+            "rl_advisor": "rl_advisor",
+            "monitor_positions": "monitor_positions",
             "hold_decision": "hold_decision",
         },
     )
 
+    graph.add_edge("rl_advisor", "trader")
+
     graph.add_edge("trader", END)
+    graph.add_edge("monitor_positions", END)
     graph.add_edge("hold_decision", END)
 
     return graph
@@ -188,8 +211,8 @@ def run_analysis(
     try:
         from data.vector_store import AgentMemoryStore
         from evaluation.drift_monitor import DriftMonitor
-        
-        acc = DriftMonitor().get_agent_accuracy(symbol)
+
+        acc = DriftMonitor().get_agent_accuracy(symbol, agent_name="trader")
         AgentMemoryStore().store_decision(result, accuracy_score=acc)
     except Exception as e:
         logger.error("Hafıza kaydetme hatası: %s", e)

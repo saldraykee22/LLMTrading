@@ -157,75 +157,75 @@ class NewsClient:
         return items
 
     # ── CryptoPanic ────────────────────────────────────────
-    def fetch_crypto_news(
-        self,
-        currencies: list[str] | None = None,
-        kind: str = "news",
-    ) -> list[NewsItem]:
-        """
-        CryptoPanic'ten kripto haberlerini çeker.
-
-        Args:
-            currencies: Filtre (ör. ["BTC", "ETH"])
-            kind: "news" | "media" | "all"
-        """
-        api_key = self._settings.cryptopanic_api_key
-
-        params: dict[str, Any] = {"auth_token": api_key, "kind": kind, "public": "true"}
-        if currencies:
-            params["currencies"] = ",".join(currencies)
-
-        self._rate_limit()
-        try:
-            url = "https://cryptopanic.com/api/free/v1/posts/"
-            resp = self._http.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            logger.error("CryptoPanic hatası: %s", e)
-            return []
-
-        items: list[NewsItem] = []
-        for post in data.get("results", [])[:50]:
-            try:
-                # CryptoPanic kendi sentiment'ini sunabiliyor
-                votes = post.get("votes", {})
-                raw_sent = None
-                if votes:
-                    pos = votes.get("positive", 0)
-                    neg = votes.get("negative", 0)
-                    if pos > neg:
-                        raw_sent = "positive"
-                    elif neg > pos:
-                        raw_sent = "negative"
-                    else:
-                        raw_sent = "neutral"
-
-                syms = [
-                    c.get("code", "")
-                    for c in post.get("currencies", [])
-                    if c.get("code")
-                ]
-
-                items.append(
-                    NewsItem(
-                        title=post.get("title", ""),
-                        summary=post.get("title", ""),  # CryptoPanic özet sunmuyor
-                        source=post.get("source", {}).get("title", "cryptopanic"),
-                        url=post.get("url", ""),
-                        published_at=datetime.fromisoformat(
-                            post.get("published_at", "").replace("Z", "+00:00")
-                        ),
-                        symbols=syms,
-                        category="crypto",
-                        raw_sentiment=raw_sent,
-                    )
-                )
-            except (ValueError, TypeError, KeyError):
-                continue
-
-        logger.info("CryptoPanic: %d haber", len(items))
-        return items
+    # NOTE: CryptoPanic Free API deprecated (2024) - Using Finnhub only
+    # def fetch_crypto_news(
+    #     self,
+    #     currencies: list[str] | None = None,
+    #     kind: str = "news",
+    # ) -> list[NewsItem]:
+    #     """
+    #     CryptoPanic'ten kripto haberlerini çeker.
+    #
+    #     Args:
+    #         currencies: Filtre (ör. ["BTC", "ETH"])
+    #         kind: "news" | "media" | "all"
+    #     """
+    #     api_key = self._settings.cryptopanic_api_key
+    #
+    #     params: dict[str, Any] = {"auth_token": api_key, "kind": kind, "public": "true"}
+    #     if currencies:
+    #         params["currencies"] = ",".join(currencies)
+    #
+    #     self._rate_limit()
+    #     try:
+    #         url = "https://cryptopanic.com/api/free/v1/posts/"
+    #         resp = self._http.get(url, params=params)
+    #         resp.raise_for_status()
+    #         data = resp.json()
+    #     except Exception as e:
+    #         logger.error("CryptoPanic hatası: %s", e)
+    #         return []
+    #
+    #     items: list[NewsItem] = []
+    #     for post in data.get("results", [])[:50]:
+    #         try:
+    #             votes = post.get("votes", {})
+    #             raw_sent = None
+    #             if votes:
+    #                 pos = votes.get("positive", 0)
+    #                 neg = votes.get("negative", 0)
+    #                 if pos > neg:
+    #                     raw_sent = "positive"
+    #                 elif neg > pos:
+    #                     raw_sent = "negative"
+    #                 else:
+    #                     raw_sent = "neutral"
+    #
+    #             syms = [
+    #                 c.get("code", "")
+    #                 for c in post.get("currencies", [])
+    #                 if c.get("code")
+    #             ]
+    #
+    #             items.append(
+    #                 NewsItem(
+    #                     title=post.get("title", ""),
+    #                     summary=post.get("title", ""),
+    #                     source=post.get("source", {}).get("title", "cryptopanic"),
+    #                     url=post.get("url", ""),
+    #                     published_at=datetime.fromisoformat(
+    #                         post.get("published_at", "").replace("Z", "+00:00")
+    #                     ),
+    #                     symbols=syms,
+    #                     category="crypto",
+    #                     raw_sentiment=raw_sent,
+    #                 )
+    #             )
+    #         except (ValueError, TypeError, KeyError):
+    #             continue
+    #
+    #     logger.info("CryptoPanic: %d haber", len(items))
+    #     return items
 
     # ── Birleşik Haber Çekme ──────────────────────────────
     def fetch_all_news(
@@ -242,18 +242,17 @@ class NewsClient:
         """
         all_news: list[NewsItem] = []
 
-        # Kripto haberleri
+        # Kripto haberleri - CryptoPanic deprecated, Finnhub kullanılıyor
         if symbol:
             from data.symbol_resolver import resolve_symbol, AssetClass
 
             resolved = resolve_symbol(symbol)
             if resolved.asset_class == AssetClass.CRYPTO:
-                all_news.extend(self.fetch_crypto_news(currencies=[resolved.base]))
+                pass  # CryptoPanic deprecated
             else:
                 all_news.extend(self.fetch_finnhub_company_news(resolved.base))
         else:
-            # Genel kripto haberleri
-            all_news.extend(self.fetch_crypto_news())
+            pass  # CryptoPanic deprecated
 
         # Genel piyasa haberleri
         if include_general:

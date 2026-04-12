@@ -251,7 +251,7 @@ class PortfolioState:
         """
         params = get_trading_params()
         risk_pct = risk_per_trade or params.risk.max_position_pct
-        max_value = self.equity * risk_pct
+        max_value = self.cash * risk_pct
 
         if price <= 0:
             return 0.0
@@ -299,105 +299,119 @@ class PortfolioState:
         max_correlation: float | None = None,
         market_data: dict[str, Any] | None = None,
     ) -> Position | None:
-        """Yeni pozisyon açar."""
-        if side != "long":
-            raise ValueError(f"SPOT only supports long positions, got: {side}")
-        params = get_trading_params()
+        """Yeni pozisyon açar. Thread-safe."""
+        with _portfolio_lock:
+            if side != "long":
+                raise ValueError(f"SPOT only supports long positions, got: {side}")
+            params = get_trading_params()
 
-        if self.open_position_count >= params.risk.max_open_positions:
-            logger.warning("Max pozisyon limiti aşıldı")
-            return None
+            if self.open_position_count >= params.risk.max_open_positions:
+                logger.warning("Max pozisyon limiti aşıldı")
+                return None
 
-        cost = price * amount
-        if cost > self.cash:
-            logger.warning("Yetersiz bakiye: %.2f > %.2f", cost, self.cash)
-            return None
+            cost = price * amount
+            if cost > self.cash:
+                logger.warning("Yetersiz bakiye: %.2f > %.2f", cost, self.cash)
+                return None
 
-        self.update_drawdown()
-        if self.current_drawdown >= params.risk.max_drawdown_pct:
-            logger.warning("Max drawdown aşıldı: %.2f%%", self.current_drawdown * 100)
-            return None
-
-        if max_correlation is not None and market_data is not None and self.positions:
-            from risk.correlation_checker import CorrelationChecker
-
-            checker = CorrelationChecker([], market_data)
-            symbols_to_check = [p.symbol for p in self.positions] + [symbol]
-            available = {
-                s: market_data[s] for s in symbols_to_check if s in market_data
-            }
-            if len(available) >= 2:
-                check_result = checker.check_positions(
-                    self.positions,
-                    market_data,
-                    max_correlation=max_correlation,
+            self.update_drawdown()
+            if self.current_drawdown >= params.risk.max_drawdown_pct:
+                logger.warning(
+                    "Max drawdown aşıldı: %.2f%%", self.current_drawdown * 100
                 )
-                if not check_result["is_safe"]:
-                    logger.warning(
-                        "Pozisyon reddedildi: yüksek korelasyon tespit edildi. %s",
-                        check_result["correlated_pairs"],
+                return None
+
+            if (
+                max_correlation is not None
+                and market_data is not None
+                and self.positions
+            ):
+                # Market data'nın thread-safe kopyasını al
+                market_data_copy = {
+                    k: v.copy() if isinstance(v, pd.DataFrame) else v
+                    for k, v in market_data.items()
+                }
+
+                from risk.correlation_checker import CorrelationChecker
+
+                checker = CorrelationChecker([], market_data_copy)
+                symbols_to_check = [p.symbol for p in self.positions] + [symbol]
+                available = {
+                    s: market_data_copy[s] for s in symbols_to_check if s in market_data_copy
+                }
+                if len(available) >= 2:
+                    check_result = checker.check_positions(
+                        self.positions,
+                        market_data_copy,
+                        max_correlation=max_correlation,
                     )
-                    return None
+                    if not check_result["is_safe"]:
+                        logger.warning(
+                            "Pozisyon reddedildi: yüksek korelasyon tespit edildi. %s",
+                            check_result["correlated_pairs"],
+                        )
+                        return None
 
-        position = Position(
-            symbol=symbol,
-            side=side,
-            entry_price=price,
-            amount=amount,
-            entry_time=datetime.now(timezone.utc).isoformat(),
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            current_price=price,
-        )
+            position = Position(
+                symbol=symbol,
+                side=side,
+                entry_price=price,
+                amount=amount,
+                entry_time=datetime.now(timezone.utc).isoformat(),
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                current_price=price,
+            )
 
-        self.cash -= cost
-        self.positions.append(position)
+            self.cash -= cost
+            self.positions.append(position)
 
-        logger.info(
-            "Pozisyon açıldı: %s %s %.4f @ %.4f (SL: %.4f, TP: %.4f)",
-            side.upper(),
-            symbol,
-            amount,
-            price,
-            stop_loss,
-            take_profit,
-        )
-        return position
+            logger.info(
+                "Pozisyon açıldı: %s %s %.4f @ %.4f (SL: %.4f, TP: %.4f)",
+                side.upper(),
+                symbol,
+                amount,
+                price,
+                stop_loss,
+                take_profit,
+            )
+            return position
 
     def close_position(self, symbol: str, price: float) -> dict | None:
-        """Pozisyonu kapatır."""
-        pos = next((p for p in self.positions if p.symbol == symbol), None)
-        if not pos:
-            logger.warning("Kapatılacak pozisyon bulunamadı: %s", symbol)
-            return None
+        """Pozisyonu kapatır. Thread-safe."""
+        with _portfolio_lock:
+            pos = next((p for p in self.positions if p.symbol == symbol), None)
+            if not pos:
+                logger.warning("Kapatılacak pozisyon bulunamadı: %s", symbol)
+                return None
 
-        pos.update_price(price)
-        pnl = pos.unrealized_pnl
+            pos.update_price(price)
+            pnl = pos.unrealized_pnl
 
-        self.cash += price * pos.amount
+            self.cash += price * pos.amount
 
-        self.total_pnl += pnl
-        self.daily_pnl += pnl
-        self.positions.remove(pos)
+            self.total_pnl += pnl
+            self.daily_pnl += pnl
+            self.positions.remove(pos)
 
-        trade_record = {
-            "symbol": symbol,
-            "side": pos.side,
-            "entry_price": pos.entry_price,
-            "exit_price": price,
-            "amount": pos.amount,
-            "pnl": round(pnl, 4),
-            "pnl_pct": round(pos.unrealized_pnl_pct, 4),
-            "entry_time": pos.entry_time,
-            "exit_time": datetime.now(timezone.utc).isoformat(),
-        }
-        self.closed_trades.append(trade_record)
+            trade_record = {
+                "symbol": symbol,
+                "side": pos.side,
+                "entry_price": pos.entry_price,
+                "exit_price": price,
+                "amount": pos.amount,
+                "pnl": round(pnl, 4),
+                "pnl_pct": round(pos.unrealized_pnl_pct, 4),
+                "entry_time": pos.entry_time,
+                "exit_time": datetime.now(timezone.utc).isoformat(),
+            }
+            self.closed_trades.append(trade_record)
 
-        logger.info(
-            "Pozisyon kapatıldı: %s P&L: %.4f (%.2f%%)",
-            symbol,
-            pnl,
-            pos.unrealized_pnl_pct * 100,
-        )
-        self.update_drawdown()
-        return trade_record
+            logger.info(
+                "Pozisyon kapatıldı: %s P&L: %.4f (%.2f%%)",
+                symbol,
+                pnl,
+                pos.unrealized_pnl_pct * 100,
+            )
+            self.update_drawdown()
+            return trade_record

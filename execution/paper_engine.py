@@ -283,19 +283,55 @@ class PaperTradingEngine:
         return None
 
     def _create_auto_sell_order(self, pos: PaperPosition, reason: str) -> dict:
-        """Otomatik satım emri oluşturur ve çalıştırır."""
-        order = TradeOrder(
-            symbol=pos.symbol,
-            action="sell",
-            order_type="market",
-            amount=pos.amount,
-            stop_loss=pos.stop_loss,
-            take_profit=pos.take_profit,
-            reasoning=f"Otomatik çıkış: {reason}",
+        """Otomatik satım emri oluşturur ve çalıştırır.
+
+        Slippage uygulanmaz çünkü fiyat zaten tetiklenen fiyattır.
+        """
+        pos_amount = pos.amount
+        pos_price = pos.current_price
+
+        # Slippage-free execution — price is already the trigger price
+        exec_price = pos_price
+        revenue = exec_price * pos_amount
+        commission = revenue * self.commission_pct
+        net_revenue = revenue - commission
+
+        pnl = (exec_price - pos.entry_price) * pos_amount - commission
+
+        pos.amount = 0
+        del self.positions[pos.symbol]
+
+        self.cash += net_revenue
+        self.total_pnl += pnl
+        self.daily_pnl += pnl
+        self.update_drawdown()
+
+        trade_record = {
+            "status": "filled",
+            "order_id": f"paper_{len(self.trades):06d}",
+            "symbol": pos.symbol,
+            "side": "sell",
+            "type": "market",
+            "amount": pos_amount,
+            "price": round(exec_price, 6),
+            "commission": round(commission, 6),
+            "revenue": round(net_revenue, 6),
+            "pnl": round(pnl, 6),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "mode": "paper",
+            "exit_reason": reason,
+        }
+        self.trades.append(trade_record)
+
+        logger.info(
+            "Paper AUTO-SELL (%s): %s %.6f @ %.4f (P&L: %.4f)",
+            reason,
+            pos.symbol,
+            pos_amount,
+            exec_price,
+            pnl,
         )
-        result = self.execute_order(order, pos.current_price)
-        result["exit_reason"] = reason
-        return result
+        return trade_record
 
     def get_status(self) -> dict[str, Any]:
         """Paper trading durumu."""

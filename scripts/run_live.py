@@ -73,6 +73,8 @@ def run_pipeline(
     symbol: str,
     execute: bool = False,
     provider: str | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
+    portfolio: PortfolioState | None = None,
 ) -> dict:
     """
     Tam analiz pipeline'ını çalıştırır.
@@ -81,6 +83,8 @@ def run_pipeline(
         symbol: Varlık sembolü
         execute: True ise emri borsaya gönder
         provider: LLM sağlayıcı override
+        circuit_breaker: Paylaşılan CircuitBreaker instance'ı
+        portfolio: Paylaşılan PortfolioState instance'ı
 
     Returns:
         Analiz sonuçları
@@ -89,12 +93,13 @@ def run_pipeline(
     params = get_trading_params()
 
     # ── Portföy yükleme (persistence) ─────────────────────
-    portfolio = PortfolioState.load_from_file()
+    if portfolio is None:
+        portfolio = PortfolioState.load_from_file()
     portfolio.reset_daily_pnl_if_needed()
     portfolio_state_dict = portfolio.to_dict()
 
     # ── Circuit Breaker kontrolü ───────────────────────────
-    cb = CircuitBreaker()
+    cb = circuit_breaker or CircuitBreaker()
     should_halt, halt_reason = cb.should_halt(
         equity=portfolio.equity, daily_pnl=portfolio.daily_pnl
     )
@@ -249,6 +254,7 @@ def run_pipeline(
     # ── 4. Haber Verisi ───────────────────────────────────
     console.print("\n[bold yellow]📰 Aşama 4: Haber Toplama[/bold yellow]")
     news_client = NewsClient()
+    result = None
     try:
         news_items = news_client.fetch_all_news(symbol)
         console.print(f"  {len(news_items)} haber toplandı")
@@ -279,11 +285,15 @@ def run_pipeline(
             portfolio_state=portfolio_state_dict,
             provider=provider,
         )
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error("Pipeline error for %s: %s", symbol, e)
+        result = {"error": str(e), "trade_decision": {"action": "hold"}}
     finally:
         news_client.close()
 
     # ── Hata Kontrolü ve Circuit Breaker ──────────────────
-    if result.get("error"):
+    if result and result.get("error"):
         console.print(
             f"\n[bold red]❌ Ajan Hatası Algılandı: {result['error']}[/bold red]"
         )
@@ -491,6 +501,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     portfolio = PortfolioState.load_from_file()
+    circuit_breaker = CircuitBreaker()
 
     watchdog = None
     if args.watchdog:
@@ -527,6 +538,8 @@ def main() -> None:
                     symbol=symbol,
                     execute=execute,
                     provider=args.provider,
+                    circuit_breaker=circuit_breaker,
+                    portfolio=portfolio,
                 )
 
                 if result.get("status") in ("halted", "market_closed"):
@@ -534,8 +547,6 @@ def main() -> None:
                         f"[dim]  {symbol}: {result.get('status')} — atlanıyor[/dim]"
                     )
                     continue
-
-                cb = CircuitBreaker()
 
             portfolio.save_to_file()
 

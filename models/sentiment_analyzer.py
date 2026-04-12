@@ -14,17 +14,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.globals import set_llm_cache
 from langchain_core.caches import InMemoryCache
-import time
-import threading
-from typing import Any
 
 
 class TTLCache(InMemoryCache):
@@ -50,7 +50,7 @@ class TTLCache(InMemoryCache):
     def update(self, prompt: Any, llm_string: str, return_val: Any) -> None:
         key = str(prompt) + llm_string
         with self._lock:
-            if len(self._cache) >= self._max_size:
+            if len(self._cache) >= self._max_size and self._timestamps:
                 oldest_key = min(self._timestamps, key=self._timestamps.get)
                 self._cache.pop(oldest_key, None)
                 self._timestamps.pop(oldest_key, None)
@@ -87,6 +87,7 @@ def create_llm(
     provider: LLMProvider | None = None,
     model: str | None = None,
     temperature: float = 0.1,
+    max_tokens: int | None = None,
 ) -> ChatOpenAI:
     """
     Belirtilen sağlayıcı için LLM nesnesi oluşturur.
@@ -96,6 +97,15 @@ def create_llm(
     params = get_trading_params()
     prov = provider or params.sentiment.provider
 
+    model_kwargs = {
+        "extra_headers": {
+            "HTTP-Referer": "https://llmtrading.local",
+            "X-Title": "LLM Trading System",
+        }
+    }
+    if max_tokens is not None:
+        model_kwargs["max_tokens"] = max_tokens
+
     if prov == LLMProvider.OPENROUTER:
         return ChatOpenAI(
             model=model or params.sentiment.model,
@@ -104,12 +114,7 @@ def create_llm(
             temperature=temperature,
             request_timeout=60,
             max_retries=2,
-            model_kwargs={
-                "extra_headers": {
-                    "HTTP-Referer": "https://llmtrading.local",
-                    "X-Title": "LLM Trading System",
-                }
-            },
+            model_kwargs=model_kwargs,
         )
     elif prov == LLMProvider.DEEPSEEK:
         return ChatOpenAI(
@@ -119,6 +124,7 @@ def create_llm(
             temperature=temperature,
             request_timeout=60,
             max_retries=2,
+            model_kwargs=model_kwargs,
         )
     elif prov == LLMProvider.OLLAMA:
         return ChatOpenAI(
@@ -128,6 +134,7 @@ def create_llm(
             temperature=temperature,
             request_timeout=120,
             max_retries=2,
+            model_kwargs=model_kwargs,
         )
     else:
         raise ValueError(f"Bilinmeyen LLM sağlayıcı: {prov}")
@@ -300,6 +307,56 @@ def create_agent_llm(
     provider: LLMProvider | None = None,
     model: str | None = None,
     temperature: float = 0.2,
+    max_tokens: int | None = None,
 ) -> ChatOpenAI:
     """Ajan düğümleri için LLM nesnesi oluşturur (dışa açık)."""
-    return create_llm(provider, model, temperature)
+    return create_llm(provider, model, temperature, max_tokens)
+
+
+def create_ensemble_llm(
+    model_specs: list[str] | None = None,
+    temperature: float = 0.1,
+) -> list[ChatOpenAI]:
+    """
+    Birden fazla LLM sağlayıcısı için LLM nesneleri oluşturur.
+
+    Args:
+        model_specs: Model liste, ör. ["deepseek/deepseek-chat", "ollama/llama3:8b"]
+        temperature: Tüm modeller için sıcaklık
+
+    Returns:
+        ChatOpenAI instance listesi
+    """
+    from config.settings import get_trading_params
+
+    params = get_trading_params()
+    specs = model_specs or params.agents.ensemble_models
+
+    llm_instances: list[ChatOpenAI] = []
+    for spec in specs:
+        if "/" in spec:
+            provider_str, model_name = spec.split("/", 1)
+        else:
+            provider_str = "openrouter"
+            model_name = spec
+
+        provider_map = {
+            "openrouter": LLMProvider.OPENROUTER,
+            "deepseek": LLMProvider.DEEPSEEK,
+            "ollama": LLMProvider.OLLAMA,
+        }
+        provider = provider_map.get(provider_str.lower(), LLMProvider.OPENROUTER)
+
+        try:
+            llm = create_llm(
+                provider=provider, model=model_name, temperature=temperature
+            )
+            llm_instances.append(llm)
+            logger.info("Ensemble LLM oluşturuldu: %s", spec)
+        except Exception as e:
+            logger.warning("Ensemble LLM oluşturulamadı (%s): %s", spec, e)
+
+    if not llm_instances:
+        raise ValueError("Hiçbir ensemble LLM oluşturulamadı")
+
+    return llm_instances

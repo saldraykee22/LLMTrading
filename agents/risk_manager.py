@@ -83,6 +83,38 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     else:
         checks_passed.append(f"Drawdown limiti içinde: {current_dd:.2%}")
 
+    # Rejim filtresi kontrolü
+    try:
+        from risk.regime_filter import RegimeFilter
+        vix_data = state.get("vix_data")
+        if vix_data is not None and not vix_data.empty:
+            regime_filter = RegimeFilter()
+            regime = regime_filter.update(vix_data)
+            if regime_filter.should_halt_trading():
+                critical_failed.append(
+                    f"Yüksek volatilite rejimi: {regime.value}"
+                )
+            else:
+                checks_passed.append(f"Piyasa rejimi uygun: {regime.value}")
+    except Exception as e:
+        warnings.append(f"Rejim filtresi hatası: {e}")
+
+    # Crypto Fear & Greed kontrolü
+    try:
+        from risk.regime_filter import CryptoFearGreedFilter
+        fear_greed_index = state.get("fear_greed_index")
+        if fear_greed_index is not None:
+            fg_filter = CryptoFearGreedFilter()
+            classification = fg_filter.update(fear_greed_index)
+            if fg_filter.should_reduce_exposure():
+                warnings.append(
+                    f"Fear & Greed extremum: {classification} (index: {fear_greed_index})"
+                )
+            else:
+                checks_passed.append(f"Fear & Greed seviyesi normal: {classification}")
+    except Exception as e:
+        warnings.append(f"Fear & Greed filtresi hatası: {e}")
+
     try:
         from evaluation.drift_monitor import DriftMonitor
 
@@ -128,7 +160,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
 
         risk_msg = (
             f"[Risk Yöneticisi] {symbol} değerlendirmesi:\n"
-            f"  Karar: ✗ REDDEDİLDİ (kritik kontrol)\n"
+            f"  Karar: REDDEDİLDİ (kritik kontrol)\n"
             f"  Geçen kontroller: {len(checks_passed)}\n"
             f"  Başarısız kontroller: {len(checks_failed)}\n"
             f"  Uyarılar: {len(warnings)}"
@@ -143,25 +175,54 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
             "phase": "analysis",
         }
 
-    risk_prompt_path = PROMPTS_DIR / "risk_manager.txt"
-    system_prompt = ""
-    if risk_prompt_path.exists():
-        system_prompt = risk_prompt_path.read_text(encoding="utf-8")
-        system_prompt = system_prompt.replace(
-            "{max_position_pct}", str(params.risk.max_position_pct * 100)
+    if checks_failed:
+        risk_data = {
+            "decision": "rejected",
+            "checks_passed": checks_passed,
+            "checks_failed": checks_failed,
+            "warnings": warnings,
+            "llm_assessment": {},
+            "stop_loss_level": 0,
+            "take_profit_level": 0,
+            "approved_size": 0,
+        }
+
+        risk_msg = (
+            f"[Risk Yöneticisi] {symbol} değerlendirmesi:\n"
+            f"  Karar: REDDEDİLDİ (deterministik kontrol)\n"
+            f"  Geçen kontroller: {len(checks_passed)}\n"
+            f"  Başarısız kontroller: {len(checks_failed)}\n"
+            f"  Uyarılar: {len(warnings)}"
         )
-        system_prompt = system_prompt.replace(
-            "{max_portfolio_risk_pct}", str(params.risk.max_portfolio_risk_pct * 100)
-        )
-        system_prompt = system_prompt.replace(
-            "{max_drawdown_pct}", str(params.risk.max_drawdown_pct * 100)
-        )
-        system_prompt = system_prompt.replace(
-            "{max_daily_loss_pct}", str(params.risk.max_daily_loss_pct * 100)
-        )
-        system_prompt = system_prompt.replace(
-            "{max_correlated_positions}", str(params.risk.max_correlated_positions)
-        )
+
+        logger.info(risk_msg)
+
+        return {
+            "messages": [{"role": "risk_manager", "content": risk_msg}],
+            "risk_assessment": risk_data,
+            "risk_approved": False,
+            "phase": "analysis",
+        }
+
+    from agents.prompt_evolver import PromptEvolver
+
+    evolver = PromptEvolver()
+    system_prompt = evolver.get_current_prompt("risk_manager")
+    system_prompt = system_prompt.replace(
+        "{max_position_pct}", str(params.risk.max_position_pct * 100)
+    )
+    system_prompt = system_prompt.replace(
+        "{max_portfolio_risk_pct}", str(params.risk.max_portfolio_risk_pct * 100)
+    )
+    system_prompt = system_prompt.replace(
+        "{max_drawdown_pct}", str(params.risk.max_drawdown_pct * 100)
+    )
+    system_prompt = system_prompt.replace(
+        "{max_daily_loss_pct}", str(params.risk.max_daily_loss_pct * 100)
+    )
+    system_prompt = system_prompt.replace(
+        "{max_correlated_positions}", str(params.risk.max_correlated_positions)
+    )
 
     max_allowed = equity * params.risk.max_position_pct
 
@@ -176,7 +237,6 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
 
 ## Deterministik Kontroller
 Geçen: {json.dumps(checks_passed, ensure_ascii=False)}
-Kalan: {json.dumps(checks_failed, ensure_ascii=False)}
 Uyarılar: {json.dumps(warnings, ensure_ascii=False)}
 
 ## Araştırma Raporu
@@ -194,7 +254,7 @@ Uyarılar: {json.dumps(warnings, ensure_ascii=False)}
 ## Portföy Durumu
 {json.dumps(portfolio, indent=2, ensure_ascii=False)}
 
-Deterministik kontrol sonuçlarını ve KESİN KURALLAR'I dikkate al. approved_size değeri {max_allowed:.2f} USDT'yi ASLA aşmamalı. Nihai risk değerlendirmesini yap."""
+Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approved_size değeri {max_allowed:.2f} USDT'yi ASLA aşmamalı. Nihai risk değerlendirmesini yap."""
 
     llm = create_agent_llm(
         provider=provider,
@@ -216,13 +276,20 @@ Deterministik kontrol sonuçlarını ve KESİN KURALLAR'I dikkate al. approved_s
             base_delay=2.0,
         )
         llm_assessment = extract_json(response.content)
+        if llm_assessment.get("__parse_error__"):
+            logger.warning(
+                "Risk LLM JSON parse hatası: %s",
+                llm_assessment.get("__raw_text__", "")[:200],
+            )
+            llm_assessment = {}
     except Exception as e:
         logger.error("Risk LLM hatası: %s", e)
         llm_assessment = {}
 
     proposed_size = llm_assessment.get("approved_size", 0) if llm_assessment else 0
     if proposed_size > 0:
-        if proposed_size > max_allowed:
+        epsilon = 0.01
+        if proposed_size > max_allowed + epsilon:
             logger.warning(
                 "LLM max_allowed limiti aştı: %.2f > %.2f — otomatik reddedildi",
                 proposed_size,
@@ -231,17 +298,18 @@ Deterministik kontrol sonuçlarını ve KESİN KURALLAR'I dikkate al. approved_s
             checks_failed.append(
                 f"LLM önerilen pozisyon boyutu limiti aştı: {proposed_size:.2f} > {max_allowed:.2f}"
             )
+            final_decision = "rejected"
         else:
             checks_passed.append(
                 f"Pozisyon boyutu uygun: {proposed_size:.2f} <= {max_allowed:.2f}"
             )
-
-    if checks_failed:
-        final_decision = "rejected"
-        llm_assessment["checks_failed"] = checks_failed
-        llm_assessment["checks_passed"] = checks_passed
+            final_decision = llm_assessment.get("decision", "approved")
     else:
-        final_decision = llm_assessment.get("decision", "rejected")
+        if not llm_assessment:
+            logger.warning("Risk LLM boş yanıt döndü, güvenlik nedeniyle reddedildi")
+            final_decision = "rejected"
+        else:
+            final_decision = llm_assessment.get("decision", "approved")
 
     risk_approved = final_decision == "approved"
 

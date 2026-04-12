@@ -107,6 +107,7 @@ class RiskParams(BaseModel):
     cvar_confidence: float = 0.95
     max_open_positions: int = 5
     max_correlated_positions: int = 3
+    max_correlation_threshold: float = 0.70
     max_consecutive_losses: int = 5
     max_consecutive_llm_errors: int = 10
     cvar: CvarParams = CvarParams()
@@ -139,8 +140,8 @@ class ExecutionParams(BaseModel):
 
 class SentimentParams(BaseModel):
     provider: LLMProvider = LLMProvider.OPENROUTER
-    model: str = "deepseek/deepseek-chat-v3-0324"
-    reasoning_model: str = "deepseek/deepseek-reasoner"
+    model: str = "openai/gpt-oss-120b:free"
+    reasoning_model: str = "openai/gpt-oss-120b:free"
     score_range: list[float] = [-1.0, 1.0]
     bullish_threshold: float = 0.3
     bearish_threshold: float = -0.3
@@ -150,10 +151,15 @@ class SentimentParams(BaseModel):
 class AgentParams(BaseModel):
     max_debate_rounds: int = 3
     max_retry_iterations: int = 3
-    coordinator_model: str = "deepseek/deepseek-chat-v3-0324"
-    analyst_model: str = "deepseek/deepseek-chat-v3-0324"
-    risk_model: str = "deepseek/deepseek-chat-v3-0324"
-    trader_model: str = "deepseek/deepseek-chat-v3-0324"
+    coordinator_model: str = "openai/gpt-oss-120b:free"
+    analyst_model: str = "openai/gpt-oss-120b:free"
+    risk_model: str = "openai/gpt-oss-120b:free"
+    trader_model: str = "openai/gpt-oss-120b:free"
+    ensemble_enabled: bool = False
+    ensemble_models: list[str] = Field(
+        default_factory=lambda: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b"]
+    )
+    ensemble_min_consensus: float = 0.5
 
 
 class BacktestParams(BaseModel):
@@ -202,10 +208,17 @@ class WatchdogParams(BaseModel):
     alert_5m_pct: float = 0.02
 
 
+class LLMParams(BaseModel):
+    default_model: str = "deepseek/deepseek-chat-v3-0324"
+    reasoning_model: str = "deepseek/deepseek-reasoner"
+    fallback_providers: list[str] = ["openrouter", "deepseek", "ollama"]
+
+
 class TradingParams(BaseModel):
     """trading_params.yaml'dan yüklenen strateji parametreleri."""
 
     risk: RiskParams = RiskParams()
+    llm: LLMParams = LLMParams()
     regime: RegimeParams = RegimeParams()
     stop_loss: StopLossParams = StopLossParams()
     execution: ExecutionParams = ExecutionParams()

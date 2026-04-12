@@ -30,6 +30,56 @@ class ExchangeClient:
         self._last_request_time: float = 0
         self._paper_engine: PaperTradingEngine | None = None
 
+        # Fail-safe mechanism
+        self._last_successful_call = time.time()
+        self._connection_timeout = 300  # 5 dakika
+        self._emergency_mode = False
+
+    def _check_connection(self) -> bool:
+        """Heartbeat kontrolü, timeout varsa emergency moda geç."""
+        if time.time() - self._last_successful_call > self._connection_timeout:
+            if not self._emergency_mode:
+                logger.critical("API bağlantı kesildi — EMERGENCY MODE")
+                self._emergency_mode = True
+                self._emergency_close_all()
+            return False
+        return True
+
+    def _emergency_close_all(self) -> None:
+        """Tüm açık pozisyonları market emriyle kapatır."""
+        from risk.portfolio import PortfolioState
+        portfolio = PortfolioState.load_from_file()
+        
+        if not portfolio.positions:
+            logger.info("Emergency close: Açık pozisyon yok.")
+            return
+            
+        logger.critical("🚨 EMERGENCY CLOSE ALL: %d pozisyon kapatılıyor!", len(portfolio.positions))
+        
+        for pos in portfolio.positions:
+            action = "sell" if pos.side == "long" else "buy"
+            order = TradeOrder(
+                symbol=pos.symbol,
+                action=action,
+                amount=pos.amount,
+                order_type="market"
+            )
+            try:
+                if self._params.execution.mode == TradingMode.PAPER:
+                    self._get_paper_engine().execute_order(order, pos.current_price)
+                else:
+                    exchange = self._get_exchange()
+                    exchange.create_order(
+                        symbol=order.symbol,
+                        type="market",
+                        side=order.action,
+                        amount=order.amount,
+                    )
+            except Exception as e:
+                logger.error("Emergency close hatası (%s): %s", pos.symbol, e)
+                
+        portfolio.save_to_file()
+
     def _get_paper_engine(self) -> PaperTradingEngine:
         """Paper trading engine'i lazy olarak başlatır."""
         if self._paper_engine is None:
@@ -89,6 +139,9 @@ class ExchangeClient:
         Returns:
             Emir sonucu (order ID, durum vb.)
         """
+        if not self._check_connection():
+            return {"status": "error", "message": "API bağlantı kesildi"}
+
         # Paper mod — simülasyon
         if self._params.execution.mode == TradingMode.PAPER:
             logger.info(
@@ -98,7 +151,9 @@ class ExchangeClient:
                 order.amount,
                 order.order_type,
             )
-            return self._get_paper_engine().execute_order(order, current_price)
+            result = self._get_paper_engine().execute_order(order, current_price)
+            self._last_successful_call = time.time()
+            return result
 
         # Live mod — gerçek borsa
         exchange = self._get_exchange()
@@ -145,10 +200,10 @@ class ExchangeClient:
                         "message": f"Unknown order type: {order.order_type}",
                     }
 
+                order_status = result.get("status", "")
+                filled_status = "filled" if order_status == "closed" else order_status
                 order_info = {
-                    "status": "filled"
-                    if result.get("status") == "closed"
-                    else result.get("status", "open"),
+                    "status": filled_status,
                     "order_id": result.get("id"),
                     "symbol": result.get("symbol"),
                     "side": result.get("side"),
@@ -166,6 +221,7 @@ class ExchangeClient:
                     order_info["status"],
                     order_info["price"],
                 )
+                self._last_successful_call = time.time()
                 return order_info
 
             except ccxt.InsufficientFunds as e:
@@ -207,9 +263,12 @@ class ExchangeClient:
         try:
             result = exchange.cancel_order(order_id, symbol)
             logger.info("Emir iptal edildi: %s", order_id)
+            self._last_successful_call = time.time()
             return {"status": "cancelled", "order_id": order_id}
         except ccxt.BaseError as e:
             logger.error("İptal hatası: %s", e)
+            if not self._check_connection():
+                pass
             return {"status": "error", "message": str(e)}
 
     def get_open_orders(self, symbol: str | None = None) -> list[dict]:
@@ -218,6 +277,7 @@ class ExchangeClient:
         self._rate_limit()
         try:
             orders = exchange.fetch_open_orders(symbol)
+            self._last_successful_call = time.time()
             return [
                 {
                     "id": o["id"],
@@ -231,6 +291,8 @@ class ExchangeClient:
             ]
         except ccxt.BaseError as e:
             logger.error("Açık emir sorgulama hatası: %s", e)
+            if not self._check_connection():
+                pass
             return [{"error": str(e), "data": None}]
 
     def get_balance(self) -> dict[str, float]:
@@ -239,6 +301,7 @@ class ExchangeClient:
         self._rate_limit()
         try:
             balance = exchange.fetch_balance()
+            self._last_successful_call = time.time()
             return {
                 k: float(v)
                 for k, v in balance.get("total", {}).items()
@@ -246,4 +309,6 @@ class ExchangeClient:
             }
         except ccxt.BaseError as e:
             logger.error("Bakiye hatası: %s", e)
+            if not self._check_connection():
+                pass
             return {"error": str(e), "data": None}

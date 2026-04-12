@@ -179,8 +179,8 @@ def stress_test_monte_carlo(
     std_return = np.std(returns)
 
     # Simüle edilmiş kümülatif getiriler
-    np.random.seed(seed)
-    simulated = np.random.normal(mean_return, std_return, (n_simulations, n_days))
+    rng = np.random.default_rng(seed)
+    simulated = rng.normal(mean_return, std_return, (n_simulations, n_days))
     cumulative = np.cumprod(1 + simulated, axis=1)
     final_values = cumulative[:, -1]
 

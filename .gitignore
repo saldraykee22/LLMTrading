@@ -26,6 +26,9 @@ venv/
 # Data
 data/cache/
 data/exports/
+data/vector_cache/
+data/prompt_versions/
+data/drift_history.jsonl
 *.csv
 *.parquet
 !data/examples/*.csv

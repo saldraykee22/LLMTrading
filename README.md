@@ -23,6 +23,8 @@ Proje saf nicel (quantitative) veya saf duygusal (sentiment) analiz yerine, her 
 - **Daemon Mode:** Surekli calisan dongu, Ctrl+C ile guvenli kapanis, sembol ve interval secenekleri
 - **Watchdog (Flash Crash Korumasi):** Arka planda fiyat izleme, ani dususlerde acil satis
 - **Maliyet Optimizasyonu:** Prompt sikistirma, LLM cache, max_tokens sinirlari ile %72-88 API tasarrufu
+- **RL Advisor (Faz 7):** PPO tabanlı reinforcement learning ile LLM kararlarının pekiştirilmesi
+- **Ensemble Voter (Faz 7):** Birden fazla LLM modelinin (DeepSeek, Llama, GPT) paralel oylaması
 
 ---
 
@@ -242,3 +244,4 @@ Tum LLM cagrilar `response_format={"type": "json_object"}` kullanir. Bu, cikti f
 | **Faz 4 Düzeltmeleri** | **Tamamlandi** | TradingMode import, phase tutarsizligi, _create_llm public, provider parametresi, dashboard güvenlik, dead variable'lar |
 | **Faz 5** | **Tamamlandi** | **Daemon Mode**: Surekli calisan dongu, CLI arglari, guvenli kapanis, **Watchdog**: Flash crash korumasi, **Prompt Sikistirma**: %40-50 kucultme, **max_tokens + JSON Mode**: Tum LLM cagrilarina sinir, **Sentiment Cache**: LLM oncesi cache kontrolu, **Maliyet Optimizasyonu**: %72-88 API tasarrufu |
 | **Faz 6** | **Tamamlandi** | **Kritik Bug Duzeltmeleri**: Backtest stop-loss, PortfolioManager NameError, confirm_live_trade default True, **Thread-Safety**: Portfolio file locking, Watchdog mutex, **Hata Yonetimi**: Error masking kaldirildi, JSON parse error flag, **LLM Retry/Backoff**: Tum ajanlara exponential backoff, **Performans**: Sentiment store RAM cache, LLM TTL cache (30dk, 500 entry), Messages rotation (MAX=50), Monte Carlo seed, **Symbol Resolver**: Live crypto bases refresh, **RAG Hafiza**: ChromaDB tabanlı AgentMemoryStore, **Concept Drift**: DriftMonitor ile LLM isabet takibi, **Market Holidays**: US + BIST tatil destegi, **Kod Kalitesi**: 3 DEPRECATED dosya silindi |
+| **Faz 7** | **Tamamlandi** | **ML & Ensemble**: **RL Advisor**: PPO tabanlı işlem tavsiyesi ve karar harmanlama, **Ensemble Voter**: Çoklu LLM modeli ile paralel oylama (majority vote), **Prompt Evolver**: Ajan promptlarının dinamik versiyonlaması ve optimizasyonu |

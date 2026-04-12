@@ -26,12 +26,48 @@ logger = logging.getLogger(__name__)
 BULL_SYSTEM = """Sen finansal piyasalarda yükseliş (bullish) senaryoları savunan bir analistsin.
 Görevin, verilen varlık için YÜKSELME gerekçelerini güçlü argümanlarla sunmaktır.
 ANCAK gerçek verilere dayanmalısın — uydurma veya abartılı iddialar YASAK.
-Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et."""
+Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et.
+
+Çıktı Formatı (JSON):
+```json
+{
+    "action": "bullish",
+    "confidence": 0.0,
+    "key_points": ["..."],
+    "supporting_data": ["..."],
+    "risks_acknowledged": ["..."],
+    "reasoning": "..."
+}
+```
+- confidence: 0.0-1.0 arası yükseliş güveni
+- key_points: En güçlü 3-5 yükseliş argümanı
+- supporting_data: Argümanları destekleyen somut veriler
+- risks_acknowledged: Kabul ettiğin riskler
+- reasoning: Kısa özet
+"""
 
 BEAR_SYSTEM = """Sen finansal piyasalarda düşüş (bearish) senaryoları savunan bir analistsin.
 Görevin, verilen varlık için DÜŞÜŞ risklerini güçlü argümanlarla sunmaktır.
 ANCAK gerçek verilere dayanmalısın — uydurma veya abartılı iddialar YASAK.
-Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et."""
+Sadece kanıta dayalı argümanlar sun. Zayıf argümanlarını kabul et.
+
+Çıktı Formatı (JSON):
+```json
+{
+    "action": "bearish",
+    "confidence": 0.0,
+    "key_points": ["..."],
+    "supporting_data": ["..."],
+    "risks_acknowledged": ["..."],
+    "reasoning": "..."
+}
+```
+- confidence: 0.0-1.0 arası düşüş güveni
+- key_points: En güçlü 3-5 düşüş argümanı
+- supporting_data: Argümanları destekleyen somut veriler
+- risks_acknowledged: Kabul ettiğin riskler
+- reasoning: Kısa özet
+"""
 
 MODERATOR_SYSTEM = """Sen tarafsız bir finansal tartışma moderatörüsün.
 İki analistin (Bull ve Bear) argümanlarını değerlendir.
@@ -169,8 +205,9 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 base_delay=2.0,
             )
             bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Bull rebuttal hatası: %s", e)
+            bull_args += "\n\n[Yanıt]: Bull yanıtı oluşturulamadı."
 
         try:
             bear_rebuttal = invoke_with_retry(
@@ -188,10 +225,18 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                 base_delay=2.0,
             )
             bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Bear rebuttal hatası: %s", e)
+            bear_args += "\n\n[Yanıt]: Bear yanıtı oluşturulamadı."
 
     # ── Moderator ─────────────────────────────────────────
+    from agents.prompt_evolver import PromptEvolver
+
+    evolver = PromptEvolver()
+    moderator_system = evolver.get_current_prompt("debate_moderator")
+    if not moderator_system:
+        moderator_system = MODERATOR_SYSTEM
+
     moderator_input = f"""{context}
 
 ## Bull Tarafının Argümanları
@@ -206,7 +251,7 @@ Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
         mod_resp = invoke_with_retry(
             llm.invoke,
             [
-                SystemMessage(content=MODERATOR_SYSTEM),
+                SystemMessage(content=moderator_system),
                 HumanMessage(content=moderator_input),
             ],
             max_tokens=400,
@@ -215,6 +260,18 @@ Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
             base_delay=2.0,
         )
         debate_result = extract_json(mod_resp.content)
+        if debate_result.get("__parse_error__"):
+            logger.warning(
+                "Moderator LLM JSON parse hatası: %s",
+                debate_result.get("__raw_text__", "")[:200],
+            )
+            debate_result = {
+                "winner": "draw",
+                "consensus_score": 0.0,
+                "adjusted_signal": "neutral",
+                "moderator_reasoning": f"Moderator çıktı parse edilemedi: {debate_result.get('__raw_text__', '')[:200]}",
+                "parse_error": True,
+            }
     except Exception as e:
         logger.error("Moderator hatası: %s", e)
         debate_result = {

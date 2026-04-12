@@ -69,6 +69,12 @@ agents:
   analyst_model: "deepseek/deepseek-chat-v3-0324"
   risk_model: "deepseek/deepseek-chat-v3-0324"
   trader_model: "deepseek/deepseek-chat-v3-0324"
+  rl_enabled: false               # RL Advisor aktif mi (başlangıçta kapalı)
+  rl_model_path: "models/ppo_trading.zip"
+  rl_confidence_threshold: 0.6    # RL güven eşiği
+  ensemble_enabled: true          # Çoklu model oylaması aktif mi
+  ensemble_models: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b", "openrouter/openai/gpt-4o-mini"]
+  ensemble_min_consensus: 0.5     # Min konsensüs oranı (yüzde 50+)
 
 # ── Backtest ──────────────────────────────────────────────
 backtest:

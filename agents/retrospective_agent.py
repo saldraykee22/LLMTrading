@@ -286,7 +286,7 @@ class RetrospectiveAgent:
         news_context: str,
     ) -> dict[str, Any] | None:
         """
-        LLM'e kayıp işlem analizini gönderir.
+        LLM'e kayıp işlem analizini gönderir. JSON hatalarında retry yapar.
 
         Returns:
             Parsed JSON dict or None on failure.
@@ -314,30 +314,41 @@ class RetrospectiveAgent:
 ## News Context During Trade
 {news_context}
 
-Analyze this losing trade and return your findings as JSON."""
+Analyze this losing trade and return your findings as STRICT JSON."""
 
         messages = [
             SystemMessage(content=RETROSPECTIVE_SYSTEM_PROMPT),
             HumanMessage(content=user_message),
         ]
 
-        try:
-            response = self._llm.invoke(
-                messages,
-                max_tokens=self._params.limits.max_tokens_research,
-                response_format={"type": "json_object"},
-            )
-            raw_text = response.content
-        except Exception as e:
-            logger.error("LLM retrospektif hatası: %s", e)
-            return None
+        from utils.llm_retry import invoke_with_retry
+        from utils.json_utils import extract_json
 
-        result = extract_json(raw_text)
-        if "__parse_error__" in result:
-            logger.error("Retrospektif JSON parse başarısız")
-            return None
+        # Maksimum 3 deneme (JSON hatası dahil)
+        for attempt in range(3):
+            try:
+                response = invoke_with_retry(
+                    self._llm.invoke,
+                    messages,
+                    max_tokens=self._params.limits.max_tokens_research,
+                    response_format={"type": "json_object"},
+                    max_retries=2, # Her dış denemede 2 iç retry
+                )
+                raw_text = response.content
+                result = extract_json(raw_text)
 
-        return result
+                if "__parse_error__" not in result:
+                    return result
+
+                logger.warning(
+                    "Retrospektif JSON parse hatası (deneme %d/3): %s",
+                    attempt + 1,
+                    result.get("__parse_error__"),
+                )
+            except Exception as e:
+                logger.error("LLM retrospektif hatası (deneme %d/3): %s", attempt + 1, e)
+
+        return None
 
     def store_lesson(self, result: RetrospectiveResult, symbol: str) -> None:
         """

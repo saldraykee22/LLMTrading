@@ -31,6 +31,17 @@ const state = {
     logs: [],
 };
 
+// ── API Configuration ─────────────────────────────────────
+const API_KEY = window.DASHBOARD_API_KEY || localStorage.getItem('llm_dashboard_api_key') || null;
+
+function apiFetch(url, options = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (API_KEY) {
+        headers['X-API-Key'] = API_KEY;
+    }
+    return fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+}
+
 // ── Time Display ──────────────────────────────────────────
 function updateTime() {
     const now = new Date();
@@ -50,11 +61,11 @@ updateTime();
 async function loadLatestAnalysis() {
     try {
         const [portfolioRes, statusRes, tradesRes, allocRes, benchRes] = await Promise.all([
-            fetch('/api/portfolio'),
-            fetch('/api/status'),
-            fetch('/api/trades?limit=10'),
-            fetch('/api/portfolio_allocation'),
-            fetch('/api/benchmark'),
+            apiFetch('/api/portfolio'),
+            apiFetch('/api/status'),
+            apiFetch('/api/trades?limit=10'),
+            apiFetch('/api/portfolio_allocation'),
+            apiFetch('/api/benchmark'),
         ]);
 
         if (portfolioRes.ok) {
@@ -461,8 +472,423 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// ── Chart.js Instances ────────────────────────────────────
+let priceChart = null;
+let equityChart = null;
+let tradeHeatmapChart = null;
+let monteCarloChart = null;
+const equityHistory = [];
+
+function initCharts() {
+    const chartDefaults = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: { color: '#94a3b8', font: { family: "'Inter', sans-serif" } }
+            }
+        },
+        scales: {
+            x: {
+                ticks: { color: '#64748b' },
+                grid: { color: 'rgba(148,163,184,0.06)' }
+            },
+            y: {
+                ticks: { color: '#64748b' },
+                grid: { color: 'rgba(148,163,184,0.06)' }
+            }
+        }
+    };
+
+    const priceCtx = document.getElementById('priceChart');
+    if (priceCtx) {
+        priceChart = new Chart(priceCtx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Fiyat',
+                    data: [],
+                    borderColor: '#06b6d4',
+                    backgroundColor: 'rgba(6,182,212,0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                }]
+            },
+            options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v.toLocaleString() } } } }
+        });
+    }
+
+    const equityCtx = document.getElementById('equityChart');
+    if (equityCtx) {
+        equityChart = new Chart(equityCtx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Özvarlık',
+                    data: [],
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16,185,129,0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                }]
+            },
+            options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v.toLocaleString() } } } }
+        });
+    }
+
+    const tradeCtx = document.getElementById('tradeHeatmap');
+    if (tradeCtx) {
+        tradeHeatmapChart = new Chart(tradeCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'P&L',
+                    data: [],
+                    backgroundColor: [],
+                    borderWidth: 0,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                ...chartDefaults,
+                indexAxis: 'y',
+                plugins: {
+                    ...chartDefaults.plugins,
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+
+    const mcCtx = document.getElementById('monteCarloChart');
+    if (mcCtx) {
+        monteCarloChart = new Chart(mcCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Dağılım',
+                    data: [],
+                    backgroundColor: 'rgba(139,92,246,0.6)',
+                    borderColor: '#8b5cf6',
+                    borderWidth: 1,
+                    borderRadius: 2,
+                }]
+            },
+            options: {
+                ...chartDefaults,
+                plugins: {
+                    ...chartDefaults.plugins,
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+}
+
+function updatePriceChart(trades) {
+    if (!priceChart || !trades || trades.length === 0) return;
+    const sorted = [...trades].filter(t => t.exit_time).sort((a, b) => new Date(a.exit_time) - new Date(b.exit_time));
+    if (sorted.length === 0) return;
+    priceChart.data.labels = sorted.map(t => new Date(t.exit_time).toLocaleDateString('tr-TR'));
+    priceChart.data.datasets[0].data = sorted.map(t => t.exit_price);
+    priceChart.update('none');
+}
+
+function updateEquityChart(equity) {
+    if (!equityChart) return;
+    const now = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    equityHistory.push({ time: now, equity });
+    if (equityHistory.length > 100) equityHistory.shift();
+    equityChart.data.labels = equityHistory.map(e => e.time);
+    equityChart.data.datasets[0].data = equityHistory.map(e => e.equity);
+    equityChart.update('none');
+}
+
+function updateTradeHeatmap(trades) {
+    if (!tradeHeatmapChart || !trades || trades.length === 0) return;
+    const recent = trades.slice(-20);
+    tradeHeatmapChart.data.labels = recent.map(t => t.symbol || '?');
+    tradeHeatmapChart.data.datasets[0].data = recent.map(t => t.pnl || 0);
+    tradeHeatmapChart.data.datasets[0].backgroundColor = recent.map(t => (t.pnl || 0) >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)');
+    tradeHeatmapChart.update('none');
+}
+
+function updateMonteCarloChart(data) {
+    if (!monteCarloChart || !data || !data.histogram) return;
+    const hist = data.histogram;
+    monteCarloChart.data.labels = hist.map(h => '$' + h.bin.toLocaleString());
+    monteCarloChart.data.datasets[0].data = hist.map(h => h.count);
+    monteCarloChart.update('none');
+}
+
+// ── Tab Navigation ────────────────────────────────────────
+function initTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            const target = btn.getAttribute('data-tab');
+            if (target) document.getElementById(target)?.classList.add('active');
+        });
+    });
+}
+
+// ── V2 Data Fetchers ──────────────────────────────────────
+async function loadRLStatus() {
+    try {
+        const res = await apiFetch('/api/rl_status');
+        if (!res.ok) return;
+        const data = await res.json();
+        const conf = data.confidence || 0;
+        const confEl = document.getElementById('rlConfidenceValue');
+        if (confEl) confEl.textContent = conf.toFixed(2);
+        const versionEl = document.getElementById('rlModelVersion');
+        if (versionEl) versionEl.textContent = data.model_version || '—';
+        const episodesEl = document.getElementById('rlEpisodes');
+        if (episodesEl) episodesEl.textContent = data.total_episodes || '—';
+        const trainedEl = document.getElementById('rlLastTrained');
+        if (trainedEl) trainedEl.textContent = data.last_trained ? new Date(data.last_trained).toLocaleDateString('tr-TR') : '—';
+        const badgeEl = document.getElementById('rlStatusBadge');
+        if (badgeEl) {
+            badgeEl.textContent = data.model_loaded ? 'AKTİF' : 'PASİF';
+            badgeEl.className = 'rl-status-badge ' + (data.model_loaded ? 'active' : 'inactive');
+        }
+        const arc = document.getElementById('rlGaugeArc');
+        if (arc) {
+            const dashLen = Math.max(0, Math.min(1, conf)) * 251.2;
+            arc.setAttribute('stroke-dasharray', dashLen + ' 251.2');
+            const color = conf > 0.7 ? 'var(--accent-green)' : conf > 0.4 ? 'var(--accent-amber)' : 'var(--accent-red)';
+            arc.setAttribute('stroke', color);
+            if (confEl) confEl.style.color = color;
+        }
+    } catch (e) {
+        console.log('RL status yüklenemedi');
+    }
+}
+
+async function loadDriftHeatmap() {
+    try {
+        const res = await apiFetch('/api/drift_heatmap');
+        if (!res.ok) return;
+        const data = await res.json();
+        const container = document.getElementById('driftHeatmap');
+        if (!container) return;
+        const heatmap = data.heatmap || {};
+        const symbols = Object.keys(heatmap);
+        if (symbols.length === 0) {
+            container.innerHTML = '<div class="empty-state">Drift verisi bulunamadı</div>';
+            return;
+        }
+        const allDays = new Set();
+        symbols.forEach(s => Object.keys(heatmap[s]).forEach(d => allDays.add(d)));
+        const sortedDays = [...allDays].sort();
+        let html = '<div class="heatmap-grid"><div class="heatmap-header-cell"></div>';
+        sortedDays.forEach(d => {
+            html += `<div class="heatmap-header-cell">${d.slice(5)}</div>`;
+        });
+        symbols.forEach(symbol => {
+            html += `<div class="heatmap-label">${symbol}</div>`;
+            sortedDays.forEach(day => {
+                const val = heatmap[symbol]?.[day];
+                const color = val !== undefined ? getHeatmapColor(val) : 'var(--bg-secondary)';
+                const display = val !== undefined ? (val * 100).toFixed(0) + '%' : '—';
+                html += `<div class="heatmap-cell" style="background:${color}" title="${symbol} ${day}: ${display}">${display}</div>`;
+            });
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    } catch (e) {
+        console.log('Drift heatmap yüklenemedi');
+    }
+}
+
+function getHeatmapColor(val) {
+    if (val >= 0.7) return 'rgba(16,185,129,0.8)';
+    if (val >= 0.6) return 'rgba(16,185,129,0.5)';
+    if (val >= 0.5) return 'rgba(245,158,11,0.6)';
+    if (val >= 0.4) return 'rgba(245,158,11,0.8)';
+    return 'rgba(239,68,68,0.7)';
+}
+
+async function loadDriftSummary() {
+    try {
+        const res = await apiFetch('/api/drift_summary');
+        if (!res.ok) return;
+        const data = await res.json();
+        const container = document.getElementById('driftSummaryContent');
+        if (!container) return;
+        const perSymbol = data.per_symbol || {};
+        const symbols = Object.keys(perSymbol);
+        if (symbols.length === 0) {
+            container.innerHTML = '<div class="empty-state">Drift verisi bulunamadı</div>';
+            return;
+        }
+        let html = '<div class="drift-summary-bars">';
+        symbols.forEach(sym => {
+            const info = perSymbol[sym];
+            const acc = info.accuracy || 0;
+            const drift = info.significant_drift;
+            const worsening = info.worsening;
+            const accColor = acc > 0.6 ? 'var(--accent-green)' : acc > 0.5 ? 'var(--accent-amber)' : 'var(--accent-red)';
+            html += `
+                <div class="drift-bar">
+                    <div class="drift-bar-header">
+                        <span class="drift-symbol">${sym}</span>
+                        <span class="drift-accuracy" style="color:${accColor}">${(acc * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="drift-bar-track">
+                        <div class="drift-bar-fill" style="width:${acc * 100}%;background:${accColor}"></div>
+                    </div>
+                    <div class="drift-bar-badges">
+                        ${drift ? '<span class="drift-badge drift-warn">DRİFT</span>' : ''}
+                        ${worsening ? '<span class="drift-badge drift-worse">KÖTÜLEŞİYOR</span>' : ''}
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    } catch (e) {
+        console.log('Drift summary yüklenemedi');
+    }
+}
+
+async function loadMonteCarlo() {
+    try {
+        const res = await apiFetch('/api/monte_carlo');
+        if (!res.ok) return;
+        const data = await res.json();
+        const el = id => document.getElementById(id);
+        if (el('mcSimCount')) el('mcSimCount').textContent = data.simulations;
+        if (el('mcMean')) el('mcMean').textContent = formatCurrency(data.mean_final);
+        if (el('mcProbProfit')) el('mcProbProfit').textContent = ((data.probability_profit || 0) * 100).toFixed(1) + '%';
+        if (el('mcMin')) {
+            el('mcMin').textContent = formatCurrency(data.min_final);
+            el('mcMin').style.color = 'var(--accent-red)';
+        }
+        if (el('mcMax')) {
+            el('mcMax').textContent = formatCurrency(data.max_final);
+            el('mcMax').style.color = 'var(--accent-green)';
+        }
+        updateMonteCarloChart(data);
+        const percEl = el('mcPercentiles');
+        if (percEl && data.percentiles) {
+            const p = data.percentiles;
+            percEl.innerHTML = `
+                <div class="mc-percentile-row">
+                    <span>P5: ${formatCurrency(p.p5)}</span>
+                    <span>P25: ${formatCurrency(p.p25)}</span>
+                    <span>P50: ${formatCurrency(p.p50)}</span>
+                    <span>P75: ${formatCurrency(p.p75)}</span>
+                    <span>P95: ${formatCurrency(p.p95)}</span>
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.log('Monte Carlo yüklenemedi');
+    }
+}
+
+async function loadRAGQueries() {
+    try {
+        const res = await apiFetch('/api/rag_queries');
+        if (!res.ok) return;
+        const data = await res.json();
+        const container = document.getElementById('ragQueriesList');
+        if (!container) return;
+        const queries = data.queries || [];
+        if (queries.length === 0) {
+            container.innerHTML = '<div class="empty-state">RAG sorgusu bulunamadı</div>';
+            return;
+        }
+        let html = '';
+        queries.slice(0, 30).forEach(q => {
+            const accColor = q.accuracy > 0.6 ? 'var(--accent-green)' : q.accuracy > 0.4 ? 'var(--accent-amber)' : 'var(--accent-red)';
+            html += `
+                <div class="rag-query-item">
+                    <div class="rag-query-header">
+                        <span class="rag-query-symbol">${q.symbol}</span>
+                        <span class="rag-query-action">${q.action}</span>
+                        <span class="rag-query-accuracy" style="color:${accColor}">${(q.accuracy * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="rag-query-meta">
+                        <span>Rejim: ${q.market_regime}</span>
+                        <span>${q.timestamp ? new Date(q.timestamp).toLocaleString('tr-TR') : '—'}</span>
+                    </div>
+                    ${q.tags && q.tags.length ? `<div class="rag-query-tags">${q.tags.filter(t=>t).map(t => `<span class="rag-tag">${t}</span>`).join('')}</div>` : ''}
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    } catch (e) {
+        console.log('RAG sorguları yüklenemedi');
+    }
+}
+
+async function loadRetrospective() {
+    try {
+        const res = await apiFetch('/api/retrospective');
+        if (!res.ok) return;
+        const data = await res.json();
+        const container = document.getElementById('retroList');
+        if (!container) return;
+        const retros = data.retrospectives || [];
+        if (retros.length === 0) {
+            container.innerHTML = '<div class="empty-state">Retrospektif analiz bulunamadı</div>';
+            return;
+        }
+        let html = '';
+        retros.slice(0, 20).forEach(r => {
+            html += `
+                <div class="retro-item">
+                    <div class="retro-header">
+                        <span class="retro-symbol">${r.symbol}</span>
+                        <span class="retro-cause">${r.root_cause}</span>
+                        <span class="retro-accuracy">${(r.accuracy * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="retro-lesson">${escapeHtml(r.lesson)}</div>
+                    <div class="retro-meta">
+                        <span>Rejim: ${r.market_regime}</span>
+                        <span>Giriş: ${r.entry_quality}</span>
+                        <span>Çıkış: ${r.exit_quality}</span>
+                        <span>${r.timestamp ? new Date(r.timestamp).toLocaleString('tr-TR') : '—'}</span>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    } catch (e) {
+        console.log('Retrospektif yüklenemedi');
+    }
+}
+
 // ── Initialize ────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    initTabs();
+    initCharts();
     loadLatestAnalysis();
-    setInterval(loadLatestAnalysis, 5000); // 5 saniyede bir güncelle
+    loadRLStatus();
+    loadDriftHeatmap();
+    loadDriftSummary();
+    loadMonteCarlo();
+    loadRAGQueries();
+    loadRetrospective();
+    setInterval(loadLatestAnalysis, 5000);
+    setInterval(() => {
+        loadRLStatus();
+        loadDriftHeatmap();
+        loadDriftSummary();
+        loadMonteCarlo();
+        loadRAGQueries();
+        loadRetrospective();
+    }, 15000);
 });

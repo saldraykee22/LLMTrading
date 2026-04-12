@@ -57,10 +57,17 @@ class DynamicStopLoss:
     def calculate_hard_stop(
         self,
         entry_price: float,
+        side: str = "long",
     ) -> float:
-        """Sabit yüzdelik zarar-kes (son savunma hattı)."""
+        """Side-aware hard stop calculation"""
         pct = self._params.stop_loss.hard_stop_pct
-        return entry_price * (1 - pct)
+        
+        if side == "long":
+            return entry_price * (1 - pct)
+        elif side == "short":
+            return entry_price * (1 + pct)
+        else:
+            raise ValueError(f"Geçersiz side: {side}")
 
     def update_trailing_stop(
         self,
@@ -108,17 +115,22 @@ class DynamicStopLoss:
         """OHLCV DataFrame'inden ATR hesaplar."""
         p = period or self._params.stop_loss.atr_period
         if len(df) < p:
-            logger.warning("Yetersiz veri ATR hesaplama için (%d < %d)", len(df), p)
-            # Basit yaklaşım
             if len(df) > 0:
-                return float((df["high"] - df["low"]).mean())
-            return 0.0
+                # Geçici: Son 5 mumun ortalama range'i
+                recent = df.tail(min(5, len(df)))
+                return float((recent["high"] - recent["low"]).mean())
+            return 0.01 * float(df["close"].iloc[-1]) if not df.empty else 1.0  # %1 fallback
 
         atr = ta.atr(df["high"], df["low"], df["close"], length=p)
         if atr is not None and not atr.empty:
             val = float(atr.iloc[-1])
-            return val if not np.isnan(val) else 0.0
-        return 0.0
+            if not np.isnan(val) and val > 0:
+                return val
+
+        # Minimum ATR: fiyatın %0.5'i
+        fallback = 0.005 * float(df["close"].iloc[-1]) if not df.empty else 1.0
+        logger.warning(f"ATR hesaplanamadı, fallback: {fallback:.4f}")
+        return fallback
 
     def should_exit(
         self,

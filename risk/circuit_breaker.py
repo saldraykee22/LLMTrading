@@ -118,12 +118,13 @@ class CircuitBreaker:
         STOP_FILE.touch()
         logger.critical("Manuel durdurma aktif edildi (data/STOP oluşturuldu)")
 
-    @staticmethod
-    def resume() -> None:
+    def resume(self) -> None:
         """Manuel durdurmayı kaldırır ve sayaçları sıfırlar."""
         if STOP_FILE.exists():
             STOP_FILE.unlink()
-        logger.info("Manuel durdurma kaldırıldı")
+        self.consecutive_losses = 0
+        self.consecutive_llm_errors = 0
+        logger.info("Manuel durdurma kaldırıldı ve sayaçlar sıfırlandı")
 
     def get_status(self) -> dict:
         """Circuit breaker durumu."""

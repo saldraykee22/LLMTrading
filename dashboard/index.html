@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="app">
@@ -60,6 +61,27 @@
                 </div>
             </section>
 
+            <!-- Benchmark -->
+            <section class="card card-benchmark">
+                <div class="card-header">
+                    <h2>📊 Benchmark</h2>
+                </div>
+                <div class="benchmark-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Benchmark</span>
+                        <span class="stat-value" id="benchmarkSymbol">BTC/USDT</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Getiri</span>
+                        <span class="stat-value" id="benchmarkReturn">0.00%</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Alpha</span>
+                        <span class="stat-value" id="alphaValue">0.00%</span>
+                    </div>
+                </div>
+            </section>
+
             <!-- Active Positions -->
             <section class="card card-positions">
                 <div class="card-header">
@@ -79,7 +101,7 @@
                 <div class="sentiment-display">
                     <div class="sentiment-gauge" id="sentimentGauge">
                         <div class="gauge-fill" id="gaugeFill"></div>
-                        <span class="gauge-value" id="sentimentScore">0.00</span>
+                        <span class="gauge-value" id="sentimentValue">0.00</span>
                     </div>
                     <div class="sentiment-details">
                         <div class="detail-row">
@@ -186,6 +208,170 @@
                 </div>
             </section>
         </main>
+
+        <!-- V2 Tabs -->
+        <div class="v2-tabs">
+            <button class="tab-btn active" data-tab="tab-charts">📈 Grafikler</button>
+            <button class="tab-btn" data-tab="tab-rl">🤖 RL Model</button>
+            <button class="tab-btn" data-tab="tab-drift">🔍 Drift Analizi</button>
+            <button class="tab-btn" data-tab="tab-montecarlo">🎲 Monte Carlo</button>
+            <button class="tab-btn" data-tab="tab-rag">💾 RAG Sorguları</button>
+            <button class="tab-btn" data-tab="tab-retro">📖 Retrospektif</button>
+        </div>
+
+        <div class="v2-tab-content">
+            <!-- Charts Tab -->
+            <div class="tab-pane active" id="tab-charts">
+                <div class="charts-grid">
+                    <div class="card card-chart">
+                        <div class="card-header">
+                            <h2>📊 Fiyat Grafiği</h2>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="priceChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card card-chart">
+                        <div class="card-header">
+                            <h2>💹 Özvarlık Eğrisi</h2>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="equityChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card card-chart">
+                        <div class="card-header">
+                            <h2>📈 İşlem Geçmişi</h2>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="tradeHeatmap"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RL Tab -->
+            <div class="tab-pane" id="tab-rl">
+                <div class="charts-grid">
+                    <div class="card card-rl-status">
+                        <div class="card-header">
+                            <h2>🤖 RL Model Durumu</h2>
+                            <span class="rl-status-badge" id="rlStatusBadge">—</span>
+                        </div>
+                        <div class="rl-gauge-container">
+                            <div class="rl-gauge">
+                                <svg viewBox="0 0 200 120" class="gauge-svg">
+                                    <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12" stroke-linecap="round"/>
+                                    <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="var(--accent-green)" stroke-width="12" stroke-linecap="round" id="rlGaugeArc" stroke-dasharray="0 251.2"/>
+                                </svg>
+                                <div class="rl-gauge-value" id="rlConfidenceValue">0.00</div>
+                            </div>
+                            <div class="rl-details">
+                                <div class="rl-detail-row">
+                                    <span>Model Versiyonu</span>
+                                    <span id="rlModelVersion">—</span>
+                                </div>
+                                <div class="rl-detail-row">
+                                    <span>Toplam Episode</span>
+                                    <span id="rlEpisodes">—</span>
+                                </div>
+                                <div class="rl-detail-row">
+                                    <span>Son Eğitim</span>
+                                    <span id="rlLastTrained">—</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Drift Tab -->
+            <div class="tab-pane" id="tab-drift">
+                <div class="charts-grid">
+                    <div class="card card-drift-summary">
+                        <div class="card-header">
+                            <h2>🔍 Drift Özeti</h2>
+                        </div>
+                        <div id="driftSummaryContent">
+                            <div class="empty-state">Veri bekleniyor</div>
+                        </div>
+                    </div>
+                    <div class="card card-drift-heatmap">
+                        <div class="card-header">
+                            <h2>🌡️ Drift Heatmap (30 Gün)</h2>
+                        </div>
+                        <div class="heatmap-container" id="driftHeatmap">
+                            <div class="empty-state">Veri bekleniyor</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monte Carlo Tab -->
+            <div class="tab-pane" id="tab-montecarlo">
+                <div class="charts-grid">
+                    <div class="card card-monte-carlo">
+                        <div class="card-header">
+                            <h2>🎲 Monte Carlo Simülasyonu</h2>
+                        </div>
+                        <div class="mc-stats" id="mcStats">
+                            <div class="mc-stat-item">
+                                <span>Simülasyon</span>
+                                <span id="mcSimCount">1000</span>
+                            </div>
+                            <div class="mc-stat-item">
+                                <span>Ortalama Son</span>
+                                <span id="mcMean">$0</span>
+                            </div>
+                            <div class="mc-stat-item">
+                                <span>Kar Olasılığı</span>
+                                <span id="mcProbProfit">0%</span>
+                            </div>
+                            <div class="mc-stat-item">
+                                <span>Min Son</span>
+                                <span id="mcMin">$0</span>
+                            </div>
+                            <div class="mc-stat-item">
+                                <span>Max Son</span>
+                                <span id="mcMax">$0</span>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="monteCarloChart"></canvas>
+                        </div>
+                        <div class="mc-percentiles" id="mcPercentiles"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RAG Tab -->
+            <div class="tab-pane" id="tab-rag">
+                <div class="charts-grid">
+                    <div class="card card-rag-queries">
+                        <div class="card-header">
+                            <h2>💾 RAG Sorgu Geçmişi</h2>
+                        </div>
+                        <div class="rag-queries-list" id="ragQueriesList">
+                            <div class="empty-state">Veri bekleniyor</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Retrospective Tab -->
+            <div class="tab-pane" id="tab-retro">
+                <div class="charts-grid">
+                    <div class="card card-retrospective">
+                        <div class="card-header">
+                            <h2>📖 Retrospektif Analizler</h2>
+                        </div>
+                        <div class="retro-list" id="retroList">
+                            <div class="empty-state">Veri bekleniyor</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="app.js"></script>
 </body>

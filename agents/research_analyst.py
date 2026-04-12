@@ -87,14 +87,15 @@ def research_analyst_node(state: TradingState) -> dict[str, Any]:
 
     # ── RAG Hafıza Sorgusu (Geçmiş Senaryolar) ────────────
     from data.vector_store import AgentMemoryStore
+
     memory_store = AgentMemoryStore()
     historical_context = memory_store.query_similar_conditions(state, n_results=3)
 
     # ── 2. Kapsamlı Araştırma Raporu ──────────────────────
-    research_prompt_path = PROMPTS_DIR / "research_analyst.txt"
-    system_prompt = ""
-    if research_prompt_path.exists():
-        system_prompt = research_prompt_path.read_text(encoding="utf-8")
+    from agents.prompt_evolver import PromptEvolver
+
+    evolver = PromptEvolver()
+    system_prompt = evolver.get_current_prompt("research_analyst")
 
     tech = state.get("technical_signals", {})
     market = state.get("market_data", {})
@@ -135,12 +136,24 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
             base_delay=2.0,
         )
         research_result = extract_json(response.content)
+        if research_result.get("__parse_error__"):
+            logger.warning(
+                "Research LLM JSON parse hatası: %s",
+                research_result.get("__raw_text__", "")[:200],
+            )
+            research_result = {
+                "recommendation": "hold",
+                "confidence": 0.3,
+                "reasoning": f"LLM çıktı parse edilemedi: {research_result.get('__raw_text__', '')[:200]}",
+                "parse_error": True,
+            }
     except Exception as e:
         logger.error("Araştırma raporu hatası: %s", e)
         research_result = {
             "recommendation": "hold",
             "confidence": 0.3,
             "reasoning": f"Araştırma raporu oluşturulamadı: {e}",
+            "parse_error": True,
         }
 
     analyst_msg = (

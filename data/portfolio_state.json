@@ -10,18 +10,18 @@
       "side": "long",
       "stop_loss": 65000,
       "take_profit": 72000,
-      "current_price": 67000,
-      "unrealized_pnl": 0.0,
-      "unrealized_pnl_pct": 0.0
+      "current_price": 69974.27,
+      "unrealized_pnl": 148.7135000000002,
+      "unrealized_pnl_pct": 0.04439208955223887
     }
   ],
   "closed_trades": [],
   "daily_pnl": 0.0,
-  "daily_pnl_date": "2026-04-04",
+  "daily_pnl_date": "2026-04-06",
   "total_pnl": 0.0,
-  "max_equity": 10000.0,
+  "max_equity": 10148.7135,
   "current_drawdown": 0.0,
   "benchmark_symbol": "BTC/USDT",
-  "benchmark_return": -0.054580189207686494,
-  "alpha": 0.054580189207686494
+  "benchmark_return": -0.012569718738266207,
+  "alpha": 0.02744106873826619
 }

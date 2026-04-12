@@ -7,6 +7,7 @@ Reusable retry wrapper for all agent LLM calls.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Any, Callable
 
@@ -47,6 +48,7 @@ def invoke_with_retry(
             last_error = e
             if attempt < max_retries - 1:
                 delay = min(base_delay * (2**attempt), max_delay)
+                delay *= random.uniform(0.5, 1.5)
                 logger.warning(
                     "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1,
