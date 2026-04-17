@@ -1,14 +1,14 @@
-"""
+﻿"""
 LLM Trading System - Health Check Script
 ==========================================
-Sistem sağlık kontrolü - Başlangıç validasyonu
-Kullanım: python scripts/health_check.py
+Sistem saÄŸlÄ±k kontrolÃ¼ - BaÅŸlangÄ±Ã§ validasyonu
+KullanÄ±m: python scripts/health_check.py
 """
 
 import sys
 from pathlib import Path
 
-# Proje kökünü path'e ekle
+# Proje kÃ¶kÃ¼nÃ¼ path'e ekle
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -17,18 +17,18 @@ def check_python_version() -> dict:
     """Python versiyonunu kontrol et."""
     return {
         "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "status": "✅" if sys.version_info >= (3, 10) else "❌",
+        "status": "OK" if sys.version_info >= (3, 10) else "FAIL",
     }
 
 
 def check_dependencies() -> dict:
-    """Kritik kütüphaneleri kontrol et."""
+    """Kritik kÃ¼tÃ¼phaneleri kontrol et."""
     results = {}
     
     critical_packages = {
-        "ccxt": "Borsa bağlantısı",
+        "ccxt": "Borsa baÄŸlantÄ±sÄ±",
         "langchain": "LLM framework",
-        "chromadb": "Vektör veritabanı",
+        "chromadb": "VektÃ¶r veritabanÄ±",
         "pydantic": "Config validation",
         "pandas": "Data analysis",
         "rich": "Console output",
@@ -38,21 +38,21 @@ def check_dependencies() -> dict:
         try:
             mod = __import__(pkg)
             version = getattr(mod, "__version__", "unknown")
-            results[pkg] = f"✅ {version}"
+            results[pkg] = f"OK {version}"
         except ImportError:
-            results[pkg] = f"❌ MISSING ({desc})"
+            results[pkg] = f"MISSING ({desc})"
     
     return results
 
 
 def check_env_file() -> dict:
-    """.env dosyasını kontrol et."""
+    """.env dosyasÄ±nÄ± kontrol et."""
     env_file = PROJECT_ROOT / ".env"
     
     if not env_file.exists():
-        return {"status": "❌", "message": ".env dosyası bulunamadı"}
+        return {"status": "âŒ", "message": ".env dosyasÄ± bulunamadÄ±"}
     
-    # API anahtarlarının varlığını kontrol et
+    # API anahtarlarÄ±nÄ±n varlÄ±ÄŸÄ±nÄ± kontrol et
     content = env_file.read_text()
     
     checks = {
@@ -62,17 +62,17 @@ def check_env_file() -> dict:
     
     results = []
     for key, present in checks.items():
-        status = "✅" if present else "⚠️ "
+        status = "OK" if present else "WARN"
         results.append(f"{status} {key}")
     
     return {
-        "status": "✅" if all(checks.values()) else "⚠️ ",
+        "status": "OK" if all(checks.values()) else "WARN",
         "details": results,
     }
 
 
 def check_api_keys() -> dict:
-    """API anahtarlarını kontrol et (değerleri göstermeden)."""
+    """API anahtarlarÄ±nÄ± kontrol et (deÄŸerleri gÃ¶stermeden)."""
     try:
         from config.settings import get_settings
         
@@ -86,7 +86,7 @@ def check_api_keys() -> dict:
         
         results = {}
         for provider, has_key in checks.items():
-            results[provider] = "✅" if has_key else "❌"
+            results[provider] = "âœ…" if has_key else "âŒ"
         
         return results
     except Exception as e:
@@ -94,7 +94,7 @@ def check_api_keys() -> dict:
 
 
 def check_directories() -> dict:
-    """Gerekli klasörlerin varlığını kontrol et."""
+    """Gerekli klasÃ¶rlerin varlÄ±ÄŸÄ±nÄ± kontrol et."""
     from config.settings import DATA_DIR, LOGS_DIR
     
     dirs = {
@@ -116,13 +116,13 @@ def check_directories() -> dict:
         except Exception:
             writable = False
         
-        results[name] = "✅" if writable else "❌"
+        results[name] = "âœ…" if writable else "âŒ"
     
     return results
 
 
 def check_exchange_connection() -> dict:
-    """Borsa bağlantısını test et (sadece ping)."""
+    """Borsa baÄŸlantÄ±sÄ±nÄ± test et (sadece ping)."""
     try:
         from config.settings import get_settings, get_trading_params
         from execution.exchange_client import ExchangeClient
@@ -130,25 +130,25 @@ def check_exchange_connection() -> dict:
         settings = get_settings()
         params = get_trading_params()
         
-        # Paper trading modunda mı?
+        # Paper trading modunda mÄ±?
         if params.execution.mode.value == "paper":
-            return {"status": "✅", "mode": "PAPER TRADING"}
+            return {"status": "âœ…", "mode": "PAPER TRADING"}
         
-        # Live mode - bağlantı testi
+        # Live mode - baÄŸlantÄ± testi
         client = ExchangeClient()
         balance = client.get_balance()
         
         if "error" in balance:
-            return {"status": "❌", "error": balance["error"]}
+            return {"status": "âŒ", "error": balance["error"]}
         
-        return {"status": "✅", "mode": "LIVE TRADING"}
+        return {"status": "âœ…", "mode": "LIVE TRADING"}
     
     except Exception as e:
-        return {"status": "❌", "error": str(e)}
+        return {"status": "âŒ", "error": str(e)}
 
 
 def check_chromadb() -> dict:
-    """ChromaDB bağlantısını test et."""
+    """ChromaDB baÄŸlantÄ±sÄ±nÄ± test et."""
     try:
         from data.vector_store import AgentMemoryStore
         
@@ -156,12 +156,12 @@ def check_chromadb() -> dict:
         collection = store.collection
         
         if collection is None:
-            return {"status": "❌", "error": "Collection oluşturulamadı"}
+            return {"status": "âŒ", "error": "Collection oluÅŸturulamadÄ±"}
         
-        return {"status": "✅", "collection": collection.name}
+        return {"status": "âœ…", "collection": collection.name}
     
     except Exception as e:
-        return {"status": "❌", "error": str(e)}
+        return {"status": "âŒ", "error": str(e)}
 
 
 def main():
@@ -176,7 +176,7 @@ def main():
         Panel(
             "[bold cyan]LLM Trading System - Health Check[/bold cyan]\n"
             f"Path: {PROJECT_ROOT}",
-            title="🔍 Sistem Sağlık Kontrolü",
+            title="[bold]Sistem SaÄŸlÄ±k KontrolÃ¼[/bold]",
             border_style="cyan",
         )
     )
@@ -187,15 +187,15 @@ def main():
     console.print("\n[bold]1. Python Version[/bold]")
     py_result = check_python_version()
     console.print(f"   {py_result['status']} Python {py_result['version']}")
-    if py_result['status'] == "❌":
+    if py_result['status'] == "âŒ":
         all_passed = False
     
     # 2. Dependencies
-    console.print("\n[bold]2. Kritik Kütüphaneler[/bold]")
+    console.print("\n[bold]2. Kritik KÃ¼tÃ¼phaneler[/bold]")
     dep_results = check_dependencies()
     for pkg, status in dep_results.items():
         console.print(f"   {pkg:15s}: {status}")
-        if "❌" in status:
+        if "âŒ" in status:
             all_passed = False
     
     # 3. Environment
@@ -206,23 +206,23 @@ def main():
         console.print(f"   {detail}")
     
     # 4. API Keys
-    console.print("\n[bold]4. API Anahtarları[/bold]")
+    console.print("\n[bold]4. API AnahtarlarÄ±[/bold]")
     api_result = check_api_keys()
     if "error" in api_result:
-        console.print(f"   ❌ Error: {api_result['error']}")
+        console.print(f"   âŒ Error: {api_result['error']}")
         all_passed = False
     else:
         for provider, status in api_result.items():
             console.print(f"   {provider:15s}: {status}")
-            if status == "❌":
+            if status == "âŒ":
                 all_passed = False
     
     # 5. Directories
-    console.print("\n[bold]5. Klasörler ve İzinler[/bold]")
+    console.print("\n[bold]5. KlasÃ¶rler ve Ä°zinler[/bold]")
     dir_result = check_directories()
     for name, status in dir_result.items():
         console.print(f"   {name:15s}: {status}")
-        if status == "❌":
+        if status == "âŒ":
             all_passed = False
     
     # 6. ChromaDB
@@ -236,7 +236,7 @@ def main():
         all_passed = False
     
     # 7. Exchange Connection
-    console.print("\n[bold]7. Borsa Bağlantısı[/bold]")
+    console.print("\n[bold]7. Borsa BaÄŸlantÄ±sÄ±[/bold]")
     exchange_result = check_exchange_connection()
     console.print(f"   Status: {exchange_result['status']}")
     if "mode" in exchange_result:
@@ -248,14 +248,15 @@ def main():
     # Final Summary
     console.print("\n" + "=" * 60)
     if all_passed:
-        console.print("[bold green]✅ TÜM KONTROLLER BAŞARILI - Sistem hazır![/bold green]")
+        console.print("[bold green]âœ… TÃœM KONTROLLER BAÅARILI - Sistem hazÄ±r![/bold green]")
         sys.exit(0)
     else:
         console.print(
-            "[bold red]❌ BAZI KONTROLLER BAŞARISIZ - Lütfen yukarıdaki hataları düzeltin.[/bold red]"
+            "[bold red]âŒ BAZI KONTROLLER BAÅARISIZ - LÃ¼tfen yukarÄ±daki hatalarÄ± dÃ¼zeltin.[/bold red]"
         )
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+
