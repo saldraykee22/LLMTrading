@@ -1,96 +1,96 @@
 @echo off
-title LLM Trading System - Launcher
+title LLM Trading System - Başlatıcı
 
-:: LLM Trading System - Easy Launcher Script
-:: ===========================================
+:: LLM Trading System - Kolay Başlatma Scripti
+:: =============================================
 
 echo.
 echo +====================================================================+
-echo ^|           LLM TRADING SYSTEM - LAUNCHER                            ^|
+echo ^|           LLM TRADING SYSTEM - BAŞLATICI                           ^|
 echo ^|                     v2.0.0                                         ^|
 echo +====================================================================+
 echo.
 
-:: Check Python installation
+:: Python kurulumunu kontrol et
 where python >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python not found! Please install Python 3.10+.
+    echo [HATA] Python bulunamadı! Lütfen Python 3.10+ yükleyin.
     echo https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-echo [INFO] Python found: 
+echo [BİLGİ] Python bulundu: 
 python --version
 echo.
 
-:: Virtual environment check
+:: Virtual environment kontrolü
 if not exist "venv\Scripts\activate.bat" (
-    echo [WARN] Virtual environment not found!
-    echo Creating...
+    echo [UYARI] Virtual environment bulunamadı!
+    echo Oluşturuluyor...
     python -m venv venv
-    echo [INFO] Virtual environment created.
+    echo [BİLGİ] Virtual environment oluşturuldu.
     echo.
 )
 
-:: Activate virtual environment
-echo [INFO] Activating virtual environment...
+:: Virtual environment aktif et
+echo [BİLGİ] Virtual environment aktif ediliyor...
 call venv\Scripts\activate.bat
 echo.
 
-:: Check dependencies
-echo [INFO] Checking dependencies...
+:: Bağımlılıkları kontrol et
+echo [BİLGİ] Bağımlılıklar kontrol ediliyor...
 if exist "requirements.txt" (
     pip install -q -r requirements.txt
-    echo [OK] Dependencies installed.
+    echo [TAMAM] Bağımlılıklar yüklü.
 )
 echo.
 
-:: Main menu
+:: Ana menü
 :MENU
 cls
 echo.
 echo +====================================================================+
-echo ^|                        MAIN MENU                                   ^|
+echo ^|                        ANA MENÜ                                    ^|
 echo +====================================================================+
 echo.
-echo  1) Health Check
-echo  2) Paper Trading - BTC/USDT (1H candles)
-echo  3) Paper Trading - BTC/USDT (15M candles)
-echo  4) Paper Trading - Custom
-echo  5) Live Trading (CAUTION!)
-echo  6) Run Backtest
-echo  7) Portfolio Status
-echo  8) Test Suite
-echo  9) Show Logs
+echo  1) Sağlık Kontrolü
+echo  2) Sanal Trading - BTC/USDT (1 saatlik mumlar)
+echo  3) Sanal Trading - BTC/USDT (15 dakikalık mumlar)
+echo  4) Sanal Trading - Özelleştirilmiş
+echo  5) Canlı Trading (DİKKAT!)
+echo  6) Geriye Dönük Test
+echo  7) Portföy Durumu
+echo  8) Test Paketi
+echo  9) Kayıtları Göster
 echo.
-echo  0) Exit
+echo  0) Çıkış
 echo.
 echo ====================================================================
 echo.
 
-set /p choice="Your choice (0-9): "
+set /p choice="Seçiminiz (0-9): "
 
-if "%choice%"=="1" goto HEALTH_CHECK
-if "%choice%"=="2" goto PAPER_TRADING_1H
-if "%choice%"=="3" goto PAPER_TRADING_15M
-if "%choice%"=="4" goto PAPER_TRADING_CUSTOM
-if "%choice%"=="5" goto LIVE_TRADING
+if "%choice%"=="1" goto SAGLIK
+if "%choice%"=="2" goto SANAL_1H
+if "%choice%"=="3" goto SANAL_15M
+if "%choice%"=="4" goto SANAL_OZEL
+if "%choice%"=="5" goto CANLI
 if "%choice%"=="6" goto BACKTEST
-if "%choice%"=="7" goto PORTFOLIO
-if "%choice%"=="8" goto TESTS
-if "%choice%"=="9" goto LOGS
-if "%choice%"=="0" goto EXIT
+if "%choice%"=="7" goto PORTFOY
+if "%choice%"=="8" goto TESTLER
+if "%choice%"=="9" goto KAYITLAR
+if "%choice%"=="0" goto CIKIS
 
-echo [ERROR] Invalid choice!
+echo [HATA] Geçersiz seçim!
 timeout /t 2 >nul
 goto MENU
 
-:HEALTH_CHECK
+:SAGLIK
 cls
 echo.
 echo ====================================================================
-echo          RUNNING HEALTH CHECK...
+echo          SAĞLIK KONTROLÜ ÇALIŞTIRILIYOR...
 echo ====================================================================
 echo.
 python scripts\health_check.py
@@ -98,88 +98,88 @@ echo.
 pause
 goto MENU
 
-:PAPER_TRADING_1H
+:SANAL_1H
 cls
 echo.
 echo ====================================================================
-echo     PAPER TRADING - BTC/USDT (1 Hour Candles)
+echo     SANAL TRADING - BTC/USDT (1 Saatlik Mumlar)
 echo ====================================================================
 echo.
-echo [INFO] Starting bot... (Press Ctrl+C to stop)
+echo [BİLGİ] Bot başlatılıyor... (Ctrl+C ile durdurabilirsiniz)
 echo.
 python scripts\run_live.py --symbol BTC/USDT --interval 1h --watchdog
 goto MENU
 
-:PAPER_TRADING_15M
+:SANAL_15M
 cls
 echo.
 echo ====================================================================
-echo    PAPER TRADING - BTC/USDT (15 Minute Candles)
+echo    SANAL TRADING - BTC/USDT (15 Dakikalık Mumlar)
 echo ====================================================================
 echo.
-echo [INFO] Starting bot... (Press Ctrl+C to stop)
+echo [BİLGİ] Bot başlatılıyor... (Ctrl+C ile durdurabilirsiniz)
 echo.
 python scripts\run_live.py --symbol BTC/USDT --interval 15m --watchdog
 goto MENU
 
-:PAPER_TRADING_CUSTOM
+:SANAL_OZEL
 cls
 echo.
 echo ====================================================================
-echo      CUSTOM PAPER TRADING
+echo      ÖZELLEŞTİRİLMİŞ SANAL TRADING
 echo ====================================================================
 echo.
-set /p custom_symbol="Symbol (e.g., BTC/USDT, ETH/USDT): "
-set /p custom_interval="Interval (5m, 15m, 30m, 1h, 4h): "
-set /p custom_watchdog="Watchdog active? (y/n): "
+set /p custom_symbol="Sembol (örn: BTC/USDT, ETH/USDT): "
+set /p custom_interval="Aralık (5m, 15m, 30m, 1h, 4h): "
+set /p custom_watchdog="Bekçi aktif mi? (e/h): "
 
 echo.
-echo [INFO] Starting bot...
-echo Symbol: %custom_symbol%
-echo Interval: %custom_interval%
+echo [BİLGİ] Bot başlatılıyor...
+echo Sembol: %custom_symbol%
+echo Aralık: %custom_interval%
 
-if /i "%custom_watchdog%"=="y" (
+if /i "%custom_watchdog%"=="e" (
     python scripts\run_live.py --symbol %custom_symbol% --interval %custom_interval% --watchdog
 ) else (
     python scripts\run_live.py --symbol %custom_symbol% --interval %custom_interval%
 )
 goto MENU
 
-:LIVE_TRADING
+:CANLI
 cls
 echo.
 echo ====================================================================
-echo           WARNING - LIVE TRADING MODE
+echo           ⚠️  CANLI TRADING UYARISI ⚠️  
 echo ====================================================================
 echo.
-echo This mode trades REAL money!
+echo Bu mod GERÇEK para ile işlem yapar!
 echo.
-echo Before continuing, please verify:
+echo Devam etmeden önce lütfen aşağıdakileri doğrulayın:
 echo.
-echo [ ] 1. TRADING_MODE=live in .env file
-echo [ ] 2. CONFIRM_LIVE_TRADE=true in .env file
-echo [ ] 3. Binance API keys are correct and active
-echo [ ] 4. API permissions: Spot Trading ENABLED
-echo [ ] 5. Withdraw permission: DISABLED (security!)
-echo [ ] 6. Starting with small amount
+echo [ ] 1. .env dosyasında TRADING_MODE=live ayarlı
+echo [ ] 2. .env dosyasında CONFIRM_LIVE_TRADE=true ayarlı
+echo [ ] 3. Binance API anahtarları doğru ve aktif
+echo [ ] 4. API anahtarı izinleri: Spot Trading AKTİF
+echo [ ] 5. Withdraw (para çekme) izni: KAPALI (güvenlik!)
+echo [ ] 6. Küçük bir miktar ile test edeceksiniz
 echo.
-set /p confirm="I verified all items and accept risks (y/n): "
+set /p confirm="Tüm maddeleri doğruladım ve riskleri kabul ediyorum (e/h): "
 
-if /i not "%confirm%"=="y" (
+if /i not "%confirm%"=="e" (
     echo.
-    echo [CANCEL] Live trading cancelled.
+    echo [İPTAL] Canlı trading iptal edildi.
     timeout /t 2 >nul
     goto MENU
 )
 
 echo.
-set /p live_symbol="Live trading symbol (e.g., BTC/USDT): "
-set /p live_interval="Interval (15m, 30m, 1h, 4h): "
+set /p live_symbol="Canlı işlem sembolü (örn: BTC/USDT): "
+set /p live_interval="Aralık (15m, 30m, 1h, 4h): "
 
 echo.
-echo [WARNING] LIVE TRADING STARTING!
-echo Symbol: %live_symbol%
-echo Interval: %live_interval%
+echo [UYARI] CANLI İŞLEM BAŞLATILIYOR!
+echo Sembol: %live_symbol%
+echo Aralık: %live_interval%
 echo.
 timeout /t 3 >nul
 
@@ -190,11 +190,11 @@ goto MENU
 cls
 echo.
 echo ====================================================================
-echo              RUNNING BACKTEST...
+echo              GERİYE DÖNÜK TEST ÇALIŞTIRILIYOR...
 echo ====================================================================
 echo.
-set /p bt_symbol="Symbol (e.g., BTC/USDT): "
-set /p bt_days="Historical days (e.g., 90): "
+set /p bt_symbol="Sembol (örn: BTC/USDT): "
+set /p bt_days="Geçmiş gün sayısı (örn: 90): "
 
 echo.
 python scripts\run_backtest.py --symbol %bt_symbol% --days %bt_days%
@@ -202,27 +202,27 @@ echo.
 pause
 goto MENU
 
-:PORTFOLIO
+:PORTFOY
 cls
 echo.
 echo ====================================================================
-echo              PORTFOLIO STATUS
+echo              PORTFÖY DURUMU
 echo ====================================================================
 echo.
 if exist "data\portfolio_state.json" (
     type data\portfolio_state.json
 ) else (
-    echo [INFO] No open positions yet.
+    echo [BİLGİ] Henüz açık pozisyon yok.
 )
 echo.
 pause
 goto MENU
 
-:TESTS
+:TESTLER
 cls
 echo.
 echo ====================================================================
-echo              RUNNING TEST SUITE...
+echo              TEST PAKETİ ÇALIŞTIRILIYOR...
 echo ====================================================================
 echo.
 python -m pytest tests/test_integration.py -v --tb=short
@@ -230,32 +230,32 @@ echo.
 pause
 goto MENU
 
-:LOGS
+:KAYITLAR
 cls
 echo.
 echo ====================================================================
-echo              RECENT LOGS
+echo              SON KAYIT SATIRLARI
 echo ====================================================================
 echo.
 if exist "logs\trading.log" (
     powershell -Command "Get-Content logs\trading.log -Tail 50"
 ) else (
-    echo [INFO] No log file created yet.
+    echo [BİLGİ] Henüz kayıt dosyası oluşturulmadı.
 )
 echo.
 pause
 goto MENU
 
-:EXIT
+:CIKIS
 cls
 echo.
 echo ====================================================================
 echo              LLM TRADING SYSTEM
-echo                   SHUTTING DOWN...
+echo                   KAPANIYOR...
 echo ====================================================================
 echo.
-echo [INFO] System shut down safely.
-echo Goodbye!
+echo [BİLGİ] Sistem güvenli şekilde kapatıldı.
+echo İyi işlemler! 👋
 echo.
 timeout /t 2 >nul
 exit /b 0
