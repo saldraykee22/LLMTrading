@@ -202,10 +202,13 @@ def cmd_scan(args) -> int:
     print_header("PİYASA TARAMASI")
     
     scanner = MarketScanner()
-    scout = LeadScout()
     
     print_section("Adaylar Taraniyor...")
-    candidates = scanner.get_candidates()
+    try:
+        candidates = scanner.get_candidates()
+    except Exception as e:
+        console.print(f"[red]✗ Tarama hatası: {e}[/red]")
+        return 1
     
     if not candidates:
         console.print("[yellow]⚠ Kriterlere uygun aday bulunamadı.[/yellow]")
@@ -215,25 +218,29 @@ def cmd_scan(args) -> int:
     
     print_section("En İyi Adaylar")
     
-    selected = scout.select_best_candidates(candidates)
-    
     table = Table(title="Önerilen Varlıklar", show_header=True, header_style="bold cyan")
     table.add_column("Sembol", style="bold")
+    table.add_column("Fiyat", justify="right")
     table.add_column("24h Hacim", justify="right")
     table.add_column("24h Değişim", justify="right")
-    table.add_column("Skor", justify="right")
+    table.add_column("Kalite Skor", justify="right")
     
-    for candidate in selected[:10]:
-        volume = candidate.get("volume_24h", 0)
-        change = candidate.get("price_change_24h", 0)
-        score = candidate.get("score", 0)
-        
-        table.add_row(
-            candidate.get("symbol", "N/A"),
-            f"${volume:,.0f}",
-            f"{change:+.2f}%",
-            f"{score:.2f}",
-        )
+    for candidate in candidates[:10]:
+        # Scanner'dan dönen format: symbol, price, change_24h, volume_24h, quality_score
+        if isinstance(candidate, dict):
+            symbol = candidate.get("symbol", "N/A")
+            price = candidate.get("price", 0)
+            volume = candidate.get("volume_24h", 0)
+            change = candidate.get("change_24h", 0)
+            score = candidate.get("quality_score", 0)
+            
+            table.add_row(
+                symbol,
+                f"${price:,.4f}",
+                f"${volume:,.0f}",
+                f"{change:+.2f}%",
+                f"{score:.1f}",
+            )
     
     console.print(table)
     print()
