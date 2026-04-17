@@ -23,6 +23,7 @@ import signal
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,8 @@ from risk.portfolio import PortfolioState
 from risk.circuit_breaker import CircuitBreaker
 from risk.watchdog import Watchdog
 from data.market_hours import MarketHours
+from data.scanner import MarketScanner
+from agents.lead_scout import LeadScout
 
 console = Console()
 
@@ -207,7 +210,7 @@ def run_pipeline(
                         )
                         exec_res = client.execute_order(order, current_price_for_check)
                         if exec_res.get("status") in ("filled", "closed", "open"):
-                            portfolio.close_position(
+                            portfolio.close_position_safe(
                                 pos.symbol,
                                 float(exec_res.get("price") or current_price_for_check),
                             )
@@ -231,7 +234,7 @@ def run_pipeline(
                         )
                         exec_res = client.execute_order(order, current_price_for_check)
                         if exec_res.get("status") in ("filled", "closed", "open"):
-                            portfolio.close_position(
+                            portfolio.close_position_safe(
                                 pos.symbol,
                                 float(exec_res.get("price") or current_price_for_check),
                             )
@@ -386,7 +389,7 @@ def run_pipeline(
                         )
                 elif order.action == "sell":
                     if existing_pos:
-                        portfolio.close_position(order.symbol, exec_price)
+                        portfolio.close_position_safe(order.symbol, exec_price)
         else:
             console.print(
                 "[bold red]❌ Emir oluşturulamadı: Trade decision validasyon hatası[/bold red]"
@@ -464,13 +467,16 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Sadece analiz, emir yok"
     )
+    parser.add_argument(
+        "--auto-scan", action="store_true", help="Piyasayı otomatik tara ve fırsatları bul"
+    )
 
     args = parser.parse_args()
     setup_logging(args.log_level)
 
     symbols = args.symbols or ([args.symbol] if args.symbol else [])
-    if not symbols:
-        console.print("[bold red]❌ --symbol veya --symbols gerekli[/bold red]")
+    if not symbols and not args.auto_scan:
+        console.print("[bold red]❌ --symbol, --symbols veya --auto-scan gerekli[/bold red]")
         sys.exit(1)
 
     interval_seconds = parse_interval(args.interval)
@@ -503,19 +509,27 @@ def main() -> None:
     portfolio = PortfolioState.load_from_file()
     circuit_breaker = CircuitBreaker()
 
+    # Thread-safe client ve watchdog
+    client = ExchangeClient()
+    client.set_portfolio(portfolio)  # Emergency close için referans
+
     watchdog = None
     if args.watchdog:
         try:
-            client = ExchangeClient()
             watchdog = Watchdog(
                 symbols=symbols,
-                portfolio=portfolio,
+                portfolio=portfolio,  # Aynı thread-safe instance
                 exchange_client=client,
             )
             watchdog.start()
             console.print("[green]🐕 Watchdog başlatıldı[/green]")
         except Exception as e:
             console.print(f"[bold red]⚠ Watchdog başlatılamadı: {e}[/bold red]")
+
+    # Paylaşılan nesneleri dışarıda başlat
+    scanner = MarketScanner()
+    scout = LeadScout()
+    portfolio_lock = threading.Lock()
 
     cycle = 0
     try:
@@ -533,22 +547,55 @@ def main() -> None:
             )
             console.print(f"{'=' * 60}")
 
-            for symbol in symbols:
-                result = run_pipeline(
-                    symbol=symbol,
-                    execute=execute,
-                    provider=args.provider,
-                    circuit_breaker=circuit_breaker,
-                    portfolio=portfolio,
-                )
+            # ── Sembolleri Belirle ──────────────────────────────
+            current_symbols = list(symbols)
+            if args.auto_scan:
+                console.print("[bold magenta]🔍 Otomatik Tarama Başlatılıyor...[/bold magenta]")
+                candidates = scanner.get_candidates()
+                if candidates:
+                    selected = scout.select_best_candidates(candidates)
+                    if selected:
+                        current_symbols = list(set(current_symbols + selected))
+                        console.print(f"[green]✅ Yeni adaylar eklendi: {', '.join(selected)}[/green]")
+                else:
+                    console.print("[yellow]⚠ Tarayıcı kriterlere uygun aday bulamadı.[/yellow]")
 
-                if result.get("status") in ("halted", "market_closed"):
-                    console.print(
-                        f"[dim]  {symbol}: {result.get('status')} — atlanıyor[/dim]"
+            # --- PARALEL ANALİZ ---
+            def task_wrapper(sym):
+                try:
+                    res = run_pipeline(
+                        symbol=sym,
+                        execute=execute,
+                        provider=args.provider,
+                        circuit_breaker=circuit_breaker,
+                        portfolio=portfolio,
                     )
-                    continue
+                    with portfolio_lock:
+                        portfolio.save_to_file()
+                    return res
+                except Exception as e:
+                    console.print(f"[bold red]❌ Pipeline Error ({sym}): {e}[/bold red]")
+                    # Circuit breaker'ı tetikle
+                    if circuit_breaker:
+                        circuit_breaker.record_llm_error()
+                    return {"symbol": sym, "error": str(e)}
 
-            portfolio.save_to_file()
+            if current_symbols:
+                num_workers = min(len(current_symbols), 5)
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    executor.map(task_wrapper, current_symbols)
+
+            with portfolio_lock:
+                portfolio.save_to_file()
+
+            # RAG hafıza temizliği (her 96 cycle'da bir)
+            if cycle % params.system.cleanup_cycle_interval == 0:
+                try:
+                    from data.vector_store import AgentMemoryStore
+                    pruned = AgentMemoryStore().prune_entries_older_than(days=30)
+                    console.print(f"[dim]🧹 RAG Hafızası temizlendi: {pruned} eski kayıt silindi.[/dim]")
+                except Exception as e:
+                    console.print(f"[yellow]RAG temizleme hatası: {e}[/yellow]")
 
             if args.max_cycles > 0 and cycle >= args.max_cycles:
                 break
@@ -566,6 +613,12 @@ def main() -> None:
     finally:
         if watchdog:
             watchdog.stop()
+        # ChromaDB bağlantılarını kapat
+        from data.vector_store import AgentMemoryStore
+        try:
+            AgentMemoryStore().close()
+        except Exception as cleanup_err:
+            logger.warning("ChromaDB cleanup error: %s", cleanup_err)
         portfolio.save_to_file()
         console.print("\n[green]✓ Bot güvenli şekilde durduruldu[/green]")
 

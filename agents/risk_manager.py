@@ -23,6 +23,15 @@ from utils.llm_retry import invoke_with_retry
 logger = logging.getLogger(__name__)
 
 
+_drift_monitor_instance = None
+
+def _get_drift_monitor():
+    global _drift_monitor_instance
+    if _drift_monitor_instance is None:
+        from evaluation.drift_monitor import DriftMonitor
+        _drift_monitor_instance = DriftMonitor()
+    return _drift_monitor_instance
+
 def risk_manager_node(state: TradingState) -> dict[str, Any]:
     symbol = state["symbol"]
     params = get_trading_params()
@@ -116,9 +125,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
         warnings.append(f"Fear & Greed filtresi hatası: {e}")
 
     try:
-        from evaluation.drift_monitor import DriftMonitor
-
-        drift_monitor = DriftMonitor()
+        drift_monitor = _get_drift_monitor()
         acc = drift_monitor.get_agent_accuracy(symbol)
         if acc < 0.40:
             checks_failed.append(
@@ -274,6 +281,7 @@ Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approve
             response_format={"type": "json_object"},
             max_retries=3,
             base_delay=2.0,
+            request_timeout=60,
         )
         llm_assessment = extract_json(response.content)
         if llm_assessment.get("__parse_error__"):

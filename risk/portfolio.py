@@ -23,7 +23,7 @@ from config.settings import DATA_DIR, get_trading_params
 logger = logging.getLogger(__name__)
 
 PORTFOLIO_FILE = DATA_DIR / "portfolio_state.json"
-_portfolio_lock = threading.Lock()
+_portfolio_lock = threading.RLock()
 
 
 @dataclass
@@ -191,12 +191,14 @@ class PortfolioState:
     @property
     def equity(self) -> float:
         """Toplam özvarlık (nakit + açık pozisyonlar)."""
-        position_value = sum(p.current_price * p.amount for p in self.positions)
-        return self.cash + position_value
+        with _portfolio_lock:
+            position_value = sum(p.current_price * p.amount for p in self.positions)
+            return self.cash + position_value
 
     @property
     def open_position_count(self) -> int:
-        return len(self.positions)
+        with _portfolio_lock:
+            return len(self.positions)
 
     def update_drawdown(self) -> None:
         """Drawdown günceller."""
@@ -262,29 +264,30 @@ class PortfolioState:
 
     def to_dict(self) -> dict[str, Any]:
         """Serileştirme (ajan state'e gönderim için)."""
-        return {
-            "cash": round(self.cash, 2),
-            "equity": round(self.equity, 2),
-            "open_positions": self.open_position_count,
-            "total_pnl": round(self.total_pnl, 2),
-            "daily_pnl": round(self.daily_pnl, 2),
-            "daily_pnl_date": self.daily_pnl_date,
-            "current_drawdown": round(self.current_drawdown, 4),
-            "max_equity": round(self.max_equity, 2),
-            "benchmark_symbol": self.benchmark_symbol,
-            "benchmark_return": round(self.benchmark_return, 4),
-            "alpha": round(self.alpha, 4),
-            "positions": [
-                {
-                    "symbol": p.symbol,
-                    "side": p.side,
-                    "entry_price": p.entry_price,
-                    "amount": p.amount,
-                    "unrealized_pnl": round(p.unrealized_pnl, 4),
-                }
-                for p in self.positions
-            ],
-        }
+        with _portfolio_lock:
+            return {
+                "cash": round(self.cash, 2),
+                "equity": round(self.equity, 2),
+                "open_positions": self.open_position_count,
+                "total_pnl": round(self.total_pnl, 2),
+                "daily_pnl": round(self.daily_pnl, 2),
+                "daily_pnl_date": self.daily_pnl_date,
+                "current_drawdown": round(self.current_drawdown, 4),
+                "max_equity": round(self.max_equity, 2),
+                "benchmark_symbol": self.benchmark_symbol,
+                "benchmark_return": round(self.benchmark_return, 4),
+                "alpha": round(self.alpha, 4),
+                "positions": [
+                    {
+                        "symbol": p.symbol,
+                        "side": p.side,
+                        "entry_price": p.entry_price,
+                        "amount": p.amount,
+                        "unrealized_pnl": round(p.unrealized_pnl, 4),
+                    }
+                    for p in self.positions
+                ],
+            }
 
     # ── Position Management ────────────────────────────────
 
@@ -337,7 +340,9 @@ class PortfolioState:
                 checker = CorrelationChecker([], market_data_copy)
                 symbols_to_check = [p.symbol for p in self.positions] + [symbol]
                 available = {
-                    s: market_data_copy[s] for s in symbols_to_check if s in market_data_copy
+                    s: market_data_copy[s]
+                    for s in symbols_to_check
+                    if s in market_data_copy
                 }
                 if len(available) >= 2:
                     check_result = checker.check_positions(
@@ -409,6 +414,64 @@ class PortfolioState:
 
             logger.info(
                 "Pozisyon kapatıldı: %s P&L: %.4f (%.2f%%)",
+                symbol,
+                pnl,
+                pos.unrealized_pnl_pct * 100,
+            )
+            self.update_drawdown()
+            return trade_record
+
+    # ── Thread-Safe API ────────────────────────────────────
+
+    def get_positions_safe(self) -> list[Position]:
+        """Thread-safe pozisyon kopyası döndürür."""
+        with _portfolio_lock:
+            return list(self.positions)
+
+    def get_position_by_symbol_safe(self, symbol: str) -> Position | None:
+        """Thread-safe tek pozisyon alma."""
+        with _portfolio_lock:
+            return next((p for p in self.positions if p.symbol == symbol), None)
+
+    def remove_position_safe(self, symbol: str) -> Position | None:
+        """Thread-safe pozisyon kaldırma (kapanan pozisyon için)."""
+        with _portfolio_lock:
+            for i, p in enumerate(self.positions):
+                if p.symbol == symbol:
+                    return self.positions.pop(i)
+            return None
+
+    def close_position_safe(self, symbol: str, price: float) -> dict | None:
+        """Thread-safe pozisyon kapatma."""
+        with _portfolio_lock:
+            pos = next((p for p in self.positions if p.symbol == symbol), None)
+            if not pos:
+                logger.warning("Kapatılacak pozisyon bulunamadı: %s", symbol)
+                return None
+
+            pos.update_price(price)
+            pnl = pos.unrealized_pnl
+
+            self.cash += price * pos.amount
+            self.total_pnl += pnl
+            self.daily_pnl += pnl
+            self.positions.remove(pos)
+
+            trade_record = {
+                "symbol": symbol,
+                "side": pos.side,
+                "entry_price": pos.entry_price,
+                "exit_price": price,
+                "amount": pos.amount,
+                "pnl": round(pnl, 4),
+                "pnl_pct": round(pos.unrealized_pnl_pct, 4),
+                "entry_time": pos.entry_time,
+                "exit_time": datetime.now(timezone.utc).isoformat(),
+            }
+            self.closed_trades.append(trade_record)
+
+            logger.info(
+                "Pozisyon kapatıldı (thread-safe): %s P&L: %.4f (%.2f%%)",
                 symbol,
                 pnl,
                 pos.unrealized_pnl_pct * 100,

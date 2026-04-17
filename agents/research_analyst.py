@@ -133,7 +133,8 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
             max_tokens=500,
             response_format={"type": "json_object"},
             max_retries=3,
-            base_delay=2.0,
+            base_delay=1.0,
+            request_timeout=60,
         )
         research_result = extract_json(response.content)
         if research_result.get("__parse_error__"):

@@ -85,6 +85,36 @@ class Settings(BaseSettings):
     # Dashboard
     dashboard_api_key: str | None = None
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._validate_security()
+    
+    def _validate_security(self) -> None:
+        """Güvenlik doğrulaması - API anahtarları ve dosya izinleri."""
+        import sys
+        import stat
+        
+        # .env dosya izinlerini kontrol et (Unix sistemler)
+        env_file = PROJECT_ROOT / ".env"
+        if env_file.exists() and sys.platform != "win32":
+            try:
+                file_stat = env_file.stat()
+                # Eğer başkaları tarafından okunabiliyorsa uyar
+                if file_stat.st_mode & stat.S_IROTH:
+                    logger.warning(
+                        "⚠️  GÜVENLİK UYARISI: .env dosyası başkaları tarafından okunabilir! "
+                        "chmod 600 .env komutuyla düzeltin."
+                    )
+            except Exception as e:
+                logger.debug("File permission check failed: %s", e)
+        
+        # API anahtarları için uyarı (production'ta environment variable kullanılmalı)
+        if self.binance_api_key and self.trading_mode == TradingMode.LIVE:
+            logger.warning(
+                "⚠️  CANLI İŞLEM MODU: Binance API anahtarı .env dosyasında saklanıyor. "
+                "Production ortamında güvenli bir vault (AWS Secrets Manager, Azure Key Vault) kullanın."
+            )
+    
     @property
     def masked_openrouter_key(self) -> str:
         return mask_api_key(self.openrouter_api_key)
@@ -200,6 +230,16 @@ class LimitsParams(BaseModel):
     max_tokens_coordinator: int = 200
 
 
+class ScannerParams(BaseModel):
+    enabled: bool = True
+    min_volume_24h_usdt: float = 1000000
+    min_price_change_24h_pct: float = 2.0
+    max_initial_candidates: int = 30
+    max_scout_recommendations: int = 5
+    scout_model: str = "deepseek/deepseek-chat-v3-0324"
+    quote_asset: str = "USDT"
+
+
 class WatchdogParams(BaseModel):
     enabled: bool = False
     check_interval_seconds: int = 30
@@ -228,6 +268,7 @@ class TradingParams(BaseModel):
     data: DataParams = DataParams()
     limits: LimitsParams = LimitsParams()
     watchdog: WatchdogParams = WatchdogParams()
+    scanner: ScannerParams = ScannerParams()
 
 
 def load_trading_params(path: Path | None = None) -> TradingParams:

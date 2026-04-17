@@ -117,6 +117,38 @@ CRYPTO_BASES = {
 }
 
 
+def validate_symbol(raw_input: str) -> bool:
+    """
+    Sembol formatını doğrula - güvenlik ve enjeksiyon koruması.
+    
+    Kurallar:
+    - Maksimum 50 karakter
+    - Sadece harf (A-Z), rakam (0-9), ve özel karakterler: / - _ .
+    - Tehlikeli pattern'leri engelle (path traversal, command injection)
+    """
+    if not raw_input:
+        return False
+    
+    if len(raw_input) > 50:
+        return False
+    
+    # Tehlikeli pattern'leri engelle
+    dangerous_patterns = [
+        r'\.\.',  # Path traversal
+        r'[;&|`$]',  # Command injection
+        r'[<>]',  # HTML/XML injection
+        r'[\x00-\x1f]',  # Control characters
+    ]
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, raw_input):
+            return False
+    
+    # İzin verilen karakterler: harf, rakam, /, -, _, ., boşluk
+    allowed_pattern = r'^[A-Za-z0-9/\-_\.\s]+$'
+    return bool(re.match(allowed_pattern, raw_input))
+
+
 def resolve_symbol(raw_input: str) -> ResolvedSymbol:
     """
     Ham sembol girdisini çözümler ve doğru formata dönüştürür.
@@ -127,7 +159,14 @@ def resolve_symbol(raw_input: str) -> ResolvedSymbol:
         resolve_symbol("BIMAS")     → BIST, yahoo (.IS eklenir)
         resolve_symbol("AAPL")      → US Stock, yahoo
         resolve_symbol("THYAO.IS")  → BIST, yahoo (zaten formatlı)
+    
+    Raises:
+        ValueError: Geçersiz sembol formatı
     """
+    # Güvenlik doğrulaması
+    if not validate_symbol(raw_input):
+        raise ValueError(f"Geçersiz sembol formatı: {raw_input}")
+    
     raw = raw_input.strip().upper()
 
     # 1) Kripto çifti: BTC/USDT, ETH-USDT, SOL_USDT

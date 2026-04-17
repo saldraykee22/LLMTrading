@@ -212,6 +212,7 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
                 messages,
                 max_tokens=self._params.limits.max_tokens_sentiment,
                 response_format={"type": "json_object"},
+                request_timeout=60,
             )
             raw_text = response.content
         except Exception as e:

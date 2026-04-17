@@ -94,9 +94,9 @@ class Watchdog:
                 logger.warning("Watchdog check failed for %s: %s", symbol, e)
 
     def _check_position_sl_tp(self) -> None:
-        """Checks all open positions for stop-loss and take-profit triggers."""
-        with self._lock:
-            positions_snapshot = list(self.portfolio.positions)
+        """Checks all open positions for stop-loss and take-profit triggers - thread-safe."""
+        # Thread-safe pozisyon kopyası al
+        positions_snapshot = self.portfolio.get_positions_safe()
 
         for pos in positions_snapshot:
             try:
@@ -133,17 +133,16 @@ class Watchdog:
                 logger.warning("SL/TP check failed for %s: %s", pos.symbol, e)
 
     def _emergency_close(self, pos, price: float, reason: str) -> None:
-        """Executes an emergency close for a position."""
+        """Executes an emergency close for a position - thread-safe."""
         if not self.exchange_client:
             logger.error("No exchange client available for emergency close")
             return
 
-        with self._lock:
-            pos_still_open = next(
-                (p for p in self.portfolio.positions if p.symbol == pos.symbol), None
-            )
-            if pos_still_open is None:
-                return
+        # Thread-safe pozisyon kontrolü
+        current_pos = self.portfolio.get_position_by_symbol_safe(pos.symbol)
+        if current_pos is None:
+            logger.info("Pozisyon zaten kapalı: %s", pos.symbol)
+            return
 
         from execution.order_manager import TradeOrder
 
@@ -157,44 +156,69 @@ class Watchdog:
             result = self.exchange_client.execute_order(order, price)
             if result.get("status") in ("filled", "closed", "open"):
                 fill_price = float(result.get("price") or price)
-                with self._lock:
-                    self.portfolio.close_position(pos.symbol, fill_price)
+                # Thread-safe kapatma
+                self.portfolio.close_position_safe(pos.symbol, fill_price)
                 logger.warning(
                     "Emergency sell executed for %s due to %s",
                     pos.symbol,
                     reason,
                 )
+                # Stop further execution
+                try:
+                    STOP_PATH = Path("data/STOP")
+                    STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    STOP_PATH.touch()
+                    logger.critical("EMERGENCY HALT triggered by Watchdog.")
+                except OSError as stop_err:
+                    logger.critical("Failed to create STOP file: %s", stop_err)
+                    # Fallback: Circuit breaker'ı tetikle
+                    from risk.circuit_breaker import CircuitBreaker
+                    cb = CircuitBreaker()
+                    cb.manual_stop()
         except Exception as e:
             logger.error("Emergency sell failed for %s: %s", pos.symbol, e)
 
     def _handle_crash(self, symbol: str, price: float, drop_pct: float) -> None:
-        """Handles a detected flash crash for a symbol."""
-        with self._lock:
-            pos = next(
-                (p for p in self.portfolio.positions if p.symbol == symbol), None
-            )
-            if pos and self.exchange_client:
-                from execution.order_manager import TradeOrder
+        """Handles a detected flash crash for a symbol - thread-safe."""
+        # Thread-safe pozisyon kontrolü
+        pos = self.portfolio.get_position_by_symbol_safe(symbol)
+        if pos is None:
+            logger.info("Flash crash: pozisyon bulunamadı %s", symbol)
+            return
 
-                order = TradeOrder(
-                    symbol=symbol,
-                    action="sell",
-                    order_type="market",
-                    amount=pos.amount,
-                )
-                try:
-                    result = self.exchange_client.execute_order(order, price)
-                    if result.get("status") in ("filled", "closed", "open"):
-                        self.portfolio.close_position(
-                            symbol, float(result.get("price") or price)
-                        )
-                        logger.warning(
-                            "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
-                            symbol,
-                            drop_pct,
-                        )
-                except Exception as e:
-                    logger.error("Emergency sell failed for %s: %s", symbol, e)
+        if self.exchange_client:
+            from execution.order_manager import TradeOrder
+
+            order = TradeOrder(
+                symbol=symbol,
+                action="sell",
+                order_type="market",
+                amount=pos.amount,
+            )
+            try:
+                result = self.exchange_client.execute_order(order, price)
+                if result.get("status") in ("filled", "closed", "open"):
+                    # Thread-safe kapatma
+                    self.portfolio.remove_position_safe(symbol)
+                    logger.warning(
+                        "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
+                        symbol,
+                        drop_pct,
+                    )
+                    # Stop further execution
+                    try:
+                        STOP_PATH = Path("data/STOP")
+                        STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
+                        STOP_PATH.touch()
+                        logger.critical("EMERGENCY HALT triggered by Watchdog.")
+                    except OSError as stop_err:
+                        logger.critical("Failed to create STOP file: %s", stop_err)
+                        # Fallback: Circuit breaker'ı tetikle
+                        from risk.circuit_breaker import CircuitBreaker
+                        cb = CircuitBreaker()
+                        cb.manual_stop()
+            except Exception as e:
+                logger.error("Emergency sell failed for %s: %s", symbol, e)
 
     def get_status(self) -> dict:
         """Returns watchdog status."""

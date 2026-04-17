@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+import threading
+from pathlib import Path
+from typing import Any, cast
 
 import ccxt
+from ccxt.base.types import OrderSide
 
 from config.settings import TradingMode, get_settings, get_trading_params
 from execution.order_manager import TradeOrder
@@ -35,50 +38,126 @@ class ExchangeClient:
         self._connection_timeout = 300  # 5 dakika
         self._emergency_mode = False
 
+        # Thread-safe portfolio reference for emergency close
+        self._portfolio_ref: Any = None
+        self._exchange_lock = threading.RLock()
+
+    def set_portfolio(self, portfolio) -> None:
+        """Emergency close için portföy referansı kaydet."""
+        self._portfolio_ref = portfolio
+        logger.debug("Portfolio reference set for emergency close")
+
+    def try_reconnect(self, max_attempts: int = 5) -> bool:
+        """
+        Acil durum modundan çıkmak için yeniden bağlanma dene.
+        Exponential backoff ile 5 deneme yapar.
+        """
+        if not self._emergency_mode:
+            return True
+        
+        logger.info("Reconnection attempt (max %d attempts)...", max_attempts)
+        
+        for attempt in range(max_attempts):
+            try:
+                # Bağlantı testi
+                with self._exchange_lock:
+                    if self._exchange:
+                        # Basit bir API çağrısı ile bağlantıyı test et
+                        self._exchange.fetch_balance()
+                    
+                    self._emergency_mode = False
+                    self._last_successful_call = time.time()
+                    logger.info("✅ Reconnection successful after %d attempt(s)", attempt + 1)
+                    return True
+                    
+            except Exception as e:
+                delay = 2 ** (attempt + 1)  # 2s, 4s, 8s, 16s, 32s
+                logger.warning(
+                    "Reconnection attempt %d/%d failed: %s. Retrying in %ds...",
+                    attempt + 1,
+                    max_attempts,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+        
+        logger.error("❌ Reconnection failed after %d attempts", max_attempts)
+        return False
+    
     def _check_connection(self) -> bool:
         """Heartbeat kontrolü, timeout varsa emergency moda geç."""
-        if time.time() - self._last_successful_call > self._connection_timeout:
-            if not self._emergency_mode:
-                logger.critical("API bağlantı kesildi — EMERGENCY MODE")
-                self._emergency_mode = True
-                self._emergency_close_all()
+        # Eğer emergency mode'daysak reconnect dene
+        if self._emergency_mode:
+            if self.try_reconnect():
+                return True
             return False
+        
+        if time.time() - self._last_successful_call > self._connection_timeout:
+            logger.critical("API bağlantı kesildi — EMERGENCY MODE")
+            self._emergency_mode = True
+            self._emergency_close_all()
+            return False
+        
         return True
 
-    def _emergency_close_all(self) -> None:
-        """Tüm açık pozisyonları market emriyle kapatır."""
-        from risk.portfolio import PortfolioState
-        portfolio = PortfolioState.load_from_file()
-        
-        if not portfolio.positions:
-            logger.info("Emergency close: Açık pozisyon yok.")
-            return
-            
-        logger.critical("🚨 EMERGENCY CLOSE ALL: %d pozisyon kapatılıyor!", len(portfolio.positions))
-        
-        for pos in portfolio.positions:
-            action = "sell" if pos.side == "long" else "buy"
-            order = TradeOrder(
-                symbol=pos.symbol,
-                action=action,
-                amount=pos.amount,
-                order_type="market"
+    def _emergency_close_all(self, portfolio: Any = None) -> None:
+        """Tüm açık pozisyonları market emriyle kapatır - thread-safe."""
+        from risk.portfolio import PortfolioState, _portfolio_lock
+
+        with _portfolio_lock:
+            target_portfolio = portfolio or self._portfolio_ref
+            if target_portfolio is None:
+                logger.warning(
+                    "Emergency close: no portfolio reference, loading from file"
+                )
+                target_portfolio = PortfolioState.load_from_file()
+
+            positions_to_close = list(target_portfolio.positions)
+
+            if not positions_to_close:
+                logger.info("Emergency close: Açık pozisyon yok.")
+                return
+
+            logger.critical(
+                "🚨 EMERGENCY CLOSE ALL: %d pozisyon kapatılıyor!",
+                len(positions_to_close),
             )
-            try:
-                if self._params.execution.mode == TradingMode.PAPER:
-                    self._get_paper_engine().execute_order(order, pos.current_price)
-                else:
-                    exchange = self._get_exchange()
-                    exchange.create_order(
-                        symbol=order.symbol,
-                        type="market",
-                        side=order.action,
-                        amount=order.amount,
-                    )
-            except Exception as e:
-                logger.error("Emergency close hatası (%s): %s", pos.symbol, e)
-                
-        portfolio.save_to_file()
+
+            closed_symbols = []
+
+            for pos in positions_to_close:
+                action = "sell" if pos.side == "long" else "buy"
+                order = TradeOrder(
+                    symbol=pos.symbol,
+                    action=action,
+                    amount=pos.amount,
+                    order_type="market",
+                )
+                try:
+                    if self._params.execution.mode == TradingMode.PAPER:
+                        self._get_paper_engine().execute_order(order, pos.current_price)
+                        closed_symbols.append(pos.symbol)
+                    else:
+                        with self._exchange_lock:
+                            exchange = self._get_exchange()
+                            exchange.create_order(  # type: ignore
+                                symbol=order.symbol,
+                                type="market",
+                                side=order.action,
+                                amount=order.amount,
+                            )
+                        closed_symbols.append(pos.symbol)
+                except Exception as e:
+                    logger.error("Emergency close hatası (%s): %s", pos.symbol, e)
+
+            # Pozisyonları thread-safe şekilde kaldır
+            for sym in closed_symbols:
+                target_portfolio.remove_position_safe(sym)
+
+            target_portfolio.save_to_file()
+            logger.info(
+                "Emergency close tamamlandı: %s pozisyon kapatıldı", len(closed_symbols)
+            )
 
     def _get_paper_engine(self) -> PaperTradingEngine:
         """Paper trading engine'i lazy olarak başlatır."""
@@ -97,6 +176,7 @@ class ExchangeClient:
                 "secret": self._settings.binance_api_secret,
                 "enableRateLimit": True,
                 "options": {"defaultType": "spot"},
+                "maxConcurrentRequests": 5,
             }
 
             if self._settings.binance_testnet:
@@ -106,7 +186,16 @@ class ExchangeClient:
             if exchange_class is None:
                 raise ValueError(f"CCXT borsa bulunamadı: {exchange_id}")
 
-            self._exchange = exchange_class(config)
+            try:
+                self._exchange = exchange_class(config)
+                # Market bilgisini (precision, limits vb.) yükle
+                self._exchange.load_markets()
+            except Exception as e:
+                logger.error("Borsa bağlantısı başlatılamadı: %s", str(e))
+                raise
+            finally:
+                config["apiKey"] = "***"
+                config["secret"] = "***"
             status = (
                 "TESTNET (Sandbox)" if self._settings.binance_testnet else "MAINNET"
             )
@@ -139,115 +228,125 @@ class ExchangeClient:
         Returns:
             Emir sonucu (order ID, durum vb.)
         """
-        if not self._check_connection():
-            return {"status": "error", "message": "API bağlantı kesildi"}
+        # Check for STOP file (Emergency Halt)
+        if order.action == "buy" and Path("data/STOP").exists():
+            logger.warning("EMERGENCY HALT (data/STOP detected): Yeni alım emri reddedildi.")
+            return {"status": "rejected", "message": "Emergency halt active"}
+        
+        with self._exchange_lock:
+            if not self._check_connection():
+                return {"status": "error", "message": "API bağlantı kesildi"}
 
-        # Paper mod — simülasyon
-        if self._params.execution.mode == TradingMode.PAPER:
-            logger.info(
-                "📝 PAPER TRADING: %s %s %.6f %s",
-                order.action.upper(),
-                order.symbol,
-                order.amount,
-                order.order_type,
-            )
-            result = self._get_paper_engine().execute_order(order, current_price)
-            self._last_successful_call = time.time()
-            return result
+            # Paper mod — simülasyon
+            if self._params.execution.mode == TradingMode.PAPER:
+                logger.info(
+                    "📝 PAPER TRADING: %s %s %.6f %s",
+                    order.action.upper(),
+                    order.symbol,
+                    order.amount,
+                    order.order_type,
+                )
+                result = self._get_paper_engine().execute_order(order, current_price)
+                self._last_successful_call = time.time()
+                return result
 
-        # Live mod — gerçek borsa
-        exchange = self._get_exchange()
+            # Live mod — gerçek borsa
+            exchange = self._get_exchange()
 
-        # Güvenlik kontrolü — live mode'da ekstra onay
-        if self._params.execution.mode == TradingMode.LIVE:
-            if not self._settings.confirm_live_trade:
-                logger.error("LIVE trading rejected: confirm_live_trade is not enabled")
-                return {
-                    "status": "rejected",
-                    "message": "Live trading confirmation not enabled in settings",
-                }
-            logger.warning(
-                "⚠ CANLI İŞLEM: %s %s %.6f %s",
-                order.action.upper(),
-                order.symbol,
-                order.amount,
-                order.order_type,
-            )
-
-        self._rate_limit()
-
-        for attempt in range(self._params.execution.retry_count):
-            try:
-                if order.order_type == "market":
-                    result = exchange.create_order(
-                        symbol=order.symbol,
-                        type="market",
-                        side=order.action,
-                        amount=order.amount,
-                    )
-                elif order.order_type == "limit":
-                    result = exchange.create_order(
-                        symbol=order.symbol,
-                        type="limit",
-                        side=order.action,
-                        amount=order.amount,
-                        price=order.price,
-                    )
-                else:
-                    logger.error("Bilinmeyen emir tipi: %s", order.order_type)
+            # Güvenlik kontrolü — live mode'da ekstra onay
+            if self._params.execution.mode == TradingMode.LIVE:
+                if not self._settings.confirm_live_trade:
+                    logger.error("LIVE trading rejected: confirm_live_trade is not enabled")
                     return {
-                        "status": "error",
-                        "message": f"Unknown order type: {order.order_type}",
+                        "status": "rejected",
+                        "message": "Live trading confirmation not enabled in settings",
+                    }
+                logger.warning(
+                    "⚠ CANLI İŞLEM: %s %s %.6f %s",
+                    order.action.upper(),
+                    order.symbol,
+                    order.amount,
+                    order.order_type,
+                )
+
+            self._rate_limit()
+
+            for attempt in range(self._params.execution.retry_count):
+                try:
+                    # Miktar ve fiyatı borsa hassasiyetine göre yuvarla
+                    exec_amount = exchange.amount_to_precision(order.symbol, order.amount)
+                    
+                    if order.order_type == "market":
+                        result = exchange.create_order(
+                            symbol=order.symbol,
+                            type="market",
+                            side=order.action,
+                            amount=exec_amount,
+                        )
+                    elif order.order_type == "limit":
+                        exec_price = exchange.price_to_precision(order.symbol, order.price)
+                        result = exchange.create_order(
+                            symbol=order.symbol,
+                            type="limit",
+                            side=order.action,
+                            amount=exec_amount,
+                            price=exec_price,
+                        )
+                    else:
+                        logger.error("Bilinmeyen emir tipi: %s", order.order_type)
+                        return {
+                            "status": "error",
+                            "message": f"Unknown order type: {order.order_type}",
+                        }
+
+                    order_status = result.get("status", "")
+                    filled_status = "filled" if order_status == "closed" else order_status
+                    order_info = {
+                        "status": filled_status,
+                        "order_id": result.get("id"),
+                        "symbol": result.get("symbol"),
+                        "side": result.get("side"),
+                        "type": result.get("type"),
+                        "amount": result.get("amount"),
+                        "price": result.get("price") or result.get("average"),
+                        "cost": result.get("cost"),
+                        "fee": result.get("fee"),
+                        "timestamp": result.get("datetime"),
                     }
 
-                order_status = result.get("status", "")
-                filled_status = "filled" if order_status == "closed" else order_status
-                order_info = {
-                    "status": filled_status,
-                    "order_id": result.get("id"),
-                    "symbol": result.get("symbol"),
-                    "side": result.get("side"),
-                    "type": result.get("type"),
-                    "amount": result.get("amount"),
-                    "price": result.get("price") or result.get("average"),
-                    "cost": result.get("cost"),
-                    "fee": result.get("fee"),
-                    "timestamp": result.get("datetime"),
-                }
+                    logger.info(
+                        "Emir gönderildi: ID=%s, durum=%s, fiyat=%s",
+                        order_info["order_id"],
+                        order_info["status"],
+                        order_info["price"],
+                    )
+                    self._last_successful_call = time.time()
+                    return order_info
 
-                logger.info(
-                    "Emir gönderildi: ID=%s, durum=%s, fiyat=%s",
-                    order_info["order_id"],
-                    order_info["status"],
-                    order_info["price"],
-                )
-                self._last_successful_call = time.time()
-                return order_info
+                except ccxt.InsufficientFunds as e:
+                    logger.error("Yetersiz bakiye: %s", e)
+                    return {"status": "error", "message": f"Insufficient funds: {e}"}
 
-            except ccxt.InsufficientFunds as e:
-                logger.error("Yetersiz bakiye: %s", e)
-                return {"status": "error", "message": f"Insufficient funds: {e}"}
+                except ccxt.InvalidOrder as e:
+                    logger.error("Geçersiz emir: %s", e)
+                    return {"status": "error", "message": f"Invalid order: {e}"}
 
-            except ccxt.InvalidOrder as e:
-                logger.error("Geçersiz emir: %s", e)
-                return {"status": "error", "message": f"Invalid order: {e}"}
+                except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
+                    logger.warning(
+                        "Ağ hatası (deneme %d/%d): %s",
+                        attempt + 1,
+                        self._params.execution.retry_count,
+                        e,
+                    )
+                    if attempt < self._params.execution.retry_count - 1:
+                        time.sleep(self._params.execution.retry_delay_ms / 1000.0)
+                    continue
 
-            except (ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
-                logger.warning(
-                    "Ağ hatası (deneme %d/%d): %s",
-                    attempt + 1,
-                    self._params.execution.retry_count,
-                    e,
-                )
-                if attempt < self._params.execution.retry_count - 1:
-                    time.sleep(self._params.execution.retry_delay_ms / 1000.0)
-                continue
+                except ccxt.BaseError as e:
+                    logger.error("CCXT hatası: %s", e)
+                    return {"status": "error", "message": str(e)}
 
-            except ccxt.BaseError as e:
-                logger.error("CCXT hatası: %s", e)
-                return {"status": "error", "message": str(e)}
-
-        return {"status": "error", "message": "Max retry exceeded"}
+            return {"status": "error", "message": "Max retry exceeded"}
 
     def get_paper_status(self) -> dict[str, Any]:
         """Paper trading engine durumunu döndürür (public API)."""
@@ -258,57 +357,60 @@ class ExchangeClient:
 
     def cancel_order(self, order_id: str, symbol: str) -> dict:
         """Bekleyen emri iptal eder."""
-        exchange = self._get_exchange()
-        self._rate_limit()
-        try:
-            result = exchange.cancel_order(order_id, symbol)
-            logger.info("Emir iptal edildi: %s", order_id)
-            self._last_successful_call = time.time()
-            return {"status": "cancelled", "order_id": order_id}
-        except ccxt.BaseError as e:
-            logger.error("İptal hatası: %s", e)
-            if not self._check_connection():
-                pass
-            return {"status": "error", "message": str(e)}
+        with self._exchange_lock:
+            exchange = self._get_exchange()
+            self._rate_limit()
+            try:
+                result = exchange.cancel_order(order_id, symbol)
+                logger.info("Emir iptal edildi: %s", order_id)
+                self._last_successful_call = time.time()
+                return {"status": "cancelled", "order_id": order_id}
+            except ccxt.BaseError as e:
+                logger.error("İptal hatası: %s", e)
+                if not self._check_connection():
+                    logger.warning("Bağlantı koptuğu için acil duruma geçildi.")
+                return {"status": "error", "message": str(e)}
 
     def get_open_orders(self, symbol: str | None = None) -> list[dict]:
         """Açık emirleri listeler."""
-        exchange = self._get_exchange()
-        self._rate_limit()
-        try:
-            orders = exchange.fetch_open_orders(symbol)
-            self._last_successful_call = time.time()
-            return [
-                {
-                    "id": o["id"],
-                    "symbol": o["symbol"],
-                    "side": o["side"],
-                    "amount": o["amount"],
-                    "price": o["price"],
-                    "status": o["status"],
-                }
-                for o in orders
-            ]
-        except ccxt.BaseError as e:
-            logger.error("Açık emir sorgulama hatası: %s", e)
-            if not self._check_connection():
-                pass
-            return [{"error": str(e), "data": None}]
+        with self._exchange_lock:
+            exchange = self._get_exchange()
+            self._rate_limit()
+            try:
+                orders = exchange.fetch_open_orders(symbol)
+                self._last_successful_call = time.time()
+                return [
+                    {
+                        "id": o["id"],
+                        "symbol": o["symbol"],
+                        "side": o["side"],
+                        "amount": o["amount"],
+                        "price": o["price"],
+                        "status": o["status"],
+                    }
+                    for o in orders
+                ]
+            except ccxt.BaseError as e:
+                logger.error("Açık emir sorgulama hatası: %s", e)
+                if not self._check_connection():
+                    logger.warning("Bağlantı koptuğu için acil duruma geçildi.")
+                return [{"error": str(e), "data": None}]
 
-    def get_balance(self) -> dict[str, float]:
+    def get_balance(self) -> dict[str, Any]:
         """Hesap bakiyesini çeker."""
-        exchange = self._get_exchange()
-        self._rate_limit()
-        try:
-            balance = exchange.fetch_balance()
-            self._last_successful_call = time.time()
-            return {
-                k: float(v)
-                for k, v in balance.get("total", {}).items()
-                if v and float(v) > 0
-            }
-        except ccxt.BaseError as e:
-            logger.error("Bakiye hatası: %s", e)
-            if not self._check_connection():
-                pass
-            return {"error": str(e), "data": None}
+        with self._exchange_lock:
+            exchange = self._get_exchange()
+            self._rate_limit()
+            try:
+                balance = exchange.fetch_balance()
+                self._last_successful_call = time.time()
+                return {
+                    k: float(v)
+                    for k, v in balance.get("total", {}).items()
+                    if v and float(v) > 0
+                }
+            except ccxt.BaseError as e:
+                logger.error("Bakiye hatası: %s", e)
+                if not self._check_connection():
+                    logger.warning("Bağlantı koptuğu için acil duruma geçildi.")
+                return {"error": str(e), "data": None}

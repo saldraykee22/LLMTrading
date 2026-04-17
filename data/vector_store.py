@@ -16,12 +16,22 @@ class AgentMemoryStore:
     def __init__(self, store_dir: Path | None = None):
         self._dir = store_dir or STORE_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._client = None
+        self._collection = None
+        self._init_failed = False
+        self._shutdown_registered = False
+
+    @property
+    def collection(self):
+        if self._collection is not None or self._init_failed:
+            return self._collection
         try:
-            self.client = chromadb.PersistentClient(path=str(self._dir))
-            self.collection = self.client.get_or_create_collection(name="trade_memory")
+            self._client = chromadb.PersistentClient(path=str(self._dir))
+            self._collection = self._client.get_or_create_collection(name="trade_memory")
         except Exception as e:
             logger.error("ChromaDB başlatılamadı (Memory devre dışı): %s", e)
-            self.collection = None
+            self._init_failed = True
+        return self._collection
 
     def _generate_semantic_tags(self, state: dict[str, Any]) -> list[str]:
         """Piyasa durumuna göre semantik etiketler üretir."""
@@ -391,3 +401,19 @@ class AgentMemoryStore:
         except Exception as e:
             logger.error("Accuracy güncelleme hatası: %s", e)
             return False
+    
+    def close(self) -> None:
+        """ChromaDB bağlantısını kapat."""
+        if self._client:
+            try:
+                self._client.close()
+                logger.info("ChromaDB connection closed")
+            except Exception as e:
+                logger.warning(f"ChromaDB close error: {e}")
+            finally:
+                self._client = None
+                self._collection = None
+    
+    def __del__(self):
+        """Destructor - bağlantıyı kapat."""
+        self.close()

@@ -74,6 +74,7 @@ class EnsembleVoter:
                 messages,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
+                request_timeout=60,
             )
             raw_text = response.content
             result = extract_json(raw_text)
