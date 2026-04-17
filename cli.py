@@ -1,13 +1,13 @@
 """
-LLM Trading System - Command Line Interface (CLI)
-==================================================
-Kullanici dostu komut satiri arayuzu.
+LLM Trading System - Komut Satırı Arayüzü (CLI)
+================================================
+Türkçe kullanıcı dostu komut satırı arayüzü.
 
-Kullanim:
-    python cli.py --help
-    python cli.py health
-    python cli.py run --symbol BTC/USDT
-    python cli.py backtest --symbol BTC/USDT --days 90
+Kullanım:
+    python cli.py --yardim
+    python cli.py saglik
+    python cli.py calistir --sembol BTC/USDT
+    python cli.py geriye-donuk-test --sembol BTC/USDT --gun 90
 """
 
 import argparse
@@ -20,114 +20,114 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def print_header(title: str) -> None:
-    """Baslik yazdir."""
+def print_baslik(baslik: str) -> None:
+    """Başlık yazdır."""
     width = 70
-    print("\n" + "═" * width)
-    print(f"  {title}".center(width))
-    print("═" * width + "\n")
+    print("\n" + "=" * width)
+    print(f"  {baslik}".center(width))
+    print("=" * width + "\n")
 
 
-def print_section(title: str) -> None:
+def print_bolum(bolum_adi: str) -> None:
     """Bölüm başlığı yazdır."""
-    print(f"\n▶ {title}")
-    print("─" * 50)
+    print(f"\n▶ {bolum_adi}")
+    print("-" * 50)
 
 
-def cmd_health(args) -> int:
+def cmd_saglik(args) -> int:
     """Sağlık kontrolü."""
-    from scripts.health_check import main as health_main
-    return health_main()
+    from scripts.health_check import main as saglik_ana
+    return saglik_ana()
 
 
-def cmd_run(args) -> int:
+def cmd_calistir(args) -> int:
     """Trading bot'u çalıştır."""
     import subprocess
     
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_live.py"),
-        "--symbol", args.symbol,
-        "--interval", args.interval,
+        "--sembol", args.sembol,
+        "--aralik", args.aralik,
     ]
     
-    if args.watchdog:
+    if args.bekci:
         cmd.append("--watchdog")
     
-    if args.execute:
+    if args.yurut:
         cmd.append("--execute")
     
-    if args.auto_scan:
+    if args.oto_tarama:
         cmd.append("--auto-scan")
     
-    if args.max_cycles:
-        cmd.extend(["--max-cycles", str(args.max_cycles)])
+    if args.maks_dongu:
+        cmd.extend(["--max-cycles", str(args.maks_dongu)])
     
     try:
         subprocess.run(cmd, check=True)
         return 0
     except KeyboardInterrupt:
-        print("\n\n[BILGI] Kullanici tarafindan durduruldu.")
+        print("\n\n[BİLGİ] Kullanıcı tarafından durduruldu.")
         return 0
     except subprocess.CalledProcessError as e:
-        print(f"\n[HATA] Bot hatasi: {e}")
+        print(f"\n[HATA] Bot hatası: {e}")
         return 1
 
 
-def cmd_backtest(args) -> int:
-    """Backtest çalıştır."""
+def cmd_geriye_donuk_test(args) -> int:
+    """Geriye dönük test çalıştır."""
     import subprocess
     
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_backtest.py"),
-        "--symbol", args.symbol,
-        "--days", str(args.days),
+        "--sembol", args.sembol,
+        "--gun", str(args.gun),
     ]
     
     try:
         subprocess.run(cmd, check=True)
         return 0
     except subprocess.CalledProcessError as e:
-        print(f"\n[HATA] Backtest hatasi: {e}")
+        print(f"\n[HATA] Backtest hatası: {e}")
         return 1
 
 
-def cmd_portfolio(args) -> int:
+def cmd_portfoy(args) -> int:
     """Portföy durumu."""
     import json
     
-    print_header("PORTFÖY DURUMU")
+    print_baslik("PORTFÖY DURUMU")
     
-    portfolio_file = PROJECT_ROOT / "data" / "portfolio_state.json"
+    portfoy_dosya = PROJECT_ROOT / "data" / "portfolio_state.json"
     
-    if not portfolio_file.exists():
-        print("[BILGI] Henüz açık pozisyon yok.")
+    if not portfoy_dosya.exists():
+        print("[BİLGİ] Henüz açık pozisyon yok.")
         return 0
     
     try:
-        with open(portfolio_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(portfoy_dosya, "r", encoding="utf-8") as f:
+            veri = json.load(f)
         
-        print(f"Başlangıç Nakit:    ${data.get('initial_cash', 0):,.2f}")
-        print(f"Şu Anki Nakit:      ${data.get('cash', 0):,.2f}")
-        print(f"Toplam Özvarlık:    ${data.get('equity', sum(p.get('current_price', 0) * p.get('amount', 0) for p in data.get('positions', [])) + data.get('cash', 0)):,.2f}")
-        print(f"Toplam P&L:         ${data.get('total_pnl', 0):,.2f}")
-        print(f"Günlük P&L:         ${data.get('daily_pnl', 0):,.2f}")
-        print(f"Maksimum Drawdown:  {data.get('current_drawdown', 0):.2%}")
-        print(f"Alpha:              {data.get('alpha', 0):.2%}")
+        print(f"Başlangıç Nakit:    ${veri.get('initial_cash', 0):,.2f}")
+        print(f"Şu Anki Nakit:      ${veri.get('cash', 0):,.2f}")
+        print(f"Toplam Özvarlık:    ${veri.get('equity', sum(p.get('current_price', 0) * p.get('amount', 0) for p in veri.get('positions', [])) + veri.get('cash', 0)):,.2f}")
+        print(f"Toplam Kâr/Zarar:   ${veri.get('total_pnl', 0):,.2f}")
+        print(f"Günlük Kâr/Zarar:   ${veri.get('daily_pnl', 0):,.2f}")
+        print(f"Maksimum Erime:     {veri.get('current_drawdown', 0):.2%}")
+        print(f"Alpha:              {veri.get('alpha', 0):.2%}")
         
-        positions = data.get("positions", [])
-        if positions:
-            print_section(f"AÇIK POZİSYONLAR ({len(positions)})")
-            for pos in positions:
-                print(f"\n  {pos.get('symbol')}")
-                print(f"    Taraf:      {pos.get('side', 'long').upper()}")
-                print(f"    Giriş:      ${pos.get('entry_price', 0):,.2f}")
-                print(f"    Miktar:     {pos.get('amount', 0):.6f}")
-                print(f"    Stop-Loss:  ${pos.get('stop_loss', 0):,.2f}")
-                print(f"    Take-Profit:${pos.get('take_profit', 0):,.2f}")
-                print(f"    P&L:        ${pos.get('unrealized_pnl', 0):,.2f} ({pos.get('unrealized_pnl_pct', 0):.2%})")
+        pozisyonlar = veri.get("positions", [])
+        if pozisyonlar:
+            print_bolum(f"AÇIK POZİSYONLAR ({len(pozisyonlar)})")
+            for poz in pozisyonlar:
+                print(f"\n  {poz.get('symbol')}")
+                print(f"    Taraf:        {poz.get('side', 'long').upper()}")
+                print(f"    Giriş:        ${poz.get('entry_price', 0):,.2f}")
+                print(f"    Miktar:       {poz.get('amount', 0):.6f}")
+                print(f"    Stop-Loss:    ${poz.get('stop_loss', 0):,.2f}")
+                print(f"    Take-Profit:  ${poz.get('take_profit', 0):,.2f}")
+                print(f"    Kâr/Zarar:    ${poz.get('unrealized_pnl', 0):,.2f} ({poz.get('unrealized_pnl_pct', 0):.2%})")
         
         print()
         return 0
@@ -136,11 +136,11 @@ def cmd_portfolio(args) -> int:
         return 1
 
 
-def cmd_tests(args) -> int:
-    """Test suite çalıştır."""
+def cmd_testler(args) -> int:
+    """Test paketi çalıştır."""
     import subprocess
     
-    print_header("TEST SUITE")
+    print_baslik("TEST PAKETİ")
     
     cmd = [
         sys.executable,
@@ -150,7 +150,7 @@ def cmd_tests(args) -> int:
         "--tb=short",
     ]
     
-    if args.verbose:
+    if args.ayrintili:
         cmd.append("-s")
     
     try:
@@ -161,94 +161,92 @@ def cmd_tests(args) -> int:
         return 1
 
 
-def cmd_logs(args) -> int:
-    """Logları göster."""
+def cmd_kayitlar(args) -> int:
+    """Kayıtları (log) göster."""
     from rich.console import Console
     
     console = Console()
     
-    print_header("SON LOG SATIRLARI")
+    print_baslik("SON KAYIT SATIRLARI")
     
-    log_file = PROJECT_ROOT / "logs" / "trading.log"
+    kayit_dosya = PROJECT_ROOT / "logs" / "trading.log"
     
-    if not log_file.exists():
-        print("[BILGI] Henüz log dosyası oluşturulmadı.")
+    if not kayit_dosya.exists():
+        print("[BİLGİ] Henüz kayıt dosyası oluşturulmadı.")
         return 0
     
     try:
-        with open(log_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        with open(kayit_dosya, "r", encoding="utf-8") as f:
+            satirlar = f.readlines()
         
         # Son N satır
-        n = args.lines or 50
-        for line in lines[-n:]:
-            console.print(line.strip())
+        n = args.satir or 50
+        for satir in satirlar[-n:]:
+            console.print(satir.strip())
         
         return 0
     except Exception as e:
-        print(f"[HATA] Log okunamadı: {e}")
+        print(f"[HATA] Kayıt okunamadı: {e}")
         return 1
 
 
-def cmd_scan(args) -> int:
+def cmd_tarama(args) -> int:
     """Piyasa taraması."""
     from data.scanner import MarketScanner
-    from agents.lead_scout import LeadScout
     from rich.console import Console
     from rich.table import Table
     
     console = Console()
     
-    print_header("PİYASA TARAMASI")
+    print_baslik("PİYASA TARAMASI")
     
-    scanner = MarketScanner()
+    tarayici = MarketScanner()
     
-    print_section("Adaylar Taraniyor...")
+    print_bolum("Adaylar Taraniyor...")
     try:
-        candidates = scanner.get_candidates()
+        adaylar = tarayici.get_candidates()
     except Exception as e:
         console.print(f"[red]✗ Tarama hatası: {e}[/red]")
         return 1
     
-    if not candidates:
+    if not adaylar:
         console.print("[yellow]⚠ Kriterlere uygun aday bulunamadı.[/yellow]")
         return 0
     
-    console.print(f"[green]✓ {len(candidates)} aday bulundu.[/green]")
+    console.print(f"[green]✓ {len(adaylar)} aday bulundu.[/green]")
     
-    print_section("En İyi Adaylar")
+    print_bolum("En İyi Adaylar")
     
-    table = Table(title="Önerilen Varlıklar", show_header=True, header_style="bold cyan")
-    table.add_column("Sembol", style="bold")
-    table.add_column("Fiyat", justify="right")
-    table.add_column("24h Hacim", justify="right")
-    table.add_column("24h Değişim", justify="right")
-    table.add_column("Kalite Skor", justify="right")
+    tablo = Table(title="Önerilen Varlıklar", show_header=True, header_style="bold cyan")
+    tablo.add_column("Sembol", style="bold")
+    tablo.add_column("Fiyat", justify="right")
+    tablo.add_column("24s Hacim", justify="right")
+    tablo.add_column("24s Değişim", justify="right")
+    tablo.add_column("Kalite Skoru", justify="right")
     
-    for candidate in candidates[:10]:
-        # Scanner'dan dönen format: symbol, price, change_24h, volume_24h, quality_score
-        if isinstance(candidate, dict):
-            symbol = candidate.get("symbol", "N/A")
-            price = candidate.get("price", 0)
-            volume = candidate.get("volume_24h", 0)
-            change = candidate.get("change_24h", 0)
-            score = candidate.get("quality_score", 0)
+    for aday in adaylar[:10]:
+        if isinstance(aday, dict):
+            sembol = aday.get("symbol", "N/A")
+            fiyat = aday.get("price", 0)
+            hacim = aday.get("volume_24h", 0)
+            degisim = aday.get("change_24h", 0)
+            skor = aday.get("quality_score", 0)
             
-            table.add_row(
-                symbol,
-                f"${price:,.4f}",
-                f"${volume:,.0f}",
-                f"{change:+.2f}%",
-                f"{score:.1f}",
+            tablo.add_row(
+                sembol,
+                f"${fiyat:,.4f}",
+                f"${hacim:,.0f}",
+                f"{degisim:+.2f}%",
+                f"{skor:.1f}",
             )
     
-    console.print(table)
+    console.print(tablo)
     print()
     
     return 0
 
 
-def cmd_status(args) -> int:
+def cmd_durum(args) -> int:
     """Sistem durumu."""
     from rich.console import Console
     from rich.table import Table
@@ -256,109 +254,109 @@ def cmd_status(args) -> int:
     
     console = Console()
     
-    print_header("SİSTEM DURUMU")
+    print_baslik("SİSTEM DURUMU")
     
     # Circuit Breaker
     from risk.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker()
-    cb_status = cb.get_status()
+    cb_durum = cb.get_status()
     
-    panel_data = []
-    panel_data.append(f"Circuit Breaker: {'[red]AKTİF[/red]' if cb_status.get('halted') else '[green]PASİF[/green]'}")
-    if cb_status.get('halt_reason'):
-        panel_data.append(f"  Sebep: {cb_status['halt_reason']}")
-    panel_data.append(f"Art Arda Kayıp: {cb_status.get('consecutive_losses', 0)}")
-    panel_data.append(f"Art Arda LLM Hatası: {cb_status.get('consecutive_llm_errors', 0)}")
+    panel_veri = []
+    panel_veri.append(f"Circuit Breaker: {'[red]AKTİF[/red]' if cb_durum.get('halted') else '[green]PASİF[/green]'}")
+    if cb_durum.get('halt_reason'):
+        panel_veri.append(f"  Sebep: {cb_durum['halt_reason']}")
+    panel_veri.append(f"Art Arda Kayıp: {cb_durum.get('consecutive_losses', 0)}")
+    panel_veri.append(f"Art Arda LLM Hatası: {cb_durum.get('consecutive_llm_errors', 0)}")
     
-    console.print(Panel("\n".join(panel_data), title="Circuit Breaker", border_style="red" if cb_status.get('halted') else "green"))
+    console.print(Panel("\n".join(panel_veri), title="Circuit Breaker", border_style="red" if cb_durum.get('halted') else "green"))
     
     # Portföy
     from risk.portfolio import PortfolioState
-    portfolio = PortfolioState.load_from_file()
+    portfoy = PortfolioState.load_from_file()
     
-    portfolio_table = Table(title="Portföy Özeti", show_header=False)
-    portfolio_table.add_column("Özellik", style="bold")
-    portfolio_table.add_column("Değer")
+    portfoy_tablo = Table(title="Portföy Özeti", show_header=False)
+    portfoy_tablo.add_column("Özellik", style="bold")
+    portfoy_tablo.add_column("Değer")
     
-    portfolio_table.add_row("Özvarlık", f"${portfolio.equity:,.2f}")
-    portfolio_table.add_row("Nakit", f"${portfolio.cash:,.2f}")
-    portfolio_table.add_row("Açık Pozisyon", str(portfolio.open_position_count))
-    portfolio_table.add_row("Toplam P&L", f"${portfolio.total_pnl:,.2f}")
-    portfolio_table.add_row("Günlük P&L", f"${portfolio.daily_pnl:,.2f}")
-    portfolio_table.add_row("Drawdown", f"{portfolio.current_drawdown:.2%}")
+    portfoy_tablo.add_row("Özvarlık", f"${portfoy.equity:,.2f}")
+    portfoy_tablo.add_row("Nakit", f"${portfoy.cash:,.2f}")
+    portfoy_tablo.add_row("Açık Pozisyon", str(portfoy.open_position_count))
+    portfoy_tablo.add_row("Toplam Kâr/Zarar", f"${portfoy.total_pnl:,.2f}")
+    portfoy_tablo.add_row("Günlük Kâr/Zarar", f"${portfoy.daily_pnl:,.2f}")
+    portfoy_tablo.add_row("Erime", f"{portfoy.current_drawdown:.2%}")
     
-    console.print(portfolio_table)
+    console.print(portfoy_tablo)
     print()
     
     return 0
 
 
-def main() -> int:
+def ana() -> int:
     """Ana CLI fonksiyonu."""
     parser = argparse.ArgumentParser(
-        description="LLM Trading System - Komut Satırı Arayüzü",
+        description="LLM Trading System - Türkçe Komut Satırı Arayüzü",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Örnekler:
-  python cli.py health                    # Sağlık kontrolü
-  python cli.py run --symbol BTC/USDT     # Paper trading başlat
-  python cli.py run --symbol BTC/USDT --execute  # Canlı trading
-  python cli.py backtest --symbol BTC/USDT --days 90
-  python cli.py portfolio                 # Portföy durumu
-  python cli.py scan                      # Piyasa taraması
-  python cli.py status                    # Sistem durumu
-  python cli.py logs                      # Logları göster
-  python cli.py tests                     # Test suite
+  python cli.py saglik                    # Sağlık kontrolü
+  python cli.py calistir --sembol BTC/USDT     # Paper trading başlat
+  python cli.py calistir --sembol BTC/USDT --yurut  # Canlı trading
+  python cli.py geriye-donuk-test --sembol BTC/USDT --gun 90
+  python cli.py portfoy                 # Portföy durumu
+  python cli.py tarama                      # Piyasa taraması
+  python cli.py durum                    # Sistem durumu
+  python cli.py kayitlar                      # Kayıtları göster
+  python cli.py testler                     # Test paketi
         """,
     )
     
-    subparsers = parser.add_subparsers(dest="command", help="Komutlar")
+    alt_parserlar = parser.add_subparsers(dest="komut", help="Komutlar")
     
-    # Health check
-    health_parser = subparsers.add_parser("health", help="Sağlık kontrolü")
-    health_parser.set_defaults(func=cmd_health)
+    # Sağlık kontrolü
+    saglik_parser = alt_parserlar.add_parser("saglik", help="Sağlık kontrolü")
+    saglik_parser.set_defaults(func=cmd_saglik)
     
-    # Run bot
-    run_parser = subparsers.add_parser("run", help="Trading bot'u çalıştır")
-    run_parser.add_argument("--symbol", "-s", required=True, help="Sembol (örn: BTC/USDT)")
-    run_parser.add_argument("--interval", "-i", default="1h", help="Interval (5m, 15m, 30m, 1h, 4h)")
-    run_parser.add_argument("--watchdog", "-w", action="store_true", help="Flash crash koruması")
-    run_parser.add_argument("--execute", "-x", action="store_true", help="Canlı işlem (DİKKAT!)")
-    run_parser.add_argument("--auto-scan", action="store_true", help="Otomatik piyasa taraması")
-    run_parser.add_argument("--max-cycles", type=int, default=0, help="Maksimum döngü sayısı (0=sınırsız)")
-    run_parser.set_defaults(func=cmd_run)
+    # Bot çalıştır
+    calistir_parser = alt_parserlar.add_parser("calistir", help="Trading bot'u çalıştır")
+    calistir_parser.add_argument("--sembol", "-s", required=True, help="Sembol (örn: BTC/USDT)")
+    calistir_parser.add_argument("--aralik", "-a", default="1h", help="Aralık (5m, 15m, 30m, 1h, 4h)")
+    calistir_parser.add_argument("--bekci", "-b", action="store_true", help="Flash crash koruması")
+    calistir_parser.add_argument("--yurut", "-y", action="store_true", help="Canlı işlem (DİKKAT!)")
+    calistir_parser.add_argument("--oto-tarama", action="store_true", help="Otomatik piyasa taraması")
+    calistir_parser.add_argument("--maks-dongu", type=int, default=0, help="Maksimum döngü sayısı (0=sınırsız)")
+    calistir_parser.set_defaults(func=cmd_calistir)
     
-    # Backtest
-    backtest_parser = subparsers.add_parser("backtest", help="Backtest çalıştır")
-    backtest_parser.add_argument("--symbol", "-s", required=True, help="Sembol")
-    backtest_parser.add_argument("--days", "-d", type=int, default=90, help="Geçmiş gün sayısı")
-    backtest_parser.set_defaults(func=cmd_backtest)
+    # Geriye dönük test
+    geriye_parser = alt_parserlar.add_parser("geriye-donuk-test", help="Geriye dönük test çalıştır")
+    geriye_parser.add_argument("--sembol", "-s", required=True, help="Sembol")
+    geriye_parser.add_argument("--gun", "-g", type=int, default=90, help="Geçmiş gün sayısı")
+    geriye_parser.set_defaults(func=cmd_geriye_donuk_test)
     
-    # Portfolio
-    portfolio_parser = subparsers.add_parser("portfolio", help="Portföy durumu")
-    portfolio_parser.set_defaults(func=cmd_portfolio)
+    # Portföy
+    portfoy_parser = alt_parserlar.add_parser("portfoy", help="Portföy durumu")
+    portfoy_parser.set_defaults(func=cmd_portfoy)
     
-    # Tests
-    tests_parser = subparsers.add_parser("tests", help="Test suite çalıştır")
-    tests_parser.add_argument("--verbose", "-v", action="store_true", help="Detaylı çıktı")
-    tests_parser.set_defaults(func=cmd_tests)
+    # Testler
+    testler_parser = alt_parserlar.add_parser("testler", help="Test paketi çalıştır")
+    testler_parser.add_argument("--ayrintili", "-a", action="store_true", help="Detaylı çıktı")
+    testler_parser.set_defaults(func=cmd_testler)
     
-    # Logs
-    logs_parser = subparsers.add_parser("logs", help="Logları göster")
-    logs_parser.add_argument("--lines", "-n", type=int, default=50, help="Satır sayısı")
-    logs_parser.set_defaults(func=cmd_logs)
+    # Kayıtlar
+    kayitlar_parser = alt_parserlar.add_parser("kayitlar", help="Kayıtları (log) göster")
+    kayitlar_parser.add_argument("--satir", "-n", type=int, default=50, help="Satır sayısı")
+    kayitlar_parser.set_defaults(func=cmd_kayitlar)
     
-    # Scan
-    scan_parser = subparsers.add_parser("scan", help="Piyasa taraması")
-    scan_parser.set_defaults(func=cmd_scan)
+    # Tarama
+    tarama_parser = alt_parserlar.add_parser("tarama", help="Piyasa taraması")
+    tarama_parser.set_defaults(func=cmd_tarama)
     
-    # Status
-    status_parser = subparsers.add_parser("status", help="Sistem durumu")
-    status_parser.set_defaults(func=cmd_status)
+    # Durum
+    durum_parser = alt_parserlar.add_parser("durum", help="Sistem durumu")
+    durum_parser.set_defaults(func=cmd_durum)
     
     args = parser.parse_args()
     
-    if not args.command:
+    if not args.komut:
         parser.print_help()
         return 0
     
@@ -366,4 +364,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(ana())
