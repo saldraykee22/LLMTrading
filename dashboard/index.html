@@ -1,378 +1,316 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Trading System — İzleme Paneli</title>
-    <meta name="description" content="LLM tabanlı otonom alım-satım sistemi izleme paneli">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <!-- 
+      STATUS: INACTIVE / ON HOLD (2026-04-19)
+      Kullanıcı isteğiyle bu arayüz dondurulmuştur. 
+      Bot operasyonları artık tamamen CLI/Terminal üzerinden yönetilecektir.
+    -->
+    <title>AEGIS | Terminal (OFFLINE)</title>
+    <!-- Modern Icons & Fonts -->
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="app">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
+    <div id="app" class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
                 <div class="logo">
-                    <span class="logo-icon">🤖</span>
-                    <h1>LLM Trading</h1>
-                </div>
-                <div class="status-badge" id="systemStatus">
-                    <span class="status-dot"></span>
-                    <span>Bağlanıyor...</span>
+                    <i class="ri-shield-flash-fill logo-icon"></i>
+                    <span class="outfit">AEGIS <span class="text-gradient">3.0</span></span>
                 </div>
             </div>
-            <div class="header-right">
-                <div class="regime-badge" id="regimeBadge">
-                    <span class="regime-label">Rejim</span>
-                    <span class="regime-value" id="regimeValue">—</span>
-                </div>
-                <div class="time-display" id="currentTime"></div>
+            
+            <div class="account-selector" id="accountSelector" style="display: none;">
+                <label class="account-label outfit">NODE SELECTOR</label>
+                <select id="accountSelect" class="account-select" onchange="switchAccount(this.value)">
+                    <option value="all">★ ALL NODES (COMBINED)</option>
+                </select>
             </div>
-        </header>
 
-        <!-- Main Grid -->
-        <main class="dashboard-grid">
-            <!-- Portfolio Summary -->
-            <section class="card card-portfolio" id="portfolioCard">
-                <div class="card-header">
-                    <h2>💰 Portföy</h2>
-                    <span class="card-badge" id="tradingMode">PAPER</span>
-                </div>
-                <div class="portfolio-stats">
-                    <div class="stat-item stat-primary">
-                        <span class="stat-label">Özvarlık</span>
-                        <span class="stat-value" id="equity">$10,000.00</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Nakit</span>
-                        <span class="stat-value" id="cash">$10,000.00</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">P&L</span>
-                        <span class="stat-value" id="totalPnl">$0.00</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Drawdown</span>
-                        <span class="stat-value" id="drawdown">0.00%</span>
-                    </div>
-                </div>
-            </section>
+            <nav class="sidebar-nav">
+                <ul class="nav-links">
+                    <li><a href="#" class="nav-item active" onclick="switchTab('dashboard')"><i class="ri-compass-3-line"></i> Dashboard</a></li>
+                    <li><a href="#" class="nav-item" onclick="switchTab('analysis')"><i class="ri-radar-fill"></i> Intelligence</a></li>
+                    <li><a href="#" class="nav-item" onclick="switchTab('settings')"><i class="ri-equalizer-line"></i> Configuration</a></li>
+                    <li><a href="#" class="nav-item" onclick="switchTab('logs')"><i class="ri-terminal-window-fill"></i> System Logs</a></li>
+                </ul>
+            </nav>
 
-            <!-- Benchmark -->
-            <section class="card card-benchmark">
-                <div class="card-header">
-                    <h2>📊 Benchmark</h2>
+            <div class="sidebar-footer">
+                <!-- Circuit Breaker Widget -->
+                <div class="circuit-breaker-widget">
+                    <div class="widget-header">
+                        <h4 class="outfit"><i class="ri-pulse-fill"></i> GUARDIAN</h4>
+                        <span class="badge badge-live" id="cbStatus">ACTIVE</span>
+                    </div>
+                    
+                    <div class="cb-metrics">
+                        <div class="cb-metric">
+                            <div class="cb-label">FALLBACKS</div>
+                            <div class="cb-value">
+                                <span id="fallbackCount">0/5</span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="fallbackProgress" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="cb-metric">
+                            <div class="cb-label">LLM HEALTH</div>
+                            <div class="cb-value">
+                                <span id="llmErrorCount">0/10</span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="llmErrorProgress" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="cb-actions">
+                        <button class="btn btn-sm btn-ghost" style="width: 100%;" onclick="resetCircuitBreaker()">
+                            <i class="ri-restart-line"></i> PURGE METRICS
+                        </button>
+                    </div>
                 </div>
-                <div class="benchmark-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Benchmark</span>
-                        <span class="stat-value" id="benchmarkSymbol">BTC/USDT</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Getiri</span>
-                        <span class="stat-value" id="benchmarkReturn">0.00%</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Alpha</span>
-                        <span class="stat-value" id="alphaValue">0.00%</span>
-                    </div>
-                </div>
-            </section>
 
-            <!-- Active Positions -->
-            <section class="card card-positions">
-                <div class="card-header">
-                    <h2>📊 Açık Pozisyonlar</h2>
-                    <span class="card-count" id="positionCount">0</span>
+                <div class="status-panel">
+                    <div class="status-info">
+                        <span class="status-label outfit">CORE ENGINE</span>
+                        <div id="botStatus" class="status-value"><span class="status-indicator online"></span> RE-LOADED</div>
+                    </div>
+                    <div class="action-buttons">
+                        <button id="startBtn" class="btn btn-success" style="padding: 10px;"><i class="ri-play-mini-fill"></i> START</button>
+                        <button id="stopBtn" class="btn btn-danger" style="padding: 10px;"><i class="ri-stop-mini-fill"></i> HALT</button>
+                    </div>
                 </div>
-                <div class="positions-list" id="positionsList">
-                    <div class="empty-state">Açık pozisyon yok</div>
-                </div>
-            </section>
+            </div>
+        </aside>
 
-            <!-- Sentiment Analysis -->
-            <section class="card card-sentiment">
-                <div class="card-header">
-                    <h2>🧠 Duyarlılık Analizi</h2>
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Cinematic Header -->
+            <header class="top-header">
+                <div class="header-title">
+                    <h2 id="current-tab-title" class="outfit">Command Center</h2>
+                    <p class="header-subtitle outfit">AUTONOMOUS RISK & EXECUTION MONITOR</p>
                 </div>
-                <div class="sentiment-display">
-                    <div class="sentiment-gauge" id="sentimentGauge">
-                        <div class="gauge-fill" id="gaugeFill"></div>
-                        <span class="gauge-value" id="sentimentValue">0.00</span>
-                    </div>
-                    <div class="sentiment-details">
-                        <div class="detail-row">
-                            <span>Sinyal</span>
-                            <span class="signal-badge" id="sentimentSignal">NEUTRAL</span>
-                        </div>
-                        <div class="detail-row">
-                            <span>Güven</span>
-                            <span id="sentimentConfidence">0%</span>
-                        </div>
-                        <div class="detail-row">
-                            <span>Risk</span>
-                            <span id="sentimentRisk">—</span>
-                        </div>
-                    </div>
+                <div class="header-actions" style="display: flex; gap: 20px; align-items: center;">
+                    <div class="time-display outfit" id="clockDisplay">00:00:00 UTC</div>
+                    <button class="btn btn-ghost" style="padding: 8px;" onclick="toggleTheme()">
+                        <i class="ri-settings-line" id="themeIcon"></i>
+                    </button>
                 </div>
-            </section>
+            </header>
 
-            <!-- Risk Metrics -->
-            <section class="card card-risk">
-                <div class="card-header">
-                    <h2>🛡️ Risk Metrikleri</h2>
-                </div>
-                <div class="risk-metrics">
-                    <div class="metric-bar">
-                        <div class="metric-info">
-                            <span>VIX</span>
-                            <span id="vixValue">—</span>
+            <div class="content-scroll">
+                <!-- Tab: Dashboard -->
+                <div id="tab-dashboard" class="tab-content active">
+                    <!-- HUD Metrics Grid -->
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">NET EQUITY</span>
+                                <i class="ri-funds-box-line metric-icon"></i>
+                            </div>
+                            <div class="metric-value outfit" id="equityValue">$0.00</div>
+                            <div class="metric-trend" id="equityChangeText">
+                                <span class="trend-value positive">+0.00%</span>
+                                <span class="trend-label">ROI SESSION</span>
+                            </div>
                         </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="vixBar" style="width: 30%"></div>
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">AVAILABLE LIQUIDITY</span>
+                                <i class="ri-exchange-dollar-line metric-icon"></i>
+                            </div>
+                            <div class="metric-value outfit" id="cashValue">$0.00</div>
+                            <div class="metric-trend">
+                                <span class="trend-label" id="dailyPnlText">$0.00 REALIZED</span>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">SENTIMENT CONSENSUS</span>
+                                <i class="ri-cpu-line metric-icon"></i>
+                            </div>
+                            <div class="metric-value outfit text-gradient" id="consensusVal">0.0</div>
+                            <div class="metric-trend">
+                                <span class="trend-value outfit" id="consensusLabel" style="color: var(--secondary)">ANALYZING...</span>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">DYNAMIC DRAWDOWN</span>
+                                <i class="ri-temp-hot-line metric-icon"></i>
+                            </div>
+                            <div class="metric-value outfit text-danger" id="drawdownValue">0.00%</div>
+                            <div class="metric-trend">
+                                <span class="trend-label">HARD LIMIT: 2.5%</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="metric-bar">
-                        <div class="metric-info">
-                            <span>CVaR (95%)</span>
-                            <span id="cvarValue">—</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill progress-warning" id="cvarBar" style="width: 20%"></div>
-                        </div>
-                    </div>
-                    <div class="metric-bar">
-                        <div class="metric-info">
-                            <span>Günlük Kayıp Limiti</span>
-                            <span id="dailyLossValue">0%</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill progress-danger" id="dailyLossBar" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-            </section>
 
-            <!-- Agent Activity Log -->
-            <section class="card card-log">
-                <div class="card-header">
-                    <h2>💬 Ajan Aktivitesi</h2>
-                    <button class="btn-clear" onclick="clearLog()">Temizle</button>
-                </div>
-                <div class="activity-log" id="activityLog">
-                    <div class="log-entry log-system">
-                        <span class="log-time">--:--</span>
-                        <span class="log-agent">Sistem</span>
-                        <span class="log-message">Dashboard başlatıldı — analiz bekleniyor</span>
+                    <!-- Main HUD Grid -->
+                    <div class="dashboard-grid">
+                        <!-- Chart Area -->
+                        <div class="panel chart-panel">
+                            <div class="panel-header">
+                                <h3 class="outfit">PERFORMANCE TELEMETRY</h3>
+                                <div class="panel-actions">
+                                    <span class="badge badge-live">REAL-TIME</span>
+                                </div>
+                            </div>
+                            <div class="panel-body">
+                                <canvas id="equityChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Intelligence Feed Area -->
+                        <div class="panel feed-panel">
+                            <div class="panel-header">
+                                <h3 class="outfit">INTELLIGENCE RADAR</h3>
+                                <i class="ri-broadcast-line text-muted"></i>
+                            </div>
+                            <div class="panel-body">
+                                <div class="feed-container" id="debateFeed">
+                                    <div class="feed-empty">
+                                        <i class="ri-loader-3-line spin" style="font-size: 32px; color: var(--primary);"></i>
+                                        <p class="outfit">SYNCING WITH LLM NODES...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Positions Table -->
+                    <div class="panel positions-panel">
+                        <div class="panel-header">
+                            <h3 class="outfit">DEPLOYED CAPITAL</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead class="outfit">
+                                    <tr>
+                                        <th>SYMBOL</th>
+                                        <th>VECTOR</th>
+                                        <th>MAGNITUDE</th>
+                                        <th>ENTRY</th>
+                                        <th>MARK</th>
+                                        <th>PNL (UNREALIZED)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="posTable" class="outfit">
+                                    <tr>
+                                        <td colspan="6" class="empty-state">No offensive positions active.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Fallback Audit Panel -->
+                    <div class="panel fallback-panel">
+                        <div class="panel-header">
+                            <h3 class="outfit"><i class="ri-fingerprint-line"></i> ANOMALY & FALLBACK AUDIT</h3>
+                            <div class="panel-actions">
+                                <span class="badge" id="fallbackSummary" style="background: rgba(255,255,255,0.05);">0 EVENTS RECORDED</span>
+                                <button class="btn btn-sm btn-ghost" onclick="fetchFallbacks()">
+                                    <i class="ri-refresh-line"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="panel-body">
+                            <div class="table-responsive">
+                                <table class="data-table fallback-table">
+                                    <thead class="outfit">
+                                        <tr>
+                                            <th>TIMESTAMP</th>
+                                            <th>AGENT</th>
+                                            <th>CAUSE</th>
+                                            <th>ASSET</th>
+                                            <th>TRACE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="fallbackTable" class="outfit">
+                                        <tr>
+                                            <td colspan="5" class="empty-state">System integrity at 100%.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </section>
 
-            <!-- Portfolio Allocation -->
-            <section class="card card-allocation">
-                <div class="card-header">
-                    <h2>🎯 Portföy Dağılımı</h2>
-                    <span class="card-badge" id="allocStatus">—</span>
+                <!-- Tab: Analysis -->
+                <div id="tab-analysis" class="tab-content">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3 class="outfit">DEEP COGNITIVE ANALYSIS</h3>
+                        </div>
+                        <div class="panel-body">
+                            <p class="text-secondary outfit">Multi-node debate logs and sentiment vectors are populating here.</p>
+                            <div id="detailedAnalysisFeed" class="mt-4"></div>
+                        </div>
+                    </div>
                 </div>
-                <div id="allocationContent">
-                    <div class="empty-state">Portföy analizi bekleniyor</div>
-                </div>
-            </section>
 
-            <!-- Recent Trades -->
-            <section class="card card-trades">
-                <div class="card-header">
-                    <h2>📋 Son İşlemler</h2>
+                <!-- Tab: Settings -->
+                <div id="tab-settings" class="tab-content">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3 class="outfit">CORE CONFIGURATION</h3>
+                        </div>
+                        <div class="panel-body">
+                            <div class="settings-form">
+                                <div class="form-group">
+                                    <label class="outfit">ASSET BASKET</label>
+                                    <input type="text" id="cfgSymbols" class="form-control" placeholder="e.g. BTCUSDT, ETHUSDT">
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="outfit">MAX CONCURRENCY</label>
+                                        <input type="number" id="cfgMaxPos" class="form-control">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="outfit">INIT SIZE %</label>
+                                        <input type="number" step="0.1" id="cfgBaseSize" class="form-control">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="outfit">RISK COEFFICIENT</label>
+                                        <input type="number" step="0.1" id="cfgMaxRisk" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="form-actions">
+                                    <button id="saveConfigBtn" class="btn btn-primary"><i class="ri-shield-check-line"></i> COMMIT CHANGES</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="trades-table-wrapper">
-                    <table class="trades-table" id="tradesTable">
-                        <thead>
-                            <tr>
-                                <th>Zaman</th>
-                                <th>Sembol</th>
-                                <th>Yön</th>
-                                <th>Giriş</th>
-                                <th>Çıkış</th>
-                                <th>P&L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tradesBody">
-                            <tr class="empty-row">
-                                <td colspan="6">Henüz işlem yok</td>
-                            </tr>
-                        </tbody>
-                    </table>
+
+                <!-- Tab: Logs -->
+                <div id="tab-logs" class="tab-content">
+                    <div class="panel terminal-panel">
+                        <div class="panel-header">
+                            <h3 class="outfit">TELEMETRY STREAM</h3>
+                            <button class="btn btn-sm btn-ghost" onclick="document.getElementById('logWindow').innerHTML = ''"><i class="ri-skull-2-line"></i> PURGE</button>
+                        </div>
+                        <div class="panel-body p-0">
+                            <div id="logWindow" class="terminal-output"></div>
+                        </div>
+                    </div>
                 </div>
-            </section>
+            </div>
         </main>
-
-        <!-- V2 Tabs -->
-        <div class="v2-tabs">
-            <button class="tab-btn active" data-tab="tab-charts">📈 Grafikler</button>
-            <button class="tab-btn" data-tab="tab-rl">🤖 RL Model</button>
-            <button class="tab-btn" data-tab="tab-drift">🔍 Drift Analizi</button>
-            <button class="tab-btn" data-tab="tab-montecarlo">🎲 Monte Carlo</button>
-            <button class="tab-btn" data-tab="tab-rag">💾 RAG Sorguları</button>
-            <button class="tab-btn" data-tab="tab-retro">📖 Retrospektif</button>
-        </div>
-
-        <div class="v2-tab-content">
-            <!-- Charts Tab -->
-            <div class="tab-pane active" id="tab-charts">
-                <div class="charts-grid">
-                    <div class="card card-chart">
-                        <div class="card-header">
-                            <h2>📊 Fiyat Grafiği</h2>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="priceChart"></canvas>
-                        </div>
-                    </div>
-                    <div class="card card-chart">
-                        <div class="card-header">
-                            <h2>💹 Özvarlık Eğrisi</h2>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="equityChart"></canvas>
-                        </div>
-                    </div>
-                    <div class="card card-chart">
-                        <div class="card-header">
-                            <h2>📈 İşlem Geçmişi</h2>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="tradeHeatmap"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- RL Tab -->
-            <div class="tab-pane" id="tab-rl">
-                <div class="charts-grid">
-                    <div class="card card-rl-status">
-                        <div class="card-header">
-                            <h2>🤖 RL Model Durumu</h2>
-                            <span class="rl-status-badge" id="rlStatusBadge">—</span>
-                        </div>
-                        <div class="rl-gauge-container">
-                            <div class="rl-gauge">
-                                <svg viewBox="0 0 200 120" class="gauge-svg">
-                                    <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="12" stroke-linecap="round"/>
-                                    <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="var(--accent-green)" stroke-width="12" stroke-linecap="round" id="rlGaugeArc" stroke-dasharray="0 251.2"/>
-                                </svg>
-                                <div class="rl-gauge-value" id="rlConfidenceValue">0.00</div>
-                            </div>
-                            <div class="rl-details">
-                                <div class="rl-detail-row">
-                                    <span>Model Versiyonu</span>
-                                    <span id="rlModelVersion">—</span>
-                                </div>
-                                <div class="rl-detail-row">
-                                    <span>Toplam Episode</span>
-                                    <span id="rlEpisodes">—</span>
-                                </div>
-                                <div class="rl-detail-row">
-                                    <span>Son Eğitim</span>
-                                    <span id="rlLastTrained">—</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Drift Tab -->
-            <div class="tab-pane" id="tab-drift">
-                <div class="charts-grid">
-                    <div class="card card-drift-summary">
-                        <div class="card-header">
-                            <h2>🔍 Drift Özeti</h2>
-                        </div>
-                        <div id="driftSummaryContent">
-                            <div class="empty-state">Veri bekleniyor</div>
-                        </div>
-                    </div>
-                    <div class="card card-drift-heatmap">
-                        <div class="card-header">
-                            <h2>🌡️ Drift Heatmap (30 Gün)</h2>
-                        </div>
-                        <div class="heatmap-container" id="driftHeatmap">
-                            <div class="empty-state">Veri bekleniyor</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Monte Carlo Tab -->
-            <div class="tab-pane" id="tab-montecarlo">
-                <div class="charts-grid">
-                    <div class="card card-monte-carlo">
-                        <div class="card-header">
-                            <h2>🎲 Monte Carlo Simülasyonu</h2>
-                        </div>
-                        <div class="mc-stats" id="mcStats">
-                            <div class="mc-stat-item">
-                                <span>Simülasyon</span>
-                                <span id="mcSimCount">1000</span>
-                            </div>
-                            <div class="mc-stat-item">
-                                <span>Ortalama Son</span>
-                                <span id="mcMean">$0</span>
-                            </div>
-                            <div class="mc-stat-item">
-                                <span>Kar Olasılığı</span>
-                                <span id="mcProbProfit">0%</span>
-                            </div>
-                            <div class="mc-stat-item">
-                                <span>Min Son</span>
-                                <span id="mcMin">$0</span>
-                            </div>
-                            <div class="mc-stat-item">
-                                <span>Max Son</span>
-                                <span id="mcMax">$0</span>
-                            </div>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="monteCarloChart"></canvas>
-                        </div>
-                        <div class="mc-percentiles" id="mcPercentiles"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- RAG Tab -->
-            <div class="tab-pane" id="tab-rag">
-                <div class="charts-grid">
-                    <div class="card card-rag-queries">
-                        <div class="card-header">
-                            <h2>💾 RAG Sorgu Geçmişi</h2>
-                        </div>
-                        <div class="rag-queries-list" id="ragQueriesList">
-                            <div class="empty-state">Veri bekleniyor</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Retrospective Tab -->
-            <div class="tab-pane" id="tab-retro">
-                <div class="charts-grid">
-                    <div class="card card-retrospective">
-                        <div class="card-header">
-                            <h2>📖 Retrospektif Analizler</h2>
-                        </div>
-                        <div class="retro-list" id="retroList">
-                            <div class="empty-state">Veri bekleniyor</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
-    <script src="app.js"></script>
+
+    <script src="/static/app.js"></script>
 </body>
 </html>

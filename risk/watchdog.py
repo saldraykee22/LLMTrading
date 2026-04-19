@@ -12,9 +12,12 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from config.settings import get_trading_params
+from pathlib import Path
+
+from config.settings import DATA_DIR, get_trading_params
 from data.market_data import MarketDataClient
 from risk.portfolio import PortfolioState
+from risk.system_status import SystemStatus
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +28,26 @@ class Watchdog:
     def __init__(
         self,
         symbols: list[str],
-        portfolio: PortfolioState,
+        portfolio: PortfolioState | None = None,
         exchange_client=None,
+        account_manager=None,
         crash_threshold_pct: float = 5.0,
         check_interval_sec: int = 10,
+        heartbeat_timeout_sec: int = 60,
     ) -> None:
         self.symbols = symbols
         self.portfolio = portfolio
         self.exchange_client = exchange_client
+        self._account_manager = account_manager
         self.crash_threshold_pct = crash_threshold_pct
         self.check_interval_sec = check_interval_sec
+        self.heartbeat_timeout_sec = heartbeat_timeout_sec
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._market_client = MarketDataClient()
         self._lock = threading.Lock()
+        self._last_heartbeat = time.time()
+        self._system_status = SystemStatus.get_instance()
 
     def start(self) -> None:
         """Starts the watchdog background thread."""
@@ -60,9 +69,41 @@ class Watchdog:
             try:
                 self._check_symbols()
                 self._check_position_sl_tp()
+                # Heartbeat güncelle
+                self._update_heartbeat()
             except Exception as e:
                 logger.error("Watchdog check failed: %s", e)
             self._stop_event.wait(self.check_interval_sec)
+    
+    def _update_heartbeat(self) -> None:
+        """Heartbeat timestamp'ini güncelle."""
+        with self._lock:
+            self._last_heartbeat = time.time()
+    
+    def check_heartbeat(self) -> bool:
+        """
+        Watchdog'un hala çalışıp çalışmadığını kontrol et.
+        Main thread'den çağrılır.
+        
+        Returns:
+            True if watchdog is alive, False if timeout
+        """
+        with self._lock:
+            elapsed = time.time() - self._last_heartbeat
+        
+        if elapsed > self.heartbeat_timeout_sec:
+            logger.critical(
+                "🚨 WATCHDOG HEARTBEAT TIMEOUT: %.1f seconds (threshold: %d)",
+                elapsed,
+                self.heartbeat_timeout_sec,
+            )
+            # SystemStatus'u emergency stop'a al
+            self._system_status.emergency_stop(
+                f"Watchdog heartbeat timeout ({elapsed:.1f}s > {self.heartbeat_timeout_sec}s)"
+            )
+            return False
+        
+        return True
 
     def _check_symbols(self) -> None:
         """Checks all symbols for flash crash conditions."""
@@ -95,9 +136,32 @@ class Watchdog:
 
     def _check_position_sl_tp(self) -> None:
         """Checks all open positions for stop-loss and take-profit triggers - thread-safe."""
-        # Thread-safe pozisyon kopyası al
-        positions_snapshot = self.portfolio.get_positions_safe()
-
+        # Multi-account mode: check all accounts
+        if self._account_manager:
+            self._check_sl_tp_multi_account()
+            return
+        
+        # Single account mode
+        if self.portfolio:
+            self._check_sl_tp_single(self.portfolio, self.exchange_client)
+    
+    def _check_sl_tp_multi_account(self) -> None:
+        """Check SL/TP for all accounts in multi-account mode."""
+        for name, data in self._account_manager.get_all_accounts().items():
+            portfolio = data["portfolio"]
+            client = data["client"]
+            self._check_sl_tp_single(portfolio, client, account_name=name)
+    
+    def _check_sl_tp_single(self, portfolio, exchange_client, account_name: str = "") -> None:
+        """Check SL/TP for single account."""
+        prefix = f"[{account_name}] " if account_name else ""
+        
+        try:
+            positions_snapshot = portfolio.get_positions_safe()
+        except Exception as e:
+            logger.warning(f"{prefix}SL/TP check failed - could not get positions: {e}")
+            return
+        
         for pos in positions_snapshot:
             try:
                 if pos.stop_loss <= 0 and pos.take_profit <= 0:
@@ -109,39 +173,47 @@ class Watchdog:
 
                 if pos.should_stop_loss(current_price):
                     logger.warning(
-                        "STOP-LOSS TRIGGERED: %s (entry=%.4f, SL=%.4f, current=%.4f, amount=%.6f)",
+                        f"{prefix}STOP-LOSS TRIGGERED: %s (entry=%.4f, SL=%.4f, current=%.4f, amount=%.6f)",
                         pos.symbol,
                         pos.entry_price,
                         pos.stop_loss,
                         current_price,
                         pos.amount,
                     )
-                    self._emergency_close(pos, current_price, "stop-loss")
+                    self._emergency_close(pos, current_price, "stop-loss", exchange_client, portfolio, account_name)
 
                 elif pos.should_take_profit(current_price):
                     logger.info(
-                        "TAKE-PROFIT TRIGGERED: %s (entry=%.4f, TP=%.4f, current=%.4f, amount=%.6f)",
+                        f"{prefix}TAKE-PROFIT TRIGGERED: %s (entry=%.4f, TP=%.4f, current=%.4f, amount=%.6f)",
                         pos.symbol,
                         pos.entry_price,
                         pos.take_profit,
                         current_price,
                         pos.amount,
                     )
-                    self._emergency_close(pos, current_price, "take-profit")
+                    self._emergency_close(pos, current_price, "take-profit", exchange_client, portfolio, account_name)
 
             except Exception as e:
-                logger.warning("SL/TP check failed for %s: %s", pos.symbol, e)
+                logger.warning(f"{prefix}SL/TP check failed for %s: %s", pos.symbol, e)
 
-    def _emergency_close(self, pos, price: float, reason: str) -> None:
-        """Executes an emergency close for a position - thread-safe."""
-        if not self.exchange_client:
-            logger.error("No exchange client available for emergency close")
-            return
+    def _emergency_close(
+        self,
+        pos,
+        price: float,
+        reason: str,
+        exchange_client=None,
+        portfolio=None,
+        account_name: str = "",
+    ) -> None:
+        """Executes an emergency close for a position - atomic."""
+        from risk.portfolio import _portfolio_lock
 
-        # Thread-safe pozisyon kontrolü
-        current_pos = self.portfolio.get_position_by_symbol_safe(pos.symbol)
-        if current_pos is None:
-            logger.info("Pozisyon zaten kapalı: %s", pos.symbol)
+        client = exchange_client or self.exchange_client
+        portf = portfolio or self.portfolio
+        prefix = f"[{account_name}] " if account_name else ""
+
+        if not client:
+            logger.error(f"{prefix}No exchange client available for emergency close")
             return
 
         from execution.order_manager import TradeOrder
@@ -153,40 +225,96 @@ class Watchdog:
             amount=pos.amount,
         )
         try:
-            result = self.exchange_client.execute_order(order, price)
+            with _portfolio_lock:
+                if portf.get_position_by_symbol_safe(pos.symbol) is None:
+                    logger.info(f"{prefix}Position already closed: %s", pos.symbol)
+                    return
+
+            result = client.execute_order(order, price)
             if result.get("status") in ("filled", "closed", "open"):
                 fill_price = float(result.get("price") or price)
-                # Thread-safe kapatma
-                self.portfolio.close_position_safe(pos.symbol, fill_price)
-                logger.warning(
-                    "Emergency sell executed for %s due to %s",
-                    pos.symbol,
-                    reason,
-                )
+                # Atomic: Tek lock bloğunda pozisyon kontrolü + kapatma
+                with _portfolio_lock:
+                    close_result = portf.close_position_safe(pos.symbol, fill_price)
+                    if close_result is None:
+                        logger.info(f"{prefix}Position already closed: %s", pos.symbol)
+                        return
+                    logger.warning(
+                        f"{prefix}Emergency sell executed for %s due to %s",
+                        pos.symbol,
+                        reason,
+                    )
                 # Stop further execution
                 try:
-                    STOP_PATH = Path("data/STOP")
+                    STOP_PATH = DATA_DIR / "STOP"
                     STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
                     STOP_PATH.touch()
                     logger.critical("EMERGENCY HALT triggered by Watchdog.")
                 except OSError as stop_err:
                     logger.critical("Failed to create STOP file: %s", stop_err)
-                    # Fallback: Circuit breaker'ı tetikle
                     from risk.circuit_breaker import CircuitBreaker
                     cb = CircuitBreaker()
                     cb.manual_stop()
         except Exception as e:
-            logger.error("Emergency sell failed for %s: %s", pos.symbol, e)
+            logger.error(f"{prefix}Emergency sell failed for %s: %s", pos.symbol, e)
 
-    def _handle_crash(self, symbol: str, price: float, drop_pct: float) -> None:
+    def _handle_crash(
+        self,
+        symbol: str,
+        price: float,
+        drop_pct: float,
+        account_name: str = "",
+    ) -> None:
         """Handles a detected flash crash for a symbol - thread-safe."""
-        # Thread-safe pozisyon kontrolü
-        pos = self.portfolio.get_position_by_symbol_safe(symbol)
+        # Multi-account mode: iterate all accounts if no specific account given
+        if self._account_manager:
+            if account_name:
+                # Specific account
+                data = self._account_manager.get_account(account_name)
+                if data:
+                    self._handle_crash_single(
+                        symbol, price, drop_pct,
+                        data["client"],
+                        data["portfolio"],
+                        account_name
+                    )
+            else:
+                # No account specified: crash to ALL accounts
+                for name, data in self._account_manager.get_all_accounts().items():
+                    self._handle_crash_single(
+                        symbol, price, drop_pct,
+                        data["client"],
+                        data["portfolio"],
+                        name
+                    )
+            return
+        
+        # Single account mode
+        self._handle_crash_single(symbol, price, drop_pct, self.exchange_client, self.portfolio, "")
+    
+    def _handle_crash_single(
+        self,
+        symbol: str,
+        price: float,
+        drop_pct: float,
+        exchange_client,
+        portfolio,
+        account_name: str = "",
+    ) -> None:
+        """Handle crash for single account."""
+        prefix = f"[{account_name}] " if account_name else ""
+        
+        try:
+            pos = portfolio.get_position_by_symbol_safe(symbol)
+        except Exception as e:
+            logger.warning(f"{prefix}Flash crash - could not get position: {e}")
+            return
+            
         if pos is None:
-            logger.info("Flash crash: pozisyon bulunamadı %s", symbol)
+            logger.info(f"{prefix}Flash crash: pozisyon bulunamadı %s", symbol)
             return
 
-        if self.exchange_client:
+        if exchange_client:
             from execution.order_manager import TradeOrder
 
             order = TradeOrder(
@@ -196,18 +324,19 @@ class Watchdog:
                 amount=pos.amount,
             )
             try:
-                result = self.exchange_client.execute_order(order, price)
+                result = exchange_client.execute_order(order, price)
                 if result.get("status") in ("filled", "closed", "open"):
-                    # Thread-safe kapatma
-                    self.portfolio.remove_position_safe(symbol)
+                    fill_price = float(result.get("price") or price)
+                    # Thread-safe kapatma ve P&L kaydı
+                    portfolio.close_position_safe(symbol, fill_price)
                     logger.warning(
-                        "Emergency sell executed for %s due to flash crash (%.2f%% drop)",
+                        f"{prefix}Emergency sell executed for %s due to flash crash (%.2f%% drop)",
                         symbol,
                         drop_pct,
                     )
                     # Stop further execution
                     try:
-                        STOP_PATH = Path("data/STOP")
+                        STOP_PATH = DATA_DIR / "STOP"
                         STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
                         STOP_PATH.touch()
                         logger.critical("EMERGENCY HALT triggered by Watchdog.")
@@ -218,7 +347,7 @@ class Watchdog:
                         cb = CircuitBreaker()
                         cb.manual_stop()
             except Exception as e:
-                logger.error("Emergency sell failed for %s: %s", symbol, e)
+                logger.error(f"{prefix}Emergency sell failed for %s: %s", symbol, e)
 
     def get_status(self) -> dict:
         """Returns watchdog status."""

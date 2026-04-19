@@ -19,10 +19,11 @@ The Prompt Evolver automatically updates agent prompts when drift is detected or
 | Retrospective lessons | Appends `## ÖĞRENİLEN DERSLER` section with root causes and lessons |
 | Both | Combines both sections into comprehensive updated prompt |
 
-### Versioning
+### Versioning & Draft Mode (Human-in-the-loop)
 
-- Prompt files stored in `data/prompt_versions/{agent_name}_v{N}.txt`
-- Metadata tracked in `data/prompt_versions/manifest.json`
+- Prompt files are generated as drafts in `data/prompt_versions/{agent_name}_v{N}_draft.txt`
+- Metadata is tracked in `data/prompt_versions/manifest.json` with status `"pending_review"`
+- Agents continue to use the active `current_version` until a human manually approves the draft (changing the status in manifest and renaming the file). This prevents **Catastrophic Forgetting** caused by autonomous unverified modifications.
 - Each version includes: changelog, timestamp, file path, rollback status
 
 ## Usage

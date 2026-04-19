@@ -1,27 +1,31 @@
 {
-  "initial_cash": 10000.0,
-  "cash": 6650.0,
+  "initial_cash": 10000,
+  "cash": 5000.0,
   "positions": [
     {
       "symbol": "BTC/USDT",
-      "entry_price": 67000,
-      "amount": 0.05,
-      "entry_time": "2026-04-04T20:19:28.078771+00:00",
+      "entry_price": 50000,
+      "amount": 0.1,
+      "entry_time": "2026-04-19T20:26:51.283365+00:00",
       "side": "long",
-      "stop_loss": 65000,
-      "take_profit": 72000,
-      "current_price": 69974.27,
-      "unrealized_pnl": 148.7135000000002,
-      "unrealized_pnl_pct": 0.04439208955223887
+      "stop_loss": 0.0,
+      "take_profit": 0.0,
+      "current_price": 50000,
+      "unrealized_pnl": 0.0,
+      "unrealized_pnl_pct": 0.0,
+      "target_size": 0.1,
+      "target_size_usd": 5000.0,
+      "executed_tranches": 1,
+      "remaining_size": 0.0
     }
   ],
   "closed_trades": [],
   "daily_pnl": 0.0,
-  "daily_pnl_date": "2026-04-06",
+  "daily_pnl_date": "2026-04-19",
   "total_pnl": 0.0,
-  "max_equity": 10148.7135,
+  "max_equity": 10000.0,
   "current_drawdown": 0.0,
   "benchmark_symbol": "BTC/USDT",
-  "benchmark_return": -0.012569718738266207,
-  "alpha": 0.02744106873826619
+  "benchmark_return": 0.0,
+  "alpha": 0.0
 }

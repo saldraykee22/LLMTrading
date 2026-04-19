@@ -45,7 +45,14 @@ class MarketDataClient:
             if self._settings.binance_testnet:
                 config["sandbox"] = True
 
-            self._exchange_private = ccxt.binance(config)
+            try:
+                self._exchange_private = ccxt.binance(config)
+            except Exception as e:
+                logger.error("Binance private connection failed: %s", str(e))
+                raise
+            finally:
+                config["apiKey"] = "***"
+                config["secret"] = "***"
             logger.info(
                 "Binance private connection established (testnet=%s)",
                 self._settings.binance_testnet,
@@ -241,6 +248,16 @@ class MarketDataClient:
             interval = tf_map.get(timeframe or "1d", "1d")
             return self.fetch_stock_ohlcv(symbol, interval, days)
 
+    def fetch_tickers(self) -> dict:
+        """Binance'deki tüm ticker verilerini (fiyat, hacim, değişim) çeker."""
+        exchange = self._get_public_exchange()
+        try:
+            tickers = exchange.fetch_tickers()
+            return tickers
+        except ccxt.BaseError as e:
+            logger.error("Ticker verisi çekme hatası: %s", e)
+            return {}
+
     # ── VIX Verisi ─────────────────────────────────────────
     def fetch_vix(self, days: int = 90) -> pd.DataFrame:
         """VIX (CBOE Volatilite İndeksi) verisini çeker."""
@@ -282,3 +299,26 @@ class MarketDataClient:
             except Exception as e:
                 logger.error("Fiyat hatası (%s): %s", resolved.symbol, e)
                 return None
+
+
+# ── Async Metodlar (Kademeli Migration) ─────────────────────
+
+    async def fetch_ohlcv_async(
+        self,
+        symbol: str,
+        timeframe: str | None = None,
+        days: int | None = None,
+    ) -> pd.DataFrame:
+        """Async versiyon - aynı veri kaynağını kullanır."""
+        import asyncio
+        return await asyncio.to_thread(self.fetch_ohlcv, symbol, timeframe, days)
+
+    async def fetch_balance_async(self) -> dict:
+        """Async versiyon - Binance bakiyesi."""
+        import asyncio
+        return await asyncio.to_thread(self.fetch_balance)
+
+    async def fetch_current_price_async(self, symbol: str) -> float | None:
+        """Async versiyon - güncel fiyat."""
+        import asyncio
+        return await asyncio.to_thread(self.fetch_current_price, symbol)

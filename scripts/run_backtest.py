@@ -7,16 +7,24 @@ Kullanım:
     python scripts/run_backtest.py --symbol BTC/USDT --days 365
     python scripts/run_backtest.py --symbol AAPL --mode walk-forward
     python scripts/run_backtest.py --symbol BTC/USDT --timeframe 1h --days 90
+    python scripts/run_backtest.py --symbol BTC/USDT --mode llm --cache --provider deepseek
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import io
 import json
 import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Windows console encoding fix
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -424,27 +432,109 @@ def run_walkforward_backtest(
 def main() -> None:
     parser = argparse.ArgumentParser(description="LLM Trading Backtest")
     parser.add_argument("--symbol", "-s", required=True, help="Varlık sembolü")
-    parser.add_argument("--days", "-d", type=int, default=365, help="Geçmiş gün sayısı")
+    parser.add_argument("--days", "-d", type=int, default=90, help="Geçmiş gün sayısı")
     parser.add_argument(
         "--timeframe",
         "-t",
-        default="1d",
-        choices=["1m", "5m", "15m", "1h", "4h", "1d", "1w"],
+        default="1h",
+        choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"],
         help="Mum periyodu",
     )
     parser.add_argument(
         "--mode",
         "-m",
-        default="simple",
-        choices=["simple", "walk-forward"],
+        default="llm",
+        choices=["simple", "walk-forward", "llm"],
         help="Backtest modu",
+    )
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        default=True,
+        help="LLM cache kullan (önerilen, default: aktif)",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_false",
+        dest="cache",
+        help="Cache kapat",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Cache temizle ve yeniden başla",
+    )
+    parser.add_argument(
+        "--provider",
+        "-p",
+        default="deepseek",
+        choices=["openrouter", "deepseek", "ollama"],
+        help="LLM sağlayıcı",
+    )
+    parser.add_argument(
+        "--initial-cash",
+        type=float,
+        default=10000,
+        help="Başlangıç sermayesi",
     )
     parser.add_argument("--log-level", "-l", default="INFO")
 
     args = parser.parse_args()
     setup_logging(args.log_level)
 
-    if args.mode == "simple":
+    if args.mode == "llm":
+        # LLM backtest with full pipeline
+        from backtest.llm_backtest import LLMBacktestEngine, run_llm_backtest
+        
+        console.print(
+            Panel(
+                f"[bold cyan]LLM Backtest (Full Pipeline)[/bold cyan]\n"
+                f"Symbol: {args.symbol}\n"
+                f"Timeframe: {args.timeframe}\n"
+                f"Days: {args.days}\n"
+                f"Provider: {args.provider}\n"
+                f"Cache: {'Enabled' if args.cache else 'Disabled'}\n"
+                f"Initial Cash: ${args.initial_cash:,.2f}",
+                title="🤖 LLM Backtest Mode",
+                border_style="cyan",
+            )
+        )
+        
+        if args.clear_cache:
+            from backtest.backtest_cache import BacktestCache
+            cache = BacktestCache()
+            count = cache.clear(args.symbol)
+            console.print(f"[green]Cleared {count} cache entries[/green]\n")
+        
+        # Run async backtest
+        engine = LLMBacktestEngine(
+            symbol=args.symbol,
+            initial_cash=args.initial_cash,
+            cache_enabled=args.cache,
+            provider=args.provider,
+            timeframe=args.timeframe,
+        )
+        
+        # Fetch data (from existing market data client)
+        from data.market_data import MarketDataClient
+        market_client = MarketDataClient()
+        df = market_client.fetch_ohlcv(args.symbol, timeframe=args.timeframe, days=args.days)
+        
+        if df.empty or len(df) < 10:
+            console.print(f"[red]Insufficient data ({len(df)} bars) - minimum 10 bars required[/red]")
+            sys.exit(1)
+            
+        result = asyncio.run(engine.run_full_backtest(df, days=args.days))
+        
+        # Save results
+        report_path = engine.save_results(result)
+        console.print(f"\n[bold green]✅ Report saved to: [/bold green]{report_path}")
+        
+        if "error" in result:
+            console.print(f"[red]Backtest failed: {result['error']}[/red]")
+            sys.exit(1)
+    
+    elif args.mode == "simple":
         run_simple_backtest(args.symbol, args.days, args.timeframe)
     else:
         run_walkforward_backtest(args.symbol, args.days, args.timeframe)

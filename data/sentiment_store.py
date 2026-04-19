@@ -44,17 +44,29 @@ class SentimentStore:
     """JSON tabanlı duyarlılık deposu — RAM cache ile optimize edilmiş."""
 
     MAX_CACHE_PER_SYMBOL = 500
+    MAX_SYMBOLS_IN_CACHE = 100
 
     def __init__(self, store_dir: Path | None = None) -> None:
         self._dir = store_dir or STORE_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._cache: dict[str, list[SentimentRecord]] = {}
+        from collections import OrderedDict
+        self._cache: OrderedDict[str, list[SentimentRecord]] = OrderedDict()
 
     def _file_path(self, symbol: str) -> Path:
         """Sembol için depo dosya yolu."""
         clean = symbol.replace("/", "_").replace(".", "_").upper()
         return self._dir / f"{clean}_sentiment.jsonl"
+
+    def _update_lru(self, symbol: str) -> None:
+        """LRU mantığı için sembolü en sona taşır."""
+        if symbol in self._cache:
+            self._cache.move_to_end(symbol)
+
+    def _evict_lru(self) -> None:
+        """Kapasite aşıldıysa en eski sembolü cache'den siler."""
+        while len(self._cache) > self.MAX_SYMBOLS_IN_CACHE:
+            self._cache.popitem(last=False)
 
     def save(
         self, record: SentimentRecord, min_interval_minutes: int | None = None
@@ -81,6 +93,7 @@ class SentimentStore:
                         record.symbol,
                         latest.timestamp,
                     )
+                    self._update_lru(record.symbol)
                     return False
 
             path = self._file_path(record.symbol)
@@ -97,6 +110,9 @@ class SentimentStore:
                 self._cache[record.symbol] = self._cache[record.symbol][
                     -self.MAX_CACHE_PER_SYMBOL // 2 :
                 ]
+            
+            self._update_lru(record.symbol)
+            self._evict_lru()
 
             logger.debug(
                 "Sentiment kaydedildi: %s → %.2f", record.symbol, record.sentiment_score
@@ -109,37 +125,41 @@ class SentimentStore:
         last_n: int | None = None,
     ) -> list[SentimentRecord]:
         """Sembol için kayıtları yükler — RAM cache öncelikli."""
-        # RAM cache'den kontrol
-        if symbol in self._cache:
-            records = self._cache[symbol]
+        with self._lock:
+            # RAM cache'den kontrol
+            if symbol in self._cache:
+                self._update_lru(symbol)
+                records = self._cache[symbol]
+                if last_n:
+                    return records[-last_n:]
+                return records
+
+            # Diskten yükle ve cache'e al
+            path = self._file_path(symbol)
+            if not path.exists():
+                return []
+
+            records: list[SentimentRecord] = []
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        records.append(SentimentRecord(**data))
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+            # Cache'e al
+            self._cache[symbol] = records
+            self._update_lru(symbol)
+            self._evict_lru()
+
             if last_n:
                 return records[-last_n:]
+
             return records
-
-        # Diskten yükle ve cache'e al
-        path = self._file_path(symbol)
-        if not path.exists():
-            return []
-
-        records: list[SentimentRecord] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    records.append(SentimentRecord(**data))
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-        # Cache'e al
-        self._cache[symbol] = records
-
-        if last_n:
-            return records[-last_n:]
-
-        return records
 
     def get_latest(self, symbol: str) -> SentimentRecord | None:
         """En son duyarlılık kaydını döndürür — RAM cache'den (O(1))."""

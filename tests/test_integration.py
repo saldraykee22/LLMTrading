@@ -83,8 +83,9 @@ class TestLLMTimeouts:
         
         # Timeout parametresi kabul edilmeli
         def mock_invoke(*args, **kwargs):
-            assert "request_timeout" in kwargs
-            assert kwargs["request_timeout"] == 60
+            # renamed to 'timeout' in llm_retry.py for LangChain compatibility
+            assert "timeout" in kwargs
+            assert kwargs["timeout"] == 60
             return type('obj', (object,), {"content": "test"})()
         
         result = invoke_with_retry(
@@ -110,12 +111,15 @@ class TestCircuitBreakerPersistence:
         
         # Yeni circuit breaker
         cb1 = CircuitBreaker()
+        cb1._params.system.reset_counters_on_startup = False
         cb1.consecutive_losses = 5
         cb1.consecutive_llm_errors = 3
         cb1._save_state()
         
         # Yeni instance (state'i yüklemeli)
         cb2 = CircuitBreaker()
+        cb2._params.system.reset_counters_on_startup = False
+        cb2._load_state()
         
         assert cb2.consecutive_losses == 5, "State yüklenmedi!"
         assert cb2.consecutive_llm_errors == 3, "State yüklenmedi!"

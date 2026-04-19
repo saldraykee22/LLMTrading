@@ -14,7 +14,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
-from config.settings import PROMPTS_DIR, get_trading_params
+from config.settings import get_trading_params
 from models.sentiment_analyzer import SentimentAnalyzer, create_agent_llm
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
@@ -130,11 +130,19 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_msg),
             ],
-            max_tokens=500,
+            max_tokens=params.limits.max_tokens_research,
             response_format={"type": "json_object"},
             max_retries=3,
             base_delay=1.0,
-            request_timeout=60,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "recommendation": "hold",
+                "confidence": 0.3,
+                "reasoning": "LLM API error - hold önerisi (güvenlik fallback)",
+                "key_points": ["API fallback - analiz yapılamadı"],
+                "risk_factors": ["LLM hatası nedeniyle detaylı analiz yok"]
+            },
         )
         research_result = extract_json(response.content)
         if research_result.get("__parse_error__"):
@@ -150,10 +158,11 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
             }
     except Exception as e:
         logger.error("Araştırma raporu hatası: %s", e)
+        # Fallback zaten döndü
         research_result = {
             "recommendation": "hold",
             "confidence": 0.3,
-            "reasoning": f"Araştırma raporu oluşturulamadı: {e}",
+            "reasoning": f"LLM API error - hold önerisi: {e}",
             "parse_error": True,
         }
 

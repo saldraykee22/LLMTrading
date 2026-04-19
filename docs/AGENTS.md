@@ -30,6 +30,7 @@ risk_manager      (Deterministik kontroller + LLM degerlendirmesi)
 **Faz 1 oncesi:** Risk red -> Coordinator'a donup tekrar analiz (ayni veriyle, anlamsiz)
 **Faz 1 sonrasi:** Risk red -> `hold_decision` dugumu -> direkt END (loop yok, maliyet yok)
 
+
 ---
 
 ## 1. Coordinator Node (Koordinator)
@@ -129,7 +130,7 @@ System prompt'u `prompts/risk_manager.txt`'ten okunur. Deterministik kontrol son
 
 ---
 
-## 5. Trader (Islemci / Yurutucuajan)
+## 5. Trader (Islemci / Yurutucu ajan)
 
 **Dosya:** `agents/trader.py`
 
@@ -415,3 +416,44 @@ Tüm ajan LLM çağrıları artık `utils/llm_retry.py::invoke_with_retry()` ile
 1. LLM çağrısı başarısız olursa → `base_delay * 2^attempt` saniye bekle
 2. Maksimum deneme sayısına ulaşılırsa → exception yukarı fırlatılır
 3. Ajan try/except bloğu ile fallback değer döner
+
+---
+
+## 6. Live Trading & Operasyon [FAZ 7]
+
+Sistem artık `scripts/run_live.py` üzerinden canlı işlem yapabilmektedir.
+
+### Live Klasör Yapısı
+- `live/exchange_client.py`: CCXT tabanlı borsa entegrasyonu.
+- `live/order_executor.py`: Gerçek emir gönderimi ve takip.
+- `live/balance_monitor.py`: Bakiye ve harcama takibi.
+
+### CLI Kullanım Örnekleri
+```bash
+# Sadece analiz (Dry Run)
+python scripts/run_live.py --symbols BTC/USDT --dry-run
+
+# Canlı İşlem
+python scripts/run_live.py --symbols BTC/USDT,ETH/USDT --interval 1h
+```
+
+### Yapılandırma (.env)
+```env
+BINANCE_API_KEY=xxx
+BINANCE_SECRET_KEY=yyy
+EXECUTION_MODE=live
+```
+
+---
+
+## 📅 Roadmap (Yol Haritası)
+
+- [x] **Faz 1-3:** Backtest Engine & Temel Ajanlar
+- [x] **Faz 4-5:** Portföy Yönetimi & Maliyet Optimizasyonu
+- [x] **Faz 6:** Drift Monitor & RAG Memory
+- [x] **Faz 7:** Ensemble Voter & Live Trading Entegrasyonu
+- [ ] **Faz 8:** Advanced RAG & Long-term Memory
+- [ ] **Faz 9:** RL-based Hyperparameter Tuning
+
+---
+> **Referanslar:** [RISK_MANAGEMENT.md](RISK_MANAGEMENT.md) | [DRIFT_MONITOR.md](DRIFT_MONITOR.md) | [INDEX.md](INDEX.md)

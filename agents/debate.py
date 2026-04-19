@@ -16,7 +16,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
-from config.settings import PROMPTS_DIR, get_trading_params
+from config.settings import get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
@@ -150,15 +150,30 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                     content=f"{context}\n\nBu varlık için yükseliş tezini sun. Somut verilerle destekle."
                 ),
             ],
-            max_tokens=400,
+            max_tokens=params.limits.max_tokens_debate,
             response_format={"type": "json_object"},
             max_retries=2,
             base_delay=2.0,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "action": "bullish",
+                "confidence": 0.3,
+                "key_points": ["LLM API error - yükseliş argümanı oluşturulamadı"],
+                "supporting_data": [],
+                "risks_acknowledged": ["API fallback"],
+                "reasoning": "Fallback due to LLM API error"
+            },
         )
         bull_args = bull_resp.content
     except Exception as e:
         logger.error("Bull ajan hatası: %s", e)
-        bull_args = "Bull argümanları oluşturulamadı."
+        bull_args = json.dumps({
+            "action": "bullish",
+            "confidence": 0.3,
+            "key_points": ["LLM fallback"],
+            "reasoning": "API error"
+        })
 
     # Bear
     try:
@@ -170,15 +185,30 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                     content=f"{context}\n\nBu varlık için düşüş risklerini sun. Somut verilerle destekle."
                 ),
             ],
-            max_tokens=400,
+            max_tokens=params.limits.max_tokens_debate,
             response_format={"type": "json_object"},
             max_retries=2,
             base_delay=2.0,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "action": "bearish",
+                "confidence": 0.3,
+                "key_points": ["LLM API error - düşüş argümanı oluşturulamadı"],
+                "supporting_data": [],
+                "risks_acknowledged": ["API fallback"],
+                "reasoning": "Fallback due to LLM API error"
+            },
         )
         bear_args = bear_resp.content
     except Exception as e:
         logger.error("Bear ajan hatası: %s", e)
-        bear_args = "Bear argümanları oluşturulamadı."
+        bear_args = json.dumps({
+            "action": "bearish",
+            "confidence": 0.3,
+            "key_points": ["LLM fallback"],
+            "reasoning": "API error"
+        })
 
     debate_log.append(
         f"BULL (Tur 1): {bull_args[: params.limits.debate_truncate_chars]}"
@@ -199,15 +229,23 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                         "Bu argümanlara yanıt ver ve yükseliş tezini güçlendir."
                     ),
                 ],
-                max_tokens=400,
+                max_tokens=params.limits.max_tokens_debate,
                 response_format={"type": "json_object"},
                 max_retries=2,
                 base_delay=2.0,
+                request_timeout=None,
+                fallback_on_error=True,
+                fallback_value={
+                    "action": "bullish",
+                    "confidence": 0.3,
+                    "key_points": ["LLM API error - yanıt oluşturulamadı"],
+                    "reasoning": "Fallback"
+                },
             )
             bull_args += "\n\n[Yanıt]: " + bull_rebuttal.content
         except Exception as e:
             logger.warning("Bull rebuttal hatası: %s", e)
-            bull_args += "\n\n[Yanıt]: Bull yanıtı oluşturulamadı."
+            bull_args += "\n\n[Yanıt]: Bull yanıtı oluşturulamadı (fallback)."
 
         try:
             bear_rebuttal = invoke_with_retry(
@@ -219,15 +257,23 @@ def debate_node(state: TradingState) -> dict[str, Any]:
                         "Bu argümanlara yanıt ver ve düşüş risklerini güçlendir."
                     ),
                 ],
-                max_tokens=400,
+                max_tokens=params.limits.max_tokens_debate,
                 response_format={"type": "json_object"},
                 max_retries=2,
                 base_delay=2.0,
+                request_timeout=None,
+                fallback_on_error=True,
+                fallback_value={
+                    "action": "bearish",
+                    "confidence": 0.3,
+                    "key_points": ["LLM API error - yanıt oluşturulamadı"],
+                    "reasoning": "Fallback"
+                },
             )
             bear_args += "\n\n[Yanıt]: " + bear_rebuttal.content
         except Exception as e:
             logger.warning("Bear rebuttal hatası: %s", e)
-            bear_args += "\n\n[Yanıt]: Bear yanıtı oluşturulamadı."
+            bear_args += "\n\n[Yanıt]: Bear yanıtı oluşturulamadı (fallback)."
 
     # ── Moderator ─────────────────────────────────────────
     from agents.prompt_evolver import PromptEvolver
@@ -254,10 +300,22 @@ Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
                 SystemMessage(content=moderator_system),
                 HumanMessage(content=moderator_input),
             ],
-            max_tokens=400,
+            max_tokens=params.limits.max_tokens_moderator,
             response_format={"type": "json_object"},
             max_retries=2,
             base_delay=2.0,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "winner": "draw",
+                "consensus_score": 0.0,
+                "adjusted_signal": "neutral",
+                "moderator_reasoning": "LLM API error - tartışma sonuçsuz (fallback)",
+                "hallucinations_detected": [],
+                "bull_strength": 0.3,
+                "bear_strength": 0.3,
+                "confidence_adjustment": 0.0
+            },
         )
         debate_result = extract_json(mod_resp.content)
         if debate_result.get("__parse_error__"):
@@ -274,11 +332,12 @@ Tartışmayı değerlendir ve JSON formatında konsensüs raporu üret."""
             }
     except Exception as e:
         logger.error("Moderator hatası: %s", e)
+        # Fallback zaten döndü
         debate_result = {
             "winner": "draw",
             "consensus_score": 0.0,
             "adjusted_signal": "neutral",
-            "moderator_reasoning": f"Moderator hatası: {e}",
+            "moderator_reasoning": f"LLM API error - tartışma sonuçsuz: {e}",
         }
 
     # Varsayılanları doldur

@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -11,27 +12,62 @@ STORE_DIR = DATA_DIR / "vector_cache"
 
 
 class AgentMemoryStore:
-    """ChromaDB tabanlı RAG hafıza sistemi."""
+    """ChromaDB tabanlı RAG hafıza sistemi - Singleton."""
+
+    _instance: "AgentMemoryStore | None" = None
+    _class_lock = threading.Lock()
+
+    def __new__(cls, store_dir: Path | None = None) -> "AgentMemoryStore":
+        with cls._class_lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+                cls._instance._lock = threading.RLock()
+            return cls._instance
 
     def __init__(self, store_dir: Path | None = None):
-        self._dir = store_dir or STORE_DIR
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._client = None
-        self._collection = None
-        self._init_failed = False
-        self._shutdown_registered = False
+        if self._initialized:
+            return
+        with self._lock:
+            if self._initialized:
+                return
+            self._dir = store_dir or STORE_DIR
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._client = None
+            self._collection = None
+            self._init_failed = False
+            self._shutdown_registered = False
+            self._initialized = True
+
+    @classmethod
+    def get_instance(cls) -> "AgentMemoryStore":
+        """Singleton instance al."""
+        return cls()
+
+    @classmethod
+    def close_all(cls) -> None:
+        """Singleton instance'ı kapat."""
+        if cls._instance:
+            cls._instance.close()
+            cls._instance = None
 
     @property
     def collection(self):
         if self._collection is not None or self._init_failed:
             return self._collection
-        try:
-            self._client = chromadb.PersistentClient(path=str(self._dir))
-            self._collection = self._client.get_or_create_collection(name="trade_memory")
-        except Exception as e:
-            logger.error("ChromaDB başlatılamadı (Memory devre dışı): %s", e)
-            self._init_failed = True
-        return self._collection
+            
+        with self._lock:
+            # Double check inside lock
+            if self._collection is not None or self._init_failed:
+                return self._collection
+                
+            try:
+                self._client = chromadb.PersistentClient(path=str(self._dir))
+                self._collection = self._client.get_or_create_collection(name="trade_memory")
+            except Exception as e:
+                logger.error("ChromaDB başlatılamadı (Memory devre dışı): %s", e)
+                self._init_failed = True
+            return self._collection
 
     def _generate_semantic_tags(self, state: dict[str, Any]) -> list[str]:
         """Piyasa durumuna göre semantik etiketler üretir."""
@@ -409,11 +445,7 @@ class AgentMemoryStore:
                 self._client.close()
                 logger.info("ChromaDB connection closed")
             except Exception as e:
-                logger.warning(f"ChromaDB close error: {e}")
+                logger.warning("ChromaDB close error: %s", e)
             finally:
                 self._client = None
                 self._collection = None
-    
-    def __del__(self):
-        """Destructor - bağlantıyı kapat."""
-        self.close()

@@ -77,7 +77,7 @@ class DriftMonitor:
         with _drift_lock:
             with open(DRIFT_HISTORY_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._history.append(record)
+            self._history.append(record)
 
     def update_accuracy(
         self,
@@ -106,19 +106,20 @@ class DriftMonitor:
         weighted_correct = 0.0
         weighted_total = 0.0
 
-        for r in self._history:
-            if r["symbol"] != symbol:
-                continue
-            if agent_name is not None and r.get("agent_name") != agent_name:
-                continue
-            try:
-                ts = _parse_ts(r["logged_at"])
-                age = (now - ts).total_seconds()
-            except (ValueError, KeyError):
-                continue
-            w = _exp_weight(age, self.half_life_seconds)
-            weighted_correct += w * r["correct"]
-            weighted_total += w
+        with _drift_lock:
+            for r in self._history:
+                if r["symbol"] != symbol:
+                    continue
+                if agent_name is not None and r.get("agent_name") != agent_name:
+                    continue
+                try:
+                    ts = _parse_ts(r["logged_at"])
+                    age = (now - ts).total_seconds()
+                except (ValueError, KeyError):
+                    continue
+                w = _exp_weight(age, self.half_life_seconds)
+                weighted_correct += w * r["correct"]
+                weighted_total += w
 
         if weighted_total == 0:
             return 0.60  # Yeni semboller için varsayılan (engelleme)
@@ -131,22 +132,23 @@ class DriftMonitor:
         trials = 0
         now = datetime.now(timezone.utc)
 
-        for r in self._history:
-            if r["symbol"] != symbol:
-                continue
-            if agent_name is not None and r.get("agent_name") != agent_name:
-                continue
-            try:
-                ts = _parse_ts(r["logged_at"])
-                age = (now - ts).total_seconds()
-            except (ValueError, KeyError):
-                continue
-            w = _exp_weight(age, self.half_life_seconds)
-            if w < 0.01:
-                continue
-            trials += 1
-            if r["correct"]:
-                successes += 1
+        with _drift_lock:
+            for r in self._history:
+                if r["symbol"] != symbol:
+                    continue
+                if agent_name is not None and r.get("agent_name") != agent_name:
+                    continue
+                try:
+                    ts = _parse_ts(r["logged_at"])
+                    age = (now - ts).total_seconds()
+                except (ValueError, KeyError):
+                    continue
+                w = _exp_weight(age, self.half_life_seconds)
+                if w < 0.01:
+                    continue
+                trials += 1
+                if r["correct"]:
+                    successes += 1
 
         if trials < 5:
             return False
@@ -167,16 +169,17 @@ class DriftMonitor:
         cutoff = now.timestamp() - days * 86400
         daily: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
-        for r in self._history:
-            try:
-                ts = _parse_ts(r["logged_at"])
-            except (ValueError, KeyError):
-                continue
-            if ts.timestamp() < cutoff:
-                continue
-            day_key = ts.strftime("%Y-%m-%d")
-            symbol = r["symbol"]
-            daily[symbol][day_key].append(r["correct"])
+        with _drift_lock:
+            for r in self._history:
+                try:
+                    ts = _parse_ts(r["logged_at"])
+                except (ValueError, KeyError):
+                    continue
+                if ts.timestamp() < cutoff:
+                    continue
+                day_key = ts.strftime("%Y-%m-%d")
+                symbol = r["symbol"]
+                daily[symbol][day_key].append(r["correct"])
 
         heatmap: dict[str, dict[str, float]] = {}
         for symbol, days_data in daily.items():
@@ -199,25 +202,26 @@ class DriftMonitor:
         older_correct = 0.0
         older_total = 0.0
 
-        for r in self._history:
-            if r["symbol"] != symbol:
-                continue
-            if agent_name is not None and r.get("agent_name") != agent_name:
-                continue
-            try:
-                ts = _parse_ts(r["logged_at"])
-                t = ts.timestamp()
-            except (ValueError, KeyError):
-                continue
-            if t < older_cutoff:
-                continue
-            w = _exp_weight((now - ts).total_seconds(), self.half_life_seconds)
-            if t >= recent_cutoff:
-                recent_correct += w * r["correct"]
-                recent_total += w
-            else:
-                older_correct += w * r["correct"]
-                older_total += w
+        with _drift_lock:
+            for r in self._history:
+                if r["symbol"] != symbol:
+                    continue
+                if agent_name is not None and r.get("agent_name") != agent_name:
+                    continue
+                try:
+                    ts = _parse_ts(r["logged_at"])
+                    t = ts.timestamp()
+                except (ValueError, KeyError):
+                    continue
+                if t < older_cutoff:
+                    continue
+                w = _exp_weight((now - ts).total_seconds(), self.half_life_seconds)
+                if t >= recent_cutoff:
+                    recent_correct += w * r["correct"]
+                    recent_total += w
+                else:
+                    older_correct += w * r["correct"]
+                    older_total += w
 
         if recent_total == 0 or older_total == 0:
             return False
@@ -227,10 +231,11 @@ class DriftMonitor:
         return recent_acc < older_acc - 0.05
 
     def get_drift_summary(self) -> dict[str, Any]:
-        symbols = set(r["symbol"] for r in self._history if "symbol" in r)
-        agents = set(
-            r.get("agent_name", "unknown") for r in self._history if "agent_name" in r
-        )
+        with _drift_lock:
+            symbols = set(r["symbol"] for r in self._history if "symbol" in r)
+            agents = set(
+                r.get("agent_name", "unknown") for r in self._history if "agent_name" in r
+            )
 
         summary: dict[str, Any] = {
             "total_records": len(self._history),

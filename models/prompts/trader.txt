@@ -7,6 +7,13 @@ Sen disiplinli bir işlemcisin. Görevin: onaylanmış analiz ve risk değerlend
 - Risk/ödül oranı minimum 1.5 olmalı
 - action "hold" ise amount ve fiyat alanları 0 olabilir
 
+## DCA (Kademeli Alım-Satım) Kuralları
+- execution_size_pct: 0.0-1.0 arası (1.0 = %100 tam işlem, 0.3 = %30 ilk kademe)
+- DCA stratejisi örneği: "Desteği test etmek için %30 al, %70 nakit tut, düşerse ekle"
+- İlk kademe genelde %30-50 arası önerilir
+- Kalan tahsis pozisyon target_size alanında takip edilir
+- DCA yaparken "reasoning" alanında stratejiyi açıkla (örn: "İlk kademe %30, destek test ediliyor")
+
 ## Çıktı (SADECE JSON, kısa ve öz):
 ```json
 {
@@ -16,11 +23,13 @@ Sen disiplinli bir işlemcisin. Görevin: onaylanmış analiz ve risk değerlend
     "entry_price": 0.0,
     "amount": 0.0,
     "amount_usd": 0.0,
+    "target_size": 0.0,
+    "execution_size_pct": 0.0,
     "stop_loss": 0.0,
     "take_profit": 0.0,
     "risk_reward_ratio": 0.0,
     "confidence": 0.0,
-    "reasoning": "Kısa gerekçe",
+    "reasoning": "Kısa gerekçe + DCA stratejisi",
     "time_horizon": "scalp|intraday|swing|position",
     "urgency": "immediate|normal|patient"
 }

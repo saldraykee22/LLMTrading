@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradeOrder:
-    """Yapılandırılmış alım-satım emri."""
+    """Yapılandırılmış alım-satım emri (DCA desteği ile)."""
 
     symbol: str
     action: str  # buy | sell
@@ -32,6 +32,11 @@ class TradeOrder:
     confidence: float = 0.0
     reasoning: str = ""
     timestamp: str = ""
+    # DCA (Kademeli İşlem) alanları
+    execution_size_pct: float = 1.0  # 0.0-1.0 arası (1.0 = %100)
+    target_size: float = 0.0  # Hedeflenen toplam miktar
+    is_dca_tranche: bool = False  # Bu bir DCA kademesi mi?
+    tranche_number: int = 0  # Kaçıncı kademe?
 
     def validate(self) -> tuple[bool, str]:
         """Emrin geçerliliğini kontrol eder."""
@@ -41,8 +46,28 @@ class TradeOrder:
             return False, f"Geçersiz miktar: {self.amount}"
         if self.order_type == "limit" and (self.price is None or self.price <= 0):
             return False, "Limit emri için fiyat gerekli"
-        if self.stop_loss <= 0:
-            return False, "Stop-loss tanımlı değil"
+        
+        # SL/TP Mantık Kontrolü
+        ref_price = self.price if self.order_type == "limit" else self.stop_loss
+        # Limit emri değilse ve market ise, SL ve TP yine de mantıklı olmalı (entry_price genelde reel fiyattır)
+        
+        if self.action == "buy":
+            if self.stop_loss > 0 and self.price and self.stop_loss >= self.price:
+                return False, f"Alış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({self.price}) küçük olmalı"
+            if self.take_profit > 0 and self.price and self.take_profit <= self.price:
+                return False, f"Alış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({self.price}) büyük olmalı"
+        
+        elif self.action == "sell":
+            # Satış (Short) bu sistemde şimdilik desteklenmiyor (SPOT focus)
+            # Ancak yine de mantığı kuralım
+            if self.stop_loss > 0 and self.price and self.stop_loss <= self.price:
+                return False, f"Satış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({self.price}) büyük olmalı"
+            if self.take_profit > 0 and self.price and self.take_profit >= self.price:
+                return False, f"Satış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({self.price}) küçük olmalı"
+
+        if self.stop_loss <= 0 and self.action == "buy":
+            return False, "Alış emri için Stop-Loss tanımlı değil"
+            
         return True, "OK"
 
 
@@ -92,6 +117,19 @@ def parse_trade_decision(
     except (ValueError, TypeError):
         entry_price = None
 
+    # DCA parametreleri
+    try:
+        execution_size_pct = float(decision.get("execution_size_pct", 1.0))
+        # 0.0-1.0 aralığına sınırla
+        execution_size_pct = max(0.0, min(1.0, execution_size_pct))
+    except (ValueError, TypeError):
+        execution_size_pct = 1.0
+    
+    try:
+        target_size = float(decision.get("target_size", 0))
+    except (ValueError, TypeError):
+        target_size = 0.0
+
     # Fallback stop-loss: LLM unutmuşsa ATR bazlı hesapla
     if stop_loss <= 0 and current_price > 0 and atr_value > 0:
         params = get_trading_params()
@@ -108,17 +146,31 @@ def parse_trade_decision(
             mult,
         )
 
+    # DCA için miktar ayarlaması
+    actual_amount = amount
+    if execution_size_pct < 1.0 and amount > 0:
+        actual_amount = amount * execution_size_pct
+        logger.info(
+            "DCA boyutlandırması: %.4f * %.2f = %.4f (hedef: %.4f)",
+            amount, execution_size_pct, actual_amount, target_size
+        )
+
     order = TradeOrder(
         symbol=decision.get("symbol", ""),
         action=action,
         order_type=decision.get("order_type", "market"),
-        amount=amount,
+        amount=actual_amount,
         price=entry_price,
         stop_loss=stop_loss,
         take_profit=take_profit,
         confidence=float(decision.get("confidence", 0)),
         reasoning=decision.get("reasoning", ""),
         timestamp=datetime.now(timezone.utc).isoformat(),
+        # DCA alanları
+        execution_size_pct=execution_size_pct,
+        target_size=target_size if target_size > 0 else amount,
+        is_dca_tranche=execution_size_pct < 1.0,
+        tranche_number=1 if execution_size_pct < 1.0 else 0,
     )
 
     valid, msg = order.validate()

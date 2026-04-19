@@ -2,7 +2,7 @@
 
 Bir ticaret sisteminde kardan cok zarari (drawdown) yonetmek kritiktir. Ajanlarin halusnasyon gormesi muhtemel oldugundan risk mekanizmalari ikiye ayrilmistir: **Algoritmik** (Kodla kati sekilde saglanan) ve **Bilissel** (Risk Ajani ile yonetilen).
 
-> **Son Guncelleme:** 2026-04-05 (Faz 1, 2, 3, 4, 5 tamamlandi)
+> **Son Guncelleme:** 2026-04-17 (Faz 1 - 7 tamamlandi)
 
 ---
 
@@ -158,7 +158,7 @@ Yapay zeka modelleri ekstrem kriz kosullarini (Siyah Kugu / Black Swan) ongoreme
 | 8 | **Nötr sinyal** | **Deterministik** | Hem tartışma hem duyarlılık nötr ise red **[Faz 4]** |
 
 > **Faz 1 oncesi:** 5, 6, 7 sadece LLM prompt'undaydi, kod tarafindan zorlanmiyordu.
-> **Faz 1 sonrasi:** Bu kontroller LLM cagrisindan bagimsiiz sekilde cod tarafindan uygulanir.
+> **Faz 1 sonrasi:** Bu kontroller LLM cagrisindan bagimsiz sekilde kod tarafindan uygulanir.
 > Kontrol 7, LLM ciktisini alip *sonrasinda* uygulanir (once LLM, sonra validate).
 
 ### Kontrol Parametreleri (`config/trading_params.yaml`)
@@ -262,7 +262,7 @@ portfolio.reset_daily_pnl_if_needed()  # Gun degistiyse PNL=0
 
 **Dosya:** `execution/paper_engine.py`
 
-Gercek borsaya hic ulas madan islem simule eder.
+Gercek borsaya hic ulasmadan islem simule eder.
 
 ### Simulasyon Ozellikleri
 

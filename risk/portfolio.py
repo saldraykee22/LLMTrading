@@ -28,11 +28,11 @@ _portfolio_lock = threading.RLock()
 
 @dataclass
 class Position:
-    """Tek bir açık pozisyon."""
+    """Tek bir açık pozisyon (DCA desteği ile)."""
 
     symbol: str
     entry_price: float
-    amount: float
+    amount: float  # Şu an alınan miktar (current_size)
     entry_time: str
     side: str = "long"
     stop_loss: float = 0.0
@@ -40,10 +40,23 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
+    # DCA (Kademeli Alım-Satım) alanları
+    target_size: float = 0.0  # Hedeflenen toplam miktar
+    target_size_usd: float = 0.0  # Hedeflenen toplam USD değeri
+    executed_tranches: int = 0  # Kaç kademe执行 edildi
+    remaining_size: float = 0.0  # Kalan tahsis (target - current)
 
     def __post_init__(self) -> None:
         if self.side != "long":
             raise ValueError(f"SPOT only supports long positions, got: {self.side}")
+        
+        # DCA alanları otomatik doldur (eğer verilmemişse)
+        if self.target_size <= 0:
+            self.target_size = self.amount
+        if self.target_size_usd <= 0:
+            self.target_size_usd = self.amount * self.entry_price
+        if self.remaining_size <= 0:
+            self.remaining_size = self.target_size - self.amount
 
     def update_price(self, price: float) -> None:
         """Güncel fiyatı günceller ve P&L hesaplar."""
@@ -65,10 +78,45 @@ class Position:
         if self.take_profit <= 0:
             return False
         return price >= self.take_profit
+    
+    def add_tranche(self, amount: float, price: float) -> None:
+        """
+        DCA kademesi ekle.
+        
+        Args:
+            amount: Eklenen miktar
+            price: Giriş fiyatı
+        """
+        old_amount = self.amount
+        old_cost = old_amount * self.entry_price
+        new_cost = amount * price
+        
+        # Ağırlıklı ortalama fiyat hesapla
+        total_amount = old_amount + amount
+        if total_amount > 0:
+            self.entry_price = (old_cost + new_cost) / total_amount
+        
+        self.amount = total_amount
+        self.executed_tranches += 1
+        self.remaining_size = max(0, self.target_size - self.amount)
+        self.current_price = price
+        
+        # P&L sıfırla (yeni ortalama ile yeniden hesaplanacak)
+        self.unrealized_pnl = 0.0
+        self.unrealized_pnl_pct = 0.0
+        
+        logger.info(
+            "DCA kademesi eklendi: %s +%d @ %.4f (Ortalama: %.4f, Kalan: %.4f)",
+            self.symbol, amount, price, self.entry_price, self.remaining_size
+        )
+    
+    def is_dca_complete(self) -> bool:
+        """DCA tamamlandı mı?"""
+        return self.remaining_size <= 0 or self.amount >= self.target_size
 
 
 def _position_from_dict(d: dict) -> Position:
-    """Dict'ten Position oluşturur."""
+    """Dict'ten Position oluşturur (DCA alanları ile)."""
     return Position(
         symbol=d["symbol"],
         side=d["side"],
@@ -80,6 +128,10 @@ def _position_from_dict(d: dict) -> Position:
         current_price=d.get("current_price", 0.0),
         unrealized_pnl=d.get("unrealized_pnl", 0.0),
         unrealized_pnl_pct=d.get("unrealized_pnl_pct", 0.0),
+        target_size=d.get("target_size", 0.0),
+        target_size_usd=d.get("target_size_usd", 0.0),
+        executed_tranches=d.get("executed_tranches", 0),
+        remaining_size=d.get("remaining_size", 0.0),
     )
 
 
@@ -101,9 +153,15 @@ class PortfolioState:
     alpha: float = 0.0
 
     def __post_init__(self) -> None:
-        """daily_pnl_date boşsa bugünün tarihini ata."""
+        """daily_pnl_date boşsa bugünün tarihini ata, cash ve max_equity'yi initial_cash'e eşitle."""
         if not self.daily_pnl_date:
             self.daily_pnl_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        # cash ve max_equity'yi initial_cash'e eşitle (dataclass default değerlerini override et)
+        if self.cash == 10000.0 and self.initial_cash != 10000.0:
+            self.cash = self.initial_cash
+        if self.max_equity == 10000.0 and self.initial_cash != 10000.0:
+            self.max_equity = self.initial_cash
 
     # ── Persistence ────────────────────────────────────────
 
@@ -173,19 +231,100 @@ class PortfolioState:
 
     def reset_daily_pnl_if_needed(self) -> bool:
         """Gün değişmişse günlük P&L'i sıfırlar. Değişiklik varsa True döner."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if self.daily_pnl_date != today:
-            logger.info(
-                "Günlük P&L sıfırlandı (%s → %s), önceki: %.2f",
-                self.daily_pnl_date,
-                today,
-                self.daily_pnl,
-            )
-            self.daily_pnl = 0.0
-            self.daily_pnl_date = today
-            return True
-        return False
+        with _portfolio_lock:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if self.daily_pnl_date != today:
+                logger.info(
+                    "Günlük P&L sıfırlandı (%s → %s), önceki: %.2f",
+                    self.daily_pnl_date,
+                    today,
+                    self.daily_pnl,
+                )
+                self.daily_pnl = 0.0
+                self.daily_pnl_date = today
+                return True
+            return False
 
+    # ── Dust Management ────────────────────────────────────
+    
+    DUST_THRESHOLD_USDT = 1.0  # $1 altı dust olarak kabul edilir
+    
+    def get_dust_balances(self, balance_data: dict[str, float]) -> dict[str, float]:
+        """
+        Dust bakiyeleri filtrele ($1 altı).
+        
+        Args:
+            balance_data: {asset: amount} formatında bakiye
+        
+        Returns:
+            Dust bakiyeler (threshold altı)
+        """
+        if not balance_data:
+            return {}
+        
+        # USDT fiyatlarını almak için market data
+        try:
+            from data.market_data import MarketDataClient
+            market = MarketDataClient()
+            tickers = market.fetch_tickers()
+        except Exception as e:
+            logger.warning("Dust filtreleme için ticker alınamadı: %s", e)
+            return {}
+        
+        dust_balances = {}
+        
+        for asset, amount in balance_data.items():
+            if asset in ["USDT", "BNB"]:  # USDT ve BNB'yi temizleme
+                continue
+            
+            # USDT paritesi bul
+            symbol = f"{asset}/USDT"
+            
+            if symbol not in tickers:
+                # BTC paritesini dene
+                symbol = f"{asset}/BTC"
+                if symbol not in tickers:
+                    continue
+                
+                # Çapraz hesaplama
+                btc_usdt = tickers.get("BTC/USDT", {})
+                btc_price = float(btc_usdt.get('last', 0) or 0)
+                asset_btc = float(tickers[symbol].get('last', 0) or 0)
+                usdt_price = btc_price * asset_btc
+            else:
+                usdt_price = float(tickers[symbol].get('last', 0) or 0)
+            
+            # USD değeri
+            usdt_value = amount * usdt_price
+            
+            if usdt_value < self.DUST_THRESHOLD_USDT and usdt_value > 0:
+                dust_balances[asset] = amount
+                logger.debug(
+                    "🔍 Dust: %s = %.4f (%.2f USDT)",
+                    asset, amount, usdt_value
+                )
+        
+        return dust_balances
+    
+    def filter_dust_from_balance(self, balance_data: dict[str, float]) -> dict[str, float]:
+        """
+        Bakiyeden dust'ları çıkar (tradable equity için).
+        
+        Args:
+            balance_data: {asset: amount}
+        
+        Returns:
+            Dust temizlenmiş bakiye
+        """
+        dust = self.get_dust_balances(balance_data)
+        dust_assets = set(dust.keys())
+        
+        return {
+            asset: amount
+            for asset, amount in balance_data.items()
+            if asset not in dust_assets
+        }
+    
     # ── Equity & Drawdown ──────────────────────────────────
 
     @property
@@ -202,37 +341,39 @@ class PortfolioState:
 
     def update_drawdown(self) -> None:
         """Drawdown günceller."""
-        eq = self.equity
-        if eq > self.max_equity:
-            self.max_equity = eq
-        if self.max_equity > 0:
-            self.current_drawdown = (self.max_equity - eq) / self.max_equity
+        with _portfolio_lock:
+            eq = self.equity
+            if eq > self.max_equity:
+                self.max_equity = eq
+            if self.max_equity > 0:
+                self.current_drawdown = (self.max_equity - eq) / self.max_equity
 
     def update_benchmark(
         self, market_data: pd.DataFrame, benchmark_symbol: str | None = None
     ) -> float:
-        """Benchmark getirisini ve alpha'yı hesaplar."""
-        sym = benchmark_symbol or self.benchmark_symbol
-        if sym != self.benchmark_symbol:
-            self.benchmark_symbol = sym
-        if (
-            market_data is None
-            or market_data.empty
-            or "close" not in market_data.columns
-        ):
-            return 0.0
-        first_close = float(market_data["close"].iloc[0])
-        last_close = float(market_data["close"].iloc[-1])
-        if first_close <= 0:
-            return 0.0
-        self.benchmark_return = (last_close - first_close) / first_close
-        portfolio_return = (
-            (self.equity - self.initial_cash) / self.initial_cash
-            if self.initial_cash > 0
-            else 0.0
-        )
-        self.alpha = portfolio_return - self.benchmark_return
-        return self.benchmark_return
+        """Benchmark getirisini ve alpha'yı hesaplar - thread-safe."""
+        with _portfolio_lock:
+            sym = benchmark_symbol or self.benchmark_symbol
+            if sym != self.benchmark_symbol:
+                self.benchmark_symbol = sym
+            if (
+                market_data is None
+                or market_data.empty
+                or "close" not in market_data.columns
+            ):
+                return 0.0
+            first_close = float(market_data["close"].iloc[0])
+            last_close = float(market_data["close"].iloc[-1])
+            if first_close <= 0:
+                return 0.0
+            self.benchmark_return = (last_close - first_close) / first_close
+            portfolio_return = (
+                (self.equity - self.initial_cash) / self.initial_cash
+                if self.initial_cash > 0
+                else 0.0
+            )
+            self.alpha = portfolio_return - self.benchmark_return
+            return self.benchmark_return
 
     # ── Position Sizing ────────────────────────────────────
 
@@ -240,6 +381,7 @@ class PortfolioState:
         self,
         price: float,
         risk_per_trade: float | None = None,
+        exchange_client: Any = None,
     ) -> float:
         """
         Pozisyon boyutunu hesaplar.
@@ -247,13 +389,28 @@ class PortfolioState:
         Args:
             price: Giriş fiyatı
             risk_per_trade: İşlem başına risk oranı (varsayılan: YAML'den)
+            exchange_client: Canlı bakiye çekmek için opsiyonel borsa istemcisi
 
         Returns:
             Alınabilecek miktar (amount)
         """
         params = get_trading_params()
         risk_pct = risk_per_trade or params.risk.max_position_pct
-        max_value = self.cash * risk_pct
+        
+        # Thread-safe cash okuma
+        with _portfolio_lock:
+            current_cash = self.cash
+        
+        # Canlı bakiye kullan (eğer live mode ve client sağlandıysa)
+        if exchange_client and params.execution.mode.value == "live":
+            try:
+                balance = exchange_client.get_balance()
+                current_cash = balance.get("USDT", current_cash)
+                logger.debug("Sizing using live USDT balance: %.2f", current_cash)
+            except Exception as e:
+                logger.error("Could not fetch live balance for sizing, falling back to local: %s", e)
+
+        max_value = current_cash * risk_pct
 
         if price <= 0:
             return 0.0
@@ -283,7 +440,12 @@ class PortfolioState:
                         "side": p.side,
                         "entry_price": p.entry_price,
                         "amount": p.amount,
+                        "target_size": p.target_size,
+                        "target_size_usd": p.target_size_usd,
+                        "remaining_size": p.remaining_size,
+                        "executed_tranches": p.executed_tranches,
                         "unrealized_pnl": round(p.unrealized_pnl, 4),
+                        "dca_complete": p.is_dca_complete(),
                     }
                     for p in self.positions
                 ],
@@ -301,8 +463,17 @@ class PortfolioState:
         take_profit: float = 0.0,
         max_correlation: float | None = None,
         market_data: dict[str, Any] | None = None,
+        # DCA parametreleri
+        target_size: float = 0.0,
+        target_size_usd: float = 0.0,
     ) -> Position | None:
-        """Yeni pozisyon açar. Thread-safe."""
+        """
+        Yeni pozisyon açar (DCA desteği ile).
+        
+        Args:
+            target_size: Hedeflenen toplam miktar (DCA için)
+            target_size_usd: Hedeflenen toplam USD değeri (DCA için)
+        """
         with _portfolio_lock:
             if side != "long":
                 raise ValueError(f"SPOT only supports long positions, got: {side}")
@@ -357,6 +528,14 @@ class PortfolioState:
                         )
                         return None
 
+            # DCA parametrelerini işle
+            if target_size <= 0:
+                target_size = amount
+            if target_size_usd <= 0:
+                target_size_usd = cost
+            
+            remaining_size = target_size - amount
+            
             position = Position(
                 symbol=symbol,
                 side=side,
@@ -366,19 +545,29 @@ class PortfolioState:
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 current_price=price,
+                # DCA alanları
+                target_size=target_size,
+                target_size_usd=target_size_usd,
+                executed_tranches=1,
+                remaining_size=remaining_size,
             )
 
             self.cash -= cost
             self.positions.append(position)
+            
+            # Anlık kaydet (Elektrik kesintisine karşı)
+            self.save_to_file()
 
             logger.info(
-                "Pozisyon açıldı: %s %s %.4f @ %.4f (SL: %.4f, TP: %.4f)",
+                "Pozisyon açıldı: %s %s %.4f @ %.4f (SL: %.4f, TP: %.4f, DCA: %d/%d)",
                 side.upper(),
                 symbol,
                 amount,
                 price,
                 stop_loss,
                 take_profit,
+                position.executed_tranches,
+                position.target_size,
             )
             return position
 
@@ -419,8 +608,94 @@ class PortfolioState:
                 pos.unrealized_pnl_pct * 100,
             )
             self.update_drawdown()
+            self.save_to_file()
             return trade_record
 
+    # ── DCA (Kademeli Alım-Satım) ─────────────────────────
+
+    def add_dca_tranche(
+        self,
+        symbol: str,
+        amount: float,
+        price: float,
+        stop_loss: float = 0.0,
+        take_profit: float = 0.0,
+    ) -> Position | None:
+        """
+        Mevcut pozisyona DCA kademesi ekler.
+        
+        Args:
+            symbol: Sembol
+            amount: Eklenecek miktar
+            price: Giriş fiyatı
+            stop_loss: Yeni stop-loss (opsiyonel, 0 ise mevcut kullanılır)
+            take_profit: Yeni take-profit (opsiyonel, 0 ise mevcut kullanılır)
+        
+        Returns:
+            Güncellenen Position veya None (pozisyon bulunamazsa)
+        """
+        with _portfolio_lock:
+            pos = next((p for p in self.positions if p.symbol == symbol), None)
+            if not pos:
+                logger.warning("DCA için pozisyon bulunamadı: %s", symbol)
+                return None
+            
+            # Kalan tahsis kontrolü
+            if pos.remaining_size <= 0:
+                logger.warning(
+                    "DCA reddedildi: %s için kalan tahsis yok (remaining: %.4f)",
+                    symbol, pos.remaining_size
+                )
+                return None
+            
+            # Nakit kontrolü (önce - miktar düşürmeden)
+            cost = price * amount
+            if cost > self.cash:
+                logger.warning(
+                    "Yetersiz bakiye (DCA): %.2f > %.2f (istenen: %.4f @ %.4f)",
+                    self.cash, cost, amount, price
+                )
+                return None
+            
+            # Miktar kontrolü (kalan tahsisi aşmasın)
+            if amount > pos.remaining_size:
+                logger.warning(
+                    "DCA miktarı kalan tahsisi aşıyor: %.4f > %.4f",
+                    amount, pos.remaining_size
+                )
+                amount = pos.remaining_size
+                
+                # Miktar düşürüldü, tekrar nakit kontrolü
+                cost = price * amount
+                if cost > self.cash:
+                    logger.warning(
+                        "DCA miktarı düşürüldü ama hala yetersiz bakiye: %.2f > %.2f",
+                        self.cash, cost
+                    )
+                    return None
+            
+            # SL/TP güncelle (eğer yeni değerler verildiyse)
+            if stop_loss > 0:
+                pos.stop_loss = stop_loss
+            if take_profit > 0:
+                pos.take_profit = take_profit
+            
+            # Kademe ekle
+            pos.add_tranche(amount, price)
+            
+            # Nakit düş
+            self.cash -= cost
+            
+            # Anlık kaydet
+            self.save_to_file()
+            
+            logger.info(
+                "✅ DCA kademesi eklendi: %s +%d @ %.4f (Toplam: %.4f, Kalan: %.4f)",
+                symbol, amount, price, pos.amount, pos.remaining_size
+            )
+            
+            return pos
+    
     # ── Thread-Safe API ────────────────────────────────────
 
     def get_positions_safe(self) -> list[Position]:
@@ -477,4 +752,54 @@ class PortfolioState:
                 pos.unrealized_pnl_pct * 100,
             )
             self.update_drawdown()
+            self.save_to_file() # Anlık kaydet
             return trade_record
+
+    # ── Exchange Sync ──────────────────────────────────────
+
+    def sync_with_exchange(self, exchange_client: Any) -> None:
+        """
+        Borsa bakiyesi ile yerel state'i senkronize eder.
+        Restart sonrası veya elektrik kesintisi sonrası tutarlılık sağlar.
+        """
+        with _portfolio_lock:
+            params = get_trading_params()
+            if params.execution.mode.value != "live":
+                logger.info("Sync skipped: Not in live mode")
+                return
+
+            logger.info("🔄 Borsa ile portföy senkronizasyonu başlatılıyor...")
+            try:
+                balance = exchange_client.get_balance()
+                
+                # 1. Nakit (USDT) senkronizasyonu
+                if "USDT" in balance:
+                    old_cash = self.cash
+                    self.cash = balance["USDT"]
+                    if abs(old_cash - self.cash) > 1.0:
+                        logger.warning("Bakiye senkronize edildi: %.2f -> %.2f USDT", old_cash, self.cash)
+
+                # 2. Açık pozisyon kontrolü
+                active_symbols = [p.symbol for p in self.positions]
+                for symbol in active_symbols:
+                    # Sembol borsa formatına (BTC/USDT -> BTC)
+                    base_currency = symbol.split("/")[0]
+                    actual_amount = balance.get(base_currency, 0.0)
+                    
+                    pos = self.get_position_by_symbol_safe(symbol)
+                    if not pos: continue
+
+                    if actual_amount < pos.amount * 0.98: # %2 pay payı (komisyon vb)
+                        logger.error(
+                            "Kritik Uyumsuzluk: %s JSON'da var ama borsada eksik! (%.4f vs %.4f). Pozisyon kaldırılıyor.",
+                            symbol, pos.amount, actual_amount
+                        )
+                        self.positions.remove(pos)
+                    else:
+                        logger.info("Pozisyon doğrulandı: %s (Miktar: %.4f)", symbol, actual_amount)
+                
+                self.save_to_file()
+                logger.info("✅ Portföy senkronizasyonu tamamlandı.")
+
+            except Exception as e:
+                logger.error("Senkronizasyon sırasında hata: %s", e)

@@ -1,14 +1,12 @@
 """
 Comprehensive tests for Faz 7 modules:
-- RL Environment (TradingEnv)
-- RL Advisor (RLAdvisor / PPO)
 - Enhanced VectorStore (rich context, semantic tags, multi-symbol, pruning, accuracy)
 - AgentMemoryStoreWrapper (trade context, similar trades, outcomes, lessons)
 - Enhanced DriftMonitor (time-decay, binomial test, magnitude, per-agent, heatmap)
 - EnsembleVoter (parallel LLM, majority vote, weighted average, consensus)
 - PromptEvolver (versioning, evolution, rollback)
 - Dashboard API endpoints (FastAPI)
-- Integration tests (RL + Graph, RL + Trader, RAG + RL, Drift + Risk, etc.)
+- Integration tests (Drift + Risk, etc.)
 """
 
 import json
@@ -28,79 +26,6 @@ import pytest
 # ──────────────────────────────────────────────
 
 
-@pytest.fixture
-def mock_market_data():
-    """Generate realistic mock market data for RL environment."""
-    data = []
-    for i in range(50):
-        data.append(
-            {
-                "technical_signals": {
-                    "rsi_14": 45.0 + (i % 20),
-                    "macd_histogram": 0.5 + (i % 3) * 0.1,
-                    "current_price": 50000.0 + i * 100,
-                    "atr_14": 500.0,
-                    "ema_20": 49500.0 + i * 80,
-                    "volume_sma_ratio": 1.2,
-                },
-                "sentiment": {
-                    "sentiment_score": 0.3,
-                    "confidence": 0.7,
-                },
-                "rag_info": {
-                    "similar_trade_accuracy": 0.65,
-                },
-                "drift_info": {
-                    "agent_accuracy": 0.72,
-                },
-            }
-        )
-    return data
-
-
-@pytest.fixture
-def mock_portfolio_state():
-    """Generate mock portfolio state."""
-    return {
-        "equity": 10000.0,
-        "cash": 8000.0,
-        "open_positions": 1,
-        "max_positions": 5,
-        "current_drawdown": 0.02,
-        "total_pnl": 200.0,
-    }
-
-
-@pytest.fixture
-def mock_state_dict():
-    """Generate mock state dict for RLAdvisor."""
-    return {
-        "technical_signals": {
-            "rsi_14": 35.0,
-            "macd_histogram": 0.5,
-            "current_price": 50000.0,
-            "atr_14": 500.0,
-            "ema_20": 49500.0,
-            "volume_sma_ratio": 1.2,
-            "trend": "bullish",
-        },
-        "sentiment": {
-            "sentiment_score": 0.4,
-            "confidence": 0.75,
-        },
-        "portfolio_state": {
-            "equity": 10000.0,
-            "cash": 8000.0,
-            "open_positions": 1,
-            "current_drawdown": 0.02,
-            "total_pnl": 200.0,
-        },
-        "historical_context": [
-            {"past_accuracy": 0.65},
-            {"past_accuracy": 0.70},
-        ],
-        "agent_accuracy": 0.72,
-    }
 
 
 @pytest.fixture
@@ -147,462 +72,6 @@ def tmp_data_dir(tmp_path):
         yield data_dir
 
 
-# ──────────────────────────────────────────────
-# A) RL Environment Tests
-# ──────────────────────────────────────────────
-
-
-class TestTradingEnv:
-    def test_env_initialization(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        assert env.max_steps == 100
-        assert env.training is True
-        assert env.market_data == []
-        assert env.portfolio_state == {}
-        assert env.render_mode is None
-
-    def test_env_with_custom_params(self, mock_market_data, mock_portfolio_state):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(
-            market_data=mock_market_data,
-            portfolio_state=mock_portfolio_state,
-            max_steps=50,
-            training=False,
-            render_mode="human",
-        )
-        assert env.max_steps == 50
-        assert env.training is False
-        assert len(env.market_data) == 50
-        assert env.render_mode == "human"
-
-    def test_observation_space_shape_and_bounds(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        assert env.observation_space.shape == (15,)
-        assert env.observation_space.low.shape == (15,)
-        assert env.observation_space.high.shape == (15,)
-        assert np.all(env.observation_space.low == -1.0)
-        assert np.all(env.observation_space.high == 1.0)
-        assert env.observation_space.dtype == np.float32
-
-    def test_action_space_discrete_five(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        assert env.action_space.n == 5
-        assert 0 in env.action_space
-        assert 4 in env.action_space
-
-    def test_reset_returns_valid_observation(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        obs, info = env.reset()
-        assert isinstance(obs, np.ndarray)
-        assert obs.shape == (15,)
-        assert obs.dtype == np.float32
-        assert isinstance(info, dict)
-        assert env.current_step == 0
-        assert env.initial_equity == 10000.0
-
-    def test_reset_with_seed(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        obs1, _ = env.reset(seed=42)
-        obs2, _ = env.reset(seed=42)
-        np.testing.assert_array_equal(obs1, obs2)
-
-    def test_step_with_each_action(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(max_steps=10)
-        env.reset()
-        for action in range(5):
-            obs, reward, terminated, truncated, info = env.step(action)
-            assert isinstance(obs, np.ndarray)
-            assert obs.shape == (15,)
-            assert isinstance(reward, (float, np.floating))
-            assert isinstance(terminated, bool)
-            assert isinstance(truncated, bool)
-            assert isinstance(info, dict)
-            assert "action" in info
-            assert "reward" in info
-            assert "total_pnl" in info
-
-    def test_reward_calculation_pnl_and_drawdown(self):
-        from agents.rl_environment import TradingEnv
-
-        portfolio = {
-            "equity": 10000.0,
-            "cash": 8000.0,
-            "open_positions": 0,
-            "max_positions": 5,
-            "current_drawdown": 0.0,
-        }
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {"similar_trade_accuracy": 0.5},
-                "drift_info": {"agent_accuracy": 0.5},
-            }
-        ]
-        env = TradingEnv(market_data=data, portfolio_state=portfolio, max_steps=5)
-        env.reset()
-        obs, reward, _, _, info = env.step(1)
-        assert env.has_position is True
-        assert env.entry_price == 50000.0
-        assert reward >= 0.01
-
-    def test_reward_drawdown_penalty(self):
-        from agents.rl_environment import TradingEnv
-
-        portfolio = {
-            "equity": 10000.0,
-            "cash": 8000.0,
-            "open_positions": 0,
-            "max_positions": 5,
-            "current_drawdown": 0.10,
-        }
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {"similar_trade_accuracy": 0.5},
-                "drift_info": {"agent_accuracy": 0.5},
-            }
-        ]
-        env = TradingEnv(market_data=data, portfolio_state=portfolio, max_steps=5)
-        env.reset()
-        obs, reward, _, _, _ = env.step(0)
-        assert reward < 0
-
-    def test_episode_termination(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(max_steps=3)
-        env.reset()
-        env.step(0)
-        env.step(0)
-        obs, reward, terminated, truncated, info = env.step(0)
-        assert terminated is True
-        assert truncated is False
-
-    def test_episode_termination_data_exhausted(self):
-        from agents.rl_environment import TradingEnv
-
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {},
-            }
-        ]
-        env = TradingEnv(market_data=data, max_steps=100)
-        env.reset()
-        env.step(0)
-        obs, reward, terminated, truncated, _ = env.step(0)
-        assert terminated is True
-
-    def test_observation_normalization(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv()
-        obs, _ = env.reset()
-        assert np.all(obs >= -1.0)
-        assert np.all(obs <= 1.0)
-
-    def test_observation_with_mock_portfolio_data(
-        self, mock_market_data, mock_portfolio_state
-    ):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(
-            market_data=mock_market_data,
-            portfolio_state=mock_portfolio_state,
-            max_steps=10,
-        )
-        obs, _ = env.reset()
-        assert obs.shape == (15,)
-        assert np.all(np.isfinite(obs))
-        assert np.all(obs >= -1.0)
-        assert np.all(obs <= 1.0)
-
-    def test_render_method(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(max_steps=10, render_mode="ansi")
-        env.reset()
-        env.step(0)
-        result = env.render()
-        assert result is not None
-        assert "Step:" in result
-        assert "P&L:" in result
-        assert "Position:" in result
-
-    def test_render_human_mode(self, capsys):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(max_steps=10, render_mode="human")
-        env.reset()
-        env.step(0)
-        env.render()
-        captured = capsys.readouterr()
-        assert "Step:" in captured.out
-
-    def test_render_no_mode(self):
-        from agents.rl_environment import TradingEnv
-
-        env = TradingEnv(max_steps=10, render_mode=None)
-        env.reset()
-        env.step(0)
-        result = env.render()
-        assert result is None
-
-    def test_sell_action_closes_position(self):
-        from agents.rl_environment import TradingEnv
-
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {},
-            },
-            {
-                "technical_signals": {"current_price": 51000.0, "rsi_14": 55},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {},
-            },
-        ]
-        env = TradingEnv(market_data=data, max_steps=10)
-        env.reset()
-        env.step(1)
-        assert env.has_position is True
-        obs, reward, _, _, _ = env.step(4)
-        assert env.has_position is False
-        assert env.total_pnl > 0
-
-    def test_hold_reward_with_position(self):
-        from agents.rl_environment import TradingEnv
-
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {},
-            },
-            {
-                "technical_signals": {"current_price": 51000.0, "rsi_14": 55},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {},
-            },
-        ]
-        env = TradingEnv(market_data=data, max_steps=10)
-        env.reset()
-        env.step(1)
-        obs, reward, _, _, _ = env.step(0)
-        assert env.has_position is True
-
-    def test_rag_accuracy_bonus(self):
-        from agents.rl_environment import TradingEnv
-
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {"similar_trade_accuracy": 0.8},
-                "drift_info": {"agent_accuracy": 0.5},
-            }
-        ]
-        env = TradingEnv(market_data=data, max_steps=5)
-        env.reset()
-        obs, reward, _, _, _ = env.step(0)
-        assert reward > 0.0
-
-    def test_low_agent_accuracy_penalty(self):
-        from agents.rl_environment import TradingEnv
-
-        data = [
-            {
-                "technical_signals": {"current_price": 50000.0, "rsi_14": 50},
-                "sentiment": {"sentiment_score": 0.0, "confidence": 0.5},
-                "rag_info": {},
-                "drift_info": {"agent_accuracy": 0.3},
-            }
-        ]
-        env = TradingEnv(market_data=data, max_steps=5)
-        env.reset()
-        obs, reward, _, _, _ = env.step(0)
-        assert reward < 0
-
-
-# ──────────────────────────────────────────────
-# B) RL Advisor Tests
-# ──────────────────────────────────────────────
-
-
-class TestRLAdvisor:
-    def test_advisor_initialization(self):
-        from agents.rl_advisor import RLAdvisor
-
-        advisor = RLAdvisor()
-        assert advisor.model is None
-        assert advisor.model_path is None
-        assert advisor._last_confidence == 0.0
-
-    def test_advisor_with_nonexistent_path(self, tmp_path):
-        from agents.rl_advisor import RLAdvisor
-
-        fake_path = tmp_path / "nonexistent_model.zip"
-        with patch("agents.rl_advisor.logger"):
-            advisor = RLAdvisor(model_path=fake_path)
-        assert advisor.model is None
-
-    @patch("agents.rl_advisor.RLAdvisor._ensure_model")
-    @patch("agents.rl_advisor.RLAdvisor._state_to_observation")
-    def test_get_recommendation_output_format(
-        self, mock_obs, mock_ensure, mock_state_dict
-    ):
-        from agents.rl_advisor import RLAdvisor
-
-        mock_obs.return_value = np.zeros(15, dtype=np.float32)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(1), None)
-        advisor.model = mock_model
-
-        result = advisor.get_recommendation(mock_state_dict)
-
-        assert "rl_action" in result
-        assert "rl_amount_pct" in result
-        assert "rl_confidence" in result
-        assert "rl_reasoning" in result
-        assert "model_version" in result
-        assert result["rl_action"] in (
-            "hold",
-            "buy_small",
-            "buy_medium",
-            "buy_large",
-            "sell",
-        )
-        assert 0.0 <= result["rl_amount_pct"] <= 1.0
-        assert 0.0 <= result["rl_confidence"] <= 1.0
-
-    @patch("agents.rl_advisor.RLAdvisor._ensure_model")
-    @patch("agents.rl_advisor.RLAdvisor._state_to_observation")
-    def test_recommendation_hold_action(self, mock_obs, mock_ensure, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        mock_obs.return_value = np.zeros(15, dtype=np.float32)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(0), None)
-        advisor.model = mock_model
-
-        result = advisor.get_recommendation(mock_state_dict)
-        assert result["rl_action"] == "hold"
-        assert result["rl_amount_pct"] == 0.0
-
-    @patch("agents.rl_advisor.RLAdvisor._ensure_model")
-    @patch("agents.rl_advisor.RLAdvisor._state_to_observation")
-    def test_recommendation_sell_action(self, mock_obs, mock_ensure, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        mock_obs.return_value = np.zeros(15, dtype=np.float32)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(4), None)
-        advisor.model = mock_model
-
-        result = advisor.get_recommendation(mock_state_dict)
-        assert result["rl_action"] == "sell"
-        assert result["rl_amount_pct"] == 1.0
-
-    @patch("agents.rl_advisor.RLAdvisor._ensure_model")
-    @patch("agents.rl_advisor.RLAdvisor._state_to_observation")
-    def test_get_confidence(self, mock_obs, mock_ensure, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        mock_obs.return_value = np.zeros(15, dtype=np.float32)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(1), None)
-        advisor.model = mock_model
-
-        advisor.get_recommendation(mock_state_dict)
-        conf = advisor.get_confidence()
-        assert isinstance(conf, float)
-
-    def test_save_and_load_model(self, tmp_path):
-        from agents.rl_advisor import RLAdvisor
-
-        model_path = tmp_path / "test_model"
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        advisor.model = mock_model
-
-        advisor.save_model(model_path)
-        mock_model.save.assert_called_once()
-
-    @patch("stable_baselines3.PPO")
-    def test_training_with_mock_env(self, mock_ppo_class):
-        from agents.rl_advisor import RLAdvisor
-        from agents.rl_environment import TradingEnv
-
-        mock_model = MagicMock()
-        mock_ppo_class.return_value = mock_model
-
-        advisor = RLAdvisor()
-        env = TradingEnv(max_steps=10)
-        advisor.model = mock_model
-
-        advisor.train(env, total_timesteps=100)
-        mock_model.learn.assert_called_once()
-        assert mock_model.learn.call_args.kwargs["total_timesteps"] == 100
-
-    @patch("agents.rl_advisor.RLAdvisor._ensure_model")
-    @patch("agents.rl_advisor.RLAdvisor._state_to_observation")
-    def test_different_confidence_levels(self, mock_obs, mock_ensure, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        mock_obs.return_value = np.zeros(15, dtype=np.float32)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(2), None)
-        advisor.model = mock_model
-
-        result = advisor.get_recommendation(mock_state_dict)
-        assert "rl_confidence" in result
-        assert isinstance(result["rl_confidence"], float)
-
-    def test_backward_compatibility_no_model(self, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(0), None)
-        advisor.model = mock_model
-
-        result = advisor.get_recommendation(mock_state_dict)
-        assert result["rl_action"] == "hold"
-        assert result["rl_amount_pct"] == 0.0
-        assert result["model_version"] == "1.0.0"
 
 
 # ──────────────────────────────────────────────
@@ -1431,6 +900,7 @@ class TestPromptEvolver:
                 prompt_content="Test prompt content",
                 version=1,
                 changelog="Initial version",
+                is_draft=False
             )
             assert path is not None
             assert "analyst_v1.txt" in path
@@ -1452,12 +922,14 @@ class TestPromptEvolver:
                 prompt_content="Version 1 content",
                 version=1,
                 changelog="v1",
+                is_draft=False
             )
             evolver.store_prompt_version(
                 agent_name="analyst",
                 prompt_content="Version 2 content",
                 version=2,
                 changelog="v2",
+                is_draft=False
             )
             prompt = evolver.get_current_prompt("analyst")
             assert "Version 2 content" in prompt
@@ -1473,8 +945,8 @@ class TestPromptEvolver:
             patch("agents.prompt_evolver.MANIFEST_FILE", manifest_file),
         ):
             evolver = PromptEvolver()
-            evolver.store_prompt_version("analyst", "v1", 1, "changelog1")
-            evolver.store_prompt_version("analyst", "v2", 2, "changelog2")
+            evolver.store_prompt_version("analyst", "v1", 1, "changelog1", is_draft=False)
+            evolver.store_prompt_version("analyst", "v2", 2, "changelog2", is_draft=False)
 
             history = evolver.get_prompt_history("analyst")
             assert len(history) == 2
@@ -1492,8 +964,8 @@ class TestPromptEvolver:
             patch("agents.prompt_evolver.MANIFEST_FILE", manifest_file),
         ):
             evolver = PromptEvolver()
-            evolver.store_prompt_version("analyst", "v1 content", 1, "v1")
-            evolver.store_prompt_version("analyst", "v2 content", 2, "v2")
+            evolver.store_prompt_version("analyst", "v1 content", 1, "v1", is_draft=False)
+            evolver.store_prompt_version("analyst", "v2 content", 2, "v2", is_draft=False)
 
             result = evolver.rollback_prompt("analyst", 1)
             assert result is True
@@ -1512,7 +984,7 @@ class TestPromptEvolver:
             patch("agents.prompt_evolver.MANIFEST_FILE", manifest_file),
         ):
             evolver = PromptEvolver()
-            evolver.store_prompt_version("analyst", "v1", 1, "v1")
+            evolver.store_prompt_version("analyst", "v1", 1, "v1", is_draft=False)
 
             result = evolver.rollback_prompt("analyst", 99)
             assert result is False
@@ -1651,72 +1123,7 @@ class TestPromptEvolver:
 # ──────────────────────────────────────────────
 
 
-class TestIntegrationRLGraph:
-    def test_rl_state_enrichment(self, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
 
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(1), None)
-        advisor.model = mock_model
-
-        rec = advisor.get_recommendation(mock_state_dict)
-        assert "rl_action" in rec
-        assert rec["rl_action"] == "buy_small"
-        assert "rl_confidence" in rec
-
-    def test_rl_trader_blending(self, mock_state_dict):
-        from agents.rl_advisor import RLAdvisor
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(2), None)
-        advisor.model = mock_model
-
-        rl_rec = advisor.get_recommendation(mock_state_dict)
-
-        llm_decision = {
-            "action": "buy",
-            "confidence": 0.8,
-            "amount_pct": 0.25,
-        }
-
-        blended_action = rl_rec["rl_action"]
-        blended_amount = (llm_decision["amount_pct"] + rl_rec["rl_amount_pct"]) / 2
-
-        assert blended_action in (
-            "hold",
-            "buy_small",
-            "buy_medium",
-            "buy_large",
-            "sell",
-        )
-        assert 0.0 <= blended_amount <= 1.0
-
-    def test_rag_rl_state_enrichment(self, mock_state_dict, tmp_data_dir):
-        from data.vector_store import AgentMemoryStore
-        from agents.rl_advisor import RLAdvisor
-
-        store = AgentMemoryStore()
-        if store.collection is None:
-            pytest.skip("ChromaDB not available")
-
-        state = {
-            "symbol": "BTC/USDT",
-            "market_data": {"current_price": 50000},
-            "news_data": [],
-            "technical_signals": {"vix": 20, "macd": {"histogram": 0.5}},
-            "trade_decision": {"action": "buy"},
-        }
-        store.store_decision(state, accuracy_score=0.7)
-
-        advisor = RLAdvisor()
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.array(0), None)
-        advisor.model = mock_model
-
-        rec = advisor.get_recommendation(mock_state_dict)
-        assert "rl_action" in rec
 
     def test_drift_risk_manager_integration(self, tmp_path):
         from evaluation.drift_monitor import DriftMonitor
@@ -1772,7 +1179,7 @@ class TestIntegrationRLGraph:
             current = evolver.get_current_prompt("trader")
             assert "trading assistant" in current
 
-            evolver.store_prompt_version("trader", current + "\n# Updated", 1, "init")
+            evolver.store_prompt_version("trader", current + "\n# Updated", 1, "init", is_draft=False)
 
             updated = evolver.get_current_prompt("trader")
             assert "Updated" in updated
@@ -1854,22 +1261,7 @@ class TestIntegrationRLGraph:
             assert "portfolio_loaded" in data
             assert "total_analyses" in data
 
-    def test_dashboard_api_rl_status_endpoint(self, tmp_path):
-        if not self._dashboard_import_available():
-            pytest.skip("prometheus_client not installed")
-        from fastapi.testclient import TestClient
-        from dashboard.server import app
 
-        with (
-            patch("dashboard.server.PORTFOLIO_FILE", Path("/nonexistent")),
-            patch("dashboard.server.DATA_DIR", tmp_path),
-        ):
-            client = TestClient(app)
-            response = client.get("/api/rl_status")
-            assert response.status_code == 200
-            data = response.json()
-            assert "model_loaded" in data
-            assert "model_version" in data
 
     def test_dashboard_api_drift_heatmap_endpoint(self, tmp_path):
         if not self._dashboard_import_available():

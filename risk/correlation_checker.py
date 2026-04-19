@@ -7,6 +7,8 @@ from typing import Any
 
 import pandas as pd
 
+from risk.portfolio import Position
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ class CorrelationChecker:
 
     def check_positions(
         self,
-        portfolio_positions: list,
+        portfolio_positions: list[Position],
         market_data: dict[str, pd.DataFrame],
         max_correlation: float = 0.7,
     ) -> dict[str, Any]:

@@ -15,7 +15,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
-from config.settings import PROMPTS_DIR, get_trading_params
+from config.settings import get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
@@ -23,13 +23,17 @@ from utils.llm_retry import invoke_with_retry
 logger = logging.getLogger(__name__)
 
 
+import threading
 _drift_monitor_instance = None
+_drift_init_lock = threading.Lock()
 
 def _get_drift_monitor():
     global _drift_monitor_instance
     if _drift_monitor_instance is None:
-        from evaluation.drift_monitor import DriftMonitor
-        _drift_monitor_instance = DriftMonitor()
+        with _drift_init_lock:
+            if _drift_monitor_instance is None:
+                from evaluation.drift_monitor import DriftMonitor
+                _drift_monitor_instance = DriftMonitor()
     return _drift_monitor_instance
 
 def risk_manager_node(state: TradingState) -> dict[str, Any]:
@@ -281,7 +285,18 @@ Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approve
             response_format={"type": "json_object"},
             max_retries=3,
             base_delay=2.0,
-            request_timeout=60,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "decision": "rejected",
+                "reasoning": "LLM API error - güvenlik nedeniyle reddedildi (fallback)",
+                "approved_size": 0,
+                "stop_loss_level": 0,
+                "take_profit_level": 0,
+                "checks_passed": checks_passed,
+                "checks_failed": ["LLM API hatası - risk değerlendirmesi yapılamadı"],
+                "warnings": warnings,
+            },
         )
         llm_assessment = extract_json(response.content)
         if llm_assessment.get("__parse_error__"):
@@ -292,7 +307,14 @@ Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approve
             llm_assessment = {}
     except Exception as e:
         logger.error("Risk LLM hatası: %s", e)
-        llm_assessment = {}
+        # Fallback zaten döndü
+        llm_assessment = {
+            "decision": "rejected",
+            "reasoning": f"LLM API error - güvenlik nedeniyle reddedildi: {e}",
+            "approved_size": 0,
+            "stop_loss_level": 0,
+            "take_profit_level": 0,
+        }
 
     proposed_size = llm_assessment.get("approved_size", 0) if llm_assessment else 0
     if proposed_size > 0:
@@ -321,15 +343,53 @@ Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approve
 
     risk_approved = final_decision == "approved"
 
+    # Deterministic stop-loss / take-profit calculation
+    current_price = tech.get("current_price", 0) or float(state.get("market_data", {}).get("current_price", 0))
+    atr_14 = tech.get("atr_14", 0) or 0
+    atr_multiplier = params.stop_loss.atr_multiplier
+    min_risk_reward = params.limits.min_risk_reward
+
+    # Fallback: percentage-based stop-loss if ATR is not available
+    DEFAULT_STOP_LOSS_PCT = 0.02  # 2% default stop-loss
+
+    stop_loss_level = 0.0
+    take_profit_level = 0.0
+
+    if current_price > 0:
+        signal = debate.get("adjusted_signal", "neutral")
+        if atr_14 > 0:
+            # Use ATR-based calculation
+            if signal == "bullish":
+                stop_loss_level = current_price - (atr_14 * atr_multiplier)
+                take_profit_level = current_price + (atr_14 * atr_multiplier * min_risk_reward)
+            elif signal == "bearish":
+                stop_loss_level = current_price + (atr_14 * atr_multiplier)
+                take_profit_level = current_price - (atr_14 * atr_multiplier * min_risk_reward)
+            else:
+                stop_loss_level = current_price - (atr_14 * atr_multiplier)
+                take_profit_level = current_price + (atr_14 * atr_multiplier * min_risk_reward)
+        else:
+            # Fallback: use percentage-based stop-loss when ATR unavailable
+            if signal == "bullish":
+                stop_loss_level = current_price * (1 - DEFAULT_STOP_LOSS_PCT)
+                take_profit_level = current_price * (1 + DEFAULT_STOP_LOSS_PCT * min_risk_reward)
+            elif signal == "bearish":
+                stop_loss_level = current_price * (1 + DEFAULT_STOP_LOSS_PCT)
+                take_profit_level = current_price * (1 - DEFAULT_STOP_LOSS_PCT * min_risk_reward)
+            else:
+                stop_loss_level = current_price * (1 - DEFAULT_STOP_LOSS_PCT)
+                take_profit_level = current_price * (1 + DEFAULT_STOP_LOSS_PCT * min_risk_reward)
+        logger.info(f"[Risk] Stop-loss: {stop_loss_level:.2f}, Take-profit: {take_profit_level:.2f} (ATR: {atr_14:.2f}, signal: {signal})")
+
     risk_data = {
         "decision": final_decision,
         "checks_passed": checks_passed,
         "checks_failed": checks_failed,
         "warnings": warnings,
         "llm_assessment": llm_assessment,
-        "stop_loss_level": llm_assessment.get("stop_loss_level", 0),
-        "take_profit_level": llm_assessment.get("take_profit_level", 0),
-        "approved_size": llm_assessment.get("approved_size", 0),
+        "stop_loss_level": stop_loss_level,
+        "take_profit_level": take_profit_level,
+        "approved_size": proposed_size if risk_approved else 0,
     }
 
     risk_msg = (

@@ -1,10 +1,12 @@
 """
-LLM Trading System — Dashboard API Server
-===========================================
-FastAPI tabanlı backend server:
-- Portfolio durumu, pozisyonlar, işlemler API endpoint'leri
-- Statik dashboard dosyalarını serve eder
-- SSE (Server-Sent Events) ile ajan aktivite logları
+LLM Trading System — Dashboard API Server (INACTIVE / ON HOLD)
+==============================================================
+[STATUS: DEPRECATED/DETACHED]
+Bu dosya kullanıcı talebi üzerine (2026-04-19) pasife alınmıştır. 
+Bot artık bu arayüze bağımlı olmadan çalışmaktadır.
+
+Geliştirici Notu: UI yorgunluğu nedeniyle arayüz işi durdurulmuş, 
+sistem "Headless" (Kafasız) moda geçirilmiştir.
 """
 
 from __future__ import annotations
@@ -25,6 +27,12 @@ from prometheus_client import (
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
+
+# Proje kökünü path'e ekle
+import sys
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -220,6 +228,18 @@ async def get_status():
             status["total_pnl"] = data.get("total_pnl", 0)
         except (json.JSONDecodeError, OSError):
             status["error"] = "Failed to read portfolio data"
+    
+    # Circuit breaker ekle
+    from risk.circuit_breaker import CircuitBreaker
+    cb = CircuitBreaker()
+    cb_status = cb.get_status()
+    status["circuit_breaker"] = {
+        "halted": cb_status["halted"],
+        "halt_reason": cb_status["halt_reason"],
+        "consecutive_fallbacks": cb_status["consecutive_fallbacks"],
+        "consecutive_llm_errors": cb_status["consecutive_llm_errors"],
+        "consecutive_losses": cb_status["consecutive_losses"],
+    }
 
     return status
 
@@ -234,18 +254,7 @@ async def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/api/rl_status")
-async def get_rl_status():
-    api_calls_total.labels(type="rl_status").inc()
-    model_paths = list(DATA_DIR.glob("rl_model*")) + list(DATA_DIR.glob("models/rl*"))
-    model_loaded = any(p.exists() for p in model_paths)
-    return {
-        "model_loaded": model_loaded,
-        "confidence": 0.0,
-        "model_version": "v1.0.0" if model_loaded else "none",
-        "last_trained": None,
-        "total_episodes": 0,
-    }
+
 
 
 @app.get("/api/drift_heatmap")
@@ -308,8 +317,8 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
                 daily_returns = [
                     t.get("pnl", 0) / initial_equity for t in trades if t.get("pnl")
                 ]
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Monte Carlo için portföy okunamadı: %s", e)
     if len(daily_returns) >= 10:
         mean_ret = sum(daily_returns) / len(daily_returns)
         variance = sum((r - mean_ret) ** 2 for r in daily_returns) / max(
@@ -412,6 +421,91 @@ async def get_retrospective(limit: int = 10):
         return {"retrospectives": [], "error": str(e)}
 
 
+@app.get("/api/circuit_breaker")
+async def get_circuit_breaker():
+    """Circuit breaker durumu."""
+    from risk.circuit_breaker import CircuitBreaker
+    cb = CircuitBreaker()
+    return cb.get_status()
+
+
+@app.post("/api/circuit_breaker/reset")
+async def reset_circuit_breaker():
+    """Circuit breaker sayaçlarını sıfırla."""
+    from risk.circuit_breaker import CircuitBreaker
+    cb = CircuitBreaker()
+    cb.reset_fallbacks()
+    cb.reset_llm_errors()
+    cb.consecutive_losses = 0
+    cb._save_state()
+    return {"status": "success", "message": "Circuit breaker counters reset"}
+
+
+@app.get("/api/fallbacks")
+async def get_fallbacks(limit: int = 50):
+    """Fallback audit log."""
+    from data.fallback_store import get_fallback_store
+    store = get_fallback_store()
+    fallbacks = store.get_fallbacks(limit=limit)
+    summary = store.get_fallback_summary(hours=24)
+    return {"fallbacks": fallbacks, "summary": summary}
+
+
+@app.get("/api/accounts")
+async def get_accounts():
+    """Tüm hesapların durumu (multi-account)."""
+    from config.settings import get_settings
+    from execution.account_manager import MultiAccountManager
+    
+    settings = get_settings()
+    
+    # Tek account modu
+    if not settings.binance_accounts or len(settings.binance_accounts) == 0:
+        return {
+            "mode": "single",
+            "accounts": [],
+            "combined": None
+        }
+    
+    try:
+        manager = MultiAccountManager(settings.binance_accounts)
+        summary = manager.get_status_summary()
+        
+        # Combined view hesapla
+        combined_equity = sum(acc["equity"] for acc in summary["accounts"].values())
+        combined_cash = sum(acc["cash"] for acc in summary["accounts"].values())
+        combined_positions = sum(acc["open_positions"] for acc in summary["accounts"].values())
+        
+        return {
+            "mode": "multi",
+            "accounts": [
+                {
+                    "name": name,
+                    "is_active": data["is_active"],
+                    "equity": data["equity"],
+                    "cash": data["cash"],
+                    "open_positions": data["open_positions"],
+                    "last_error": data["last_error"],
+                }
+                for name, data in summary["accounts"].items()
+            ],
+            "combined": {
+                "total_equity": combined_equity,
+                "total_cash": combined_cash,
+                "total_positions": combined_positions,
+                "account_count": len(summary["accounts"]),
+                "active_accounts": summary["active_accounts"],
+            }
+        }
+    except Exception as e:
+        return {
+            "mode": "error",
+            "error": str(e),
+            "accounts": [],
+            "combined": None
+        }
+
+
 @app.get("/api/portfolio_allocation")
 async def get_portfolio_allocation():
     """En son portföy dağılımı (run_portfolio.py çıktısı)."""
@@ -426,6 +520,83 @@ async def get_portfolio_allocation():
             except (json.JSONDecodeError, OSError):
                 return {"status": "no_allocation"}
     return {"status": "no_allocation"}
+
+
+@app.get("/api/config")
+async def get_config():
+    """Mevcut trading konfigürasyonunu döndürür."""
+    import yaml
+
+    config_path = PROJECT_ROOT / "config" / "trading_params.yaml"
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            return {"error": str(e)}
+    return {"error": "Config file not found"}
+
+@app.post("/api/config")
+async def update_config(request: Request):
+    """Trading konfigürasyonunu günceller."""
+    import yaml
+
+    try:
+        new_config = await request.json()
+        config_path = PROJECT_ROOT / "config" / "trading_params.yaml"
+        if config_path.exists():
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(new_config, f, allow_unicode=True, default_flow_style=False)
+            return {"status": "success", "message": "Config updated"}
+        return {"error": "Config file not found"}
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+@app.post("/api/bot/start")
+async def start_bot():
+    """Botun durdurulmasını sağlayan STOP dosyasını siler."""
+    stop_file = DATA_DIR / "STOP"
+    if stop_file.exists():
+        stop_file.unlink()
+    return {"status": "started", "message": "Bot is active (STOP file removed)."}
+
+@app.post("/api/bot/stop")
+async def stop_bot():
+    """Botu acil durdurmak için STOP dosyası oluşturur."""
+    stop_file = DATA_DIR / "STOP"
+    stop_file.touch()
+    from risk.system_status import SystemStatus
+    s = SystemStatus()
+    s.emergency_stop("API requested manual stop.")
+    return {"status": "stopped", "message": "Bot is halted (STOP file created)."}
+
+@app.post("/api/positions/{symbol:path}/close")
+async def close_position(symbol: str):
+    """Bir pozisyonu manuel kapatma talebini işler."""
+    return {"status": "pending", "message": f"Closure requested for {symbol}. (Manual override not fully synced)"}
+
+@app.get("/api/logs/stream")
+async def log_stream():
+    """Canlı trading loglarını (SSE) üzerinden stream eder."""
+    import asyncio
+    from fastapi.responses import StreamingResponse
+
+    async def log_generator():
+        log_file = PROJECT_ROOT / "logs" / "trading.log"
+        if not log_file.exists():
+            yield "data: Log file not found\\n\\n"
+            return
+            
+        with open(log_file, "r", encoding="utf-8") as f:
+            f.seek(0, 2) # Go to end of file
+            while True:
+                line = f.readline()
+                if not line:
+                    await asyncio.sleep(0.5)
+                    continue
+                yield f"data: {line}\\n\\n"
+                
+    return StreamingResponse(log_generator(), media_type="text/event-stream")
 
 
 # Statik dosyalar (CSS, JS)

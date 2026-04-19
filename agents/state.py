@@ -11,14 +11,36 @@ import operator
 from dataclasses import dataclass, field
 from typing import Annotated, Any, NotRequired, TypedDict
 
-MAX_MESSAGES = 100  # Max messages to keep in state
+from config.settings import get_trading_params
+
+
+def _get_max_messages() -> int:
+    """Get MAX_MESSAGES from config, fallback to 100."""
+    try:
+        params = get_trading_params()
+        return params.system.max_workers * 20  # Dynamic based on workers
+    except Exception:
+        return 100
+
+
+MAX_MESSAGES = 100  # Default, overridden by _get_max_messages() at runtime
+
+
+def _get_max_messages_runtime() -> int:
+    """Get MAX_MESSAGES from config at runtime."""
+    try:
+        params = get_trading_params()
+        return params.system.max_workers * 20
+    except Exception:
+        return MAX_MESSAGES
 
 
 def merge_and_trim_messages(left: list[dict], right: list[dict]) -> list[dict]:
     """Merges new messages and ensures the total count does not exceed MAX_MESSAGES."""
+    max_msgs = _get_max_messages_runtime()
     combined = (left or []) + (right or [])
-    if len(combined) > MAX_MESSAGES:
-        return combined[-MAX_MESSAGES:]
+    if len(combined) > max_msgs:
+        return combined[-max_msgs:]
     return combined
 
 
@@ -40,9 +62,6 @@ class TradingState(TypedDict):
 
     portfolio_state: NotRequired[dict[str, Any]]
 
-    rl_recommendation: NotRequired[dict[str, Any]]
-    rl_confidence: NotRequired[float]
-
     historical_context: NotRequired[list[dict]]
     agent_accuracy: NotRequired[float]
 
@@ -50,6 +69,9 @@ class TradingState(TypedDict):
     error: NotRequired[str]
     phase: NotRequired[str]
     provider: NotRequired[str]
+    
+    # Faz 5: Dinamik öğrenilen kurallar
+    dynamic_rules: NotRequired[str]
 
 
 def create_initial_state(
@@ -59,8 +81,14 @@ def create_initial_state(
     technical_signals: dict | None = None,
     portfolio_state: dict | None = None,
     provider: str | None = None,
+    dynamic_rules: str | None = None,
 ) -> TradingState:
-    """Başlangıç durumu oluşturur."""
+    """
+    Başlangıç durumu oluşturur.
+    
+    Args:
+        dynamic_rules: Dinamik öğrenilen kurallar (opsiyonel)
+    """
     return TradingState(
         messages=[],
         symbol=symbol,
@@ -74,14 +102,14 @@ def create_initial_state(
         risk_approved=False,
         trade_decision={},
         portfolio_state=portfolio_state or {},
-        rl_recommendation={},
-        rl_confidence=0.0,
         historical_context=[],
         agent_accuracy=1.0,
         iteration=0,
         error="",
         phase="init",
         provider=provider or "",
+        # Faz 5: Dinamik kurallar
+        dynamic_rules=dynamic_rules or "",
     )
 
 
@@ -90,6 +118,7 @@ def trim_messages(messages: list[dict]) -> list[dict]:
 
     Should be called at the end of each graph node to cap message list size.
     """
-    if len(messages) > MAX_MESSAGES:
-        return messages[-MAX_MESSAGES:]
+    max_msgs = _get_max_messages_runtime()
+    if len(messages) > max_msgs:
+        return messages[-max_msgs:]
     return messages

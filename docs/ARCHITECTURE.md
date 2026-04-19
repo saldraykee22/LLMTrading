@@ -275,12 +275,16 @@ Portföy Dağılımı JSON -> dashboard + file export
 | **Prompt sikistirma** | Tum promptlar ~%40-50 kucultuldu, "be concise" ve "ONLY return JSON" kurallari eklendi |
 | **JSON mode + max_tokens** | Tum LLM cagrilar `response_format=json_object` ve cikti token siniri ile yapilir |
 | **LLM Retry/Backoff** | Tum ajanlara `invoke_with_retry()` — exponential backoff (2s, 4s, 8s) |
-| **Thread-Safety** | Portfolio `_portfolio_lock`, Watchdog `_lock` mutex |
+| **Thread-Safety** | Portfolio `_portfolio_lock`, Watchdog `_lock` mutex, ExchangeClient `_exchange_lock` (CCXT yarış koşullarını önler) |
 | **Sentiment RAM Cache** | Disk I/O yerine RAM cache — `load()` diskten sadece ilk kez okur |
 | **TTL Cache** | LLM cache 30dk TTL + 500 entry max — memory leak onlenir |
 | **Error Flag** | JSON parse hatasinda `__parse_error__` flag — sessiz basarisizlik yok |
-| **RAG Hafiza** | ChromaDB ile karar gecmisi saklanir, benzer durumlar sorgulanir |
+| **RAG Hafiza** | ChromaDB ile karar gecmisi saklanir, benzer durumlar sorgulanir. `run_live.py` içerisinde periyodik otomatik pruning yapılır. |
+| **Karar İzlenebilirliği** | Tüm trade kararları, RAG bağlamı ve LLM skorlarıyla beraber `data/decision_trace.jsonl` loguna eklenir. |
 | **Drift Monitor** | Sentiment tahmini vs gercek fiyat karsilastirilir, isabet orani takip edilir |
+| **Prompt Evolver** | Modellerin ürettiği prompt yamaları "Draft (Taslak)" olarak kaydedilir. İnsan onayı gerektirir (Catastrophic Forgetting önlemi). |
+| **Circuit Breaker Bildirimi** | `should_halt` artık sistem durduğunda Webhook/Bildirim mekanizması tetikler. |
+| **Watchdog EMERGENCY HALT** | Acil satış gerçekleştiren Watchdog, ana LangGraph döngüsünün "Al" emirlerini bloke etmek için `data/STOP` dosyası oluşturur. |
 | **Market Holidays** | US ve BIST resmi tatilleri `is_market_open()` icinde kontrol edilir |
 
 ---

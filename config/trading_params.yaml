@@ -1,142 +1,235 @@
-# ============================================================
-# LLM Trading System — Trading Parameters
-# ============================================================
-# Model isimleri merkezi olarak buradan yönetilir.
-# Değiştirmek için sadece aşağıdaki "model" alanlarını güncelleyin.
-# ============================================================
-
-# ── LLM Modelleri (Merkezi) ────────────────────────────────
-llm:
-  default_model: "deepseek/deepseek-chat-v3-0324"
-  reasoning_model: "deepseek/deepseek-reasoner"
-  fallback_providers: ["openrouter", "deepseek", "ollama"]
-
-# ── Risk Yönetimi ──────────────────────────────────────────
-risk:
-  max_position_pct: 0.05          # Portföyün max %5'i tek pozisyon
-  max_portfolio_risk_pct: 0.20    # Toplam portföy risk limiti %20
-  max_drawdown_pct: 0.15          # Max %15 düşüş → tüm pozisyonları kapat
-  max_daily_loss_pct: 0.03        # Günlük max %3 kayıp → işlem durdur
-  cvar_confidence: 0.95           # CVaR güven düzeyi
-  max_open_positions: 5           # Max eşzamanlı açık pozisyon
-  max_correlated_positions: 3     # Max ilişkili pozisyon sayısı
-  max_correlation_threshold: 0.70 # Korelasyon eşiği (üzeri reddedilir)
-  max_consecutive_losses: 5       # Art arda 5 kayıp → durdur
-  max_consecutive_llm_errors: 10  # Art arda 10 LLM hatası → durdur
-  cvar:
-    max_weight: 0.40              # Tek varlık max ağırlık %40
-
-# ── Volatilite / Rejim Filtresi ────────────────────────────
-regime:
-  vix_sma_period: 25              # VIX hareketli ortalama periyodu (gün)
-  vix_threshold_multiplier: 1.10  # VIX > SMA * 1.10 → yüksek volatilite
-  crypto_fear_greed_threshold: 20 # Fear & Greed Index < 20 → aşırı korku
-  halt_on_high_vol: true          # Yüksek volatilitede yeni pozisyon alma
-
-# ── Zarar-Kes (Stop-Loss) ─────────────────────────────────
-stop_loss:
-  atr_period: 14                  # ATR hesaplama periyodu
-  atr_multiplier: 2.5             # Trailing stop = entry ± ATR * 2.5
-  trailing_enabled: true          # Dinamik izleyen stop aktif mi
-  hard_stop_pct: 0.08             # Sabit zarar-kes %8 (son savunma)
-
-# ── Emir Yönetimi ─────────────────────────────────────────
-execution:
-  mode: "paper"                   # paper | live
-  exchange: "binance"             # Birincil borsa
-  default_order_type: "limit"     # limit | market
-  slippage_pct: 0.001             # Beklenen kayma %0.1
-  commission_pct: 0.001           # Binance komisyon %0.1
-  rate_limit_ms: 1200             # API istekleri arası bekleme (ms)
-  retry_count: 3                  # Başarısız emir yeniden deneme
-  retry_delay_ms: 2000            # Yeniden deneme bekleme süresi
-
-# ── Duyarlılık Analizi ────────────────────────────────────
-sentiment:
-  provider: "openrouter"          # openrouter | deepseek | ollama
-  model: "deepseek/deepseek-chat-v3-0324"
-  reasoning_model: "deepseek/deepseek-reasoner"
-  score_range: [-1.0, 1.0]       # Normalleştirilmiş skor aralığı
-  bullish_threshold: 0.3          # > 0.3 → yükseliş sinyali
-  bearish_threshold: -0.3         # < -0.3 → düşüş sinyali
-  min_confidence: 0.6             # Min güven düzeyi
-
-# ── Ajan Yapılandırması ───────────────────────────────────
 agents:
-  max_debate_rounds: 3            # Bull vs Bear max tartışma turu
-  max_retry_iterations: 3         # Risk red → yeniden analiz max tekrar
-  coordinator_model: "deepseek/deepseek-chat-v3-0324"
-  analyst_model: "deepseek/deepseek-chat-v3-0324"
-  risk_model: "deepseek/deepseek-chat-v3-0324"
-  trader_model: "deepseek/deepseek-chat-v3-0324"
-
-  ensemble_enabled: true          # Çoklu model oylaması aktif mi
-  ensemble_models: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b", "openrouter/openai/gpt-4o-mini"]
-  ensemble_min_consensus: 0.5     # Min konsensüs oranı (yüzde 50+)
-
-# ── Backtest ──────────────────────────────────────────────
+  analyst_model: openrouter/elephant-alpha
+  coordinator_model: openrouter/elephant-alpha
+  ensemble_enabled: true
+  ensemble_min_consensus: 0.5
+  ensemble_models:
+  - deepseek/deepseek-chat-v3-0324
+  - ollama/llama3:8b
+  - openrouter/openai/gpt-4o-mini
+  max_debate_rounds: 3
+  max_retry_iterations: 3
+  risk_model: openrouter/elephant-alpha
+  trader_model: openrouter/elephant-alpha
 backtest:
-  train_pct: 0.70                 # Eğitim verisi oranı
-  validation_pct: 0.15            # Doğrulama verisi oranı
-  test_pct: 0.15                  # Test verisi oranı
-  initial_cash: 10000             # Başlangıç sermayesi (USDT)
-  benchmark: "BTC/USDT"           # Karşılaştırma varlığı
-
-# ── Veri Kaynakları ───────────────────────────────────────
+  benchmark: BTC/USDT
+  initial_cash: 10000
+  test_pct: 0.15
+  train_pct: 0.7
+  validation_pct: 0.15
 data:
-  crypto_exchange: "binance"
-  default_timeframe: "1h"         # Varsayılan mum periyodu
-  history_days: 365               # Geçmiş veri çekme süresi (gün)
-  news_lookback_hours: 24         # Haber geriye dönük bakış (saat)
   cache_enabled: true
-  cache_ttl_minutes: 15           # Önbellek yaşam süresi
-
-# ── Limitler ──────────────────────────────────────────────
+  cache_ttl_minutes: 15
+  crypto_exchange: binance
+  default_timeframe: 1h
+  history_days: 365
+  news_lookback_hours: 24
+execution:
+  commission_pct: 0.001
+  dca_enabled: true
+  dca_price_improvement_pct: 0.02
+  default_execution_size_pct: 2.5
+  default_order_type: limit
+  dust_sweep_cycle_interval: 100
+  dust_sweep_enabled: true
+  dust_target_asset: BNB
+  dust_threshold_usdt: 1
+  exchange: binance
+  max_dca_tranches: 4
+  min_dca_tranche_pct: 0.25
+  mode: paper
+  rate_limit_ms: 1200
+  retry_count: 3
+  retry_delay_ms: 2000
+  slippage_pct: 0.001
 limits:
-  max_news_items: 20              # Maksimum haber sayısı
-  debate_truncate_chars: 300      # Tartışma argüman kısaltma
-  debate_rebuttal_truncate_chars: 1500  # Karşılıklı yanıt kısaltma
-  moderator_truncate_chars: 2000  # Moderatör giriş kısaltma
-  min_risk_reward: 1.5            # Minimum risk/ödül oranı
-  vix_crisis_threshold: 40        # VIX kriz eşiği
-  vix_low_vol_multiplier: 0.8     # Düşük volatilite çarpanı
-  backtest_lookback_window: 30    # Backtest geriye bakış penceresi
-  monte_carlo_simulations: 5000   # Monte Carlo simülasyon sayısı
-  sentiment_cache_minutes: 30     # Duyarlılık önbellek süresi (dakika)
-  news_rate_limit_delay: 0.5      # Haber API istekleri arası bekleme (saniye)
-  max_tokens_sentiment: 300
-  max_tokens_research: 500
-  max_tokens_debate: 400
-  max_tokens_moderator: 400
-  max_tokens_risk: 400
-  max_tokens_trader: 250
-  max_tokens_coordinator: 200
-
-# ── Watchdog (Flash Crash Protection) ──────────────────────
+  backtest_lookback_window: 30
+  debate_rebuttal_truncate_chars: 1500
+  debate_truncate_chars: 300
+  max_news_items: 20
+  max_tokens_coordinator: 2000
+  max_tokens_debate: 8000
+  max_tokens_moderator: 4000
+  max_tokens_research: 8000
+  max_tokens_risk: 4000
+  max_tokens_sentiment: 2000
+  max_tokens_trader: 2000
+  min_risk_reward: 1.5
+  moderator_truncate_chars: 2000
+  monte_carlo_simulations: 5000
+  news_rate_limit_delay: 0.5
+  sentiment_cache_minutes: 30
+  vix_crisis_threshold: 40
+  vix_low_vol_multiplier: 0.8
+llm:
+  default_model: openrouter/elephant-alpha
+  fallback_providers:
+  - openrouter
+  - deepseek
+  - ollama
+  reasoning_model: openrouter/elephant-alpha
+  # Fallback configuration
+  fallbacks:
+    sentiment:
+      enabled: true
+      sentiment_score: 0.0
+      signal: neutral
+      confidence: 0.5
+      risk_score: 0.5
+      reasoning: "LLM API error - nötr duyarlılık (fallback)"
+      key_factors: ["API fallback - analiz yapılamadı"]
+    research:
+      enabled: true
+      recommendation: hold
+      confidence: 0.3
+      reasoning: "LLM API error - hold önerisi (güvenlik fallback)"
+      key_points: ["API fallback - analiz yapılamadı"]
+    debate_bull:
+      enabled: true
+      action: bullish
+      confidence: 0.3
+      key_points: ["LLM API error - yükseliş argümanı oluşturulamadı"]
+      reasoning: "Fallback due to LLM API error"
+    debate_bear:
+      enabled: true
+      action: bearish
+      confidence: 0.3
+      key_points: ["LLM API error - düşüş argümanı oluşturulamadı"]
+      reasoning: "Fallback due to LLM API error"
+    debate_moderator:
+      enabled: true
+      winner: draw
+      consensus_score: 0.0
+      adjusted_signal: neutral
+      moderator_reasoning: "LLM API error - tartışma sonuçsuz (fallback)"
+    risk_manager:
+      enabled: true
+      decision: rejected
+      reasoning: "LLM API error - güvenlik nedeniyle reddedildi (fallback)"
+      approved_size: 0
+      stop_loss_level: 0
+      take_profit_level: 0
+    trader:
+      enabled: true
+      action: hold
+      amount: 0
+      confidence: 0.0
+      reasoning: "LLM API error - işlem yapılmıyor (güvenlik fallback)"
+      stop_loss: 0
+      take_profit: 0
+regime:
+  bear_max_exposure: 0.2
+  bull_max_exposure: 1
+  crash_max_exposure: 0
+  crypto_fear_greed_threshold: 20
+  halt_on_high_vol: true
+  neutral_max_exposure: 0.6
+  vix_sma_period: 25
+  vix_threshold_multiplier: 1.1
+risk:
+  cvar:
+    max_weight: 0.4
+  cvar_confidence: 0.95
+  max_consecutive_llm_errors: 10
+  max_consecutive_losses: 5
+  max_correlated_positions: 3
+  max_correlation_threshold: 0.7
+  max_daily_loss_pct: 0.03
+  max_drawdown_pct: 0.15
+  max_open_positions: 12
+  max_portfolio_risk_pct: 0.2
+  max_position_pct: 0.1
+scanner:
+  atr_normalization:
+    enabled: true
+    lookback_days: 14
+    use_normalized_score: true
+  avoid_overextended: true
+  dynamic_scanner_enabled: true
+  enabled: true
+  max_initial_candidates: 30
+  max_price_change_24h_pct: 8
+  max_scout_recommendations: 5
+  max_volume_score_cap: 5
+  min_cash_ratio_for_frequent_scan: 0.5
+  min_price_change_24h_pct: 2
+  min_quality_score_threshold: 45
+  min_volume_24h_usdt: 1000000
+  momentum_1h_thresholds:
+  - max_pct: 3
+    min_pct: 0
+    score: 30
+  - max_pct: 6
+    min_pct: 3
+    score: 20
+  - max_pct: 0
+    min_pct: -5
+    score: 10
+  - max_pct: 100
+    min_pct: 6
+    score: 5
+  momentum_24h_thresholds:
+  - max_pct: 5
+    min_pct: 2
+    score: 30
+  - max_pct: 8
+    min_pct: 5
+    score: 15
+  - max_pct: 2
+    min_pct: 0
+    score: 5
+  - max_pct: 100
+    min_pct: 8
+    score: 0
+  prefer_early_momentum: true
+  quote_asset: USDT
+  scan_interval_hours: 6
+  scan_interval_hours_high_cash: 3
+  scoring_weights:
+    momentum_1h_weight: 0.3
+    momentum_24h_weight: 0.3
+    volume_weight: 0.4
+  scout_model: openrouter/elephant-alpha
+  silent_accumulation:
+    bonus_score: 15
+    enabled: true
+    min_quality_score: 40
+    price_threshold: 3
+    volume_threshold: 2
+  volume_score_multiplier: 8
+sentiment:
+  bearish_threshold: -0.3
+  bullish_threshold: 0.3
+  min_confidence: 0.6
+  model: openrouter/elephant-alpha
+  provider: openrouter
+  reasoning_model: openrouter/elephant-alpha
+  score_range:
+  - -1
+  - 1
+stop_loss:
+  atr_multiplier: 2.5
+  atr_period: 14
+  hard_stop_pct: 0.08
+  trailing_enabled: true
+system:
+  circuit_breaker_state_ttl: 3600
+  cleanup_cycle_interval: 96
+  llm_timeout_seconds: 60
+  max_symbol_length: 50
+  max_workers: 5
+  rate_limit_consecutive_threshold: 3
+  reconnect_max_attempts: 5
+  reset_counters_on_startup: true
+  stop_file_path: data/STOP
+  # Fallback configuration
+  max_consecutive_fallbacks: 5  # 5 fallback sonrası circuit breaker
+  fallback_audit_enabled: true
+  fallback_audit_retention_days: 7
 watchdog:
-  enabled: false
-  check_interval_seconds: 30
+  alert_5m_pct: 0.02
+  check_interval_seconds: 15
   crash_1m_pct: 0.03
   crash_5m_pct: 0.05
-  alert_5m_pct: 0.02
-
-# ── System (Magic Numbers) ─────────────────────────────────
-system:
-  cleanup_cycle_interval: 96      # Her 96 cycle'da bir RAG temizlik
-  max_workers: 5                  # Paralel işlemci sayısı
-  rate_limit_consecutive_threshold: 3  # Circuit breaker rate limit threshold
-  llm_timeout_seconds: 60         # LLM API timeout
-  reconnect_max_attempts: 5       # Borsa reconnect deneme sayısı
-  circuit_breaker_state_ttl: 3600 # State persistence TTL (saniye)
-  max_symbol_length: 50           # Sembol uzunluk limiti
-  stop_file_path: "data/STOP"     # Emergency STOP dosyası
-
-# ── Market Scanner (Lead Scout) ───────────────────────────
-scanner:
+  emergency_close_all: true
   enabled: true
-  min_volume_24h_usdt: 1000000    # Min 24h hacim ($1M)
-  min_price_change_24h_pct: 2.0   # Min %2 hareket
-  max_initial_candidates: 30      # Algoritmik filtreden geçecek max coin
-  max_scout_recommendations: 5    # Konseye sunulacak max aday
-  scout_model: "openrouter/elephant-alpha"
-  quote_asset: "USDT"             # Taranacak parite tipi

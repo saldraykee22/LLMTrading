@@ -41,6 +41,13 @@ class TechnicalSignals:
     ema_20: float = 0.0
     ema_50: float = 0.0
     sma_200: float = 0.0
+    
+    # Yeni İndikatörler
+    adx_14: float = 0.0
+    supertrend: str = "neutral"  # bullish | bearish
+    stoch_rsi_k: float = 50.0
+    stoch_rsi_d: float = 50.0
+
     current_price: float = 0.0
     volume_sma_ratio: float = 1.0  # Güncel hacim / 20-günlük ort. hacim
 
@@ -53,27 +60,46 @@ class TechnicalSignals:
 
     def to_dict(self) -> dict[str, Any]:
         """Dict'e dönüştürür (LLM'e gönderim için)."""
+        has_valid_data = self.current_price > 0
         result = {
             "trend": self.trend,
-            "trend_strength": round(self.trend_strength, 3),
+            "trend_strength": round(self.trend_strength, 3) if has_valid_data else None,
             "signal": self.signal,
-            "rsi_14": round(self.rsi_14, 2),
+            "rsi_14": round(self.rsi_14, 2) if has_valid_data else None,
             "macd_signal": self.macd_signal,
             "macd_trend": self.macd_trend,
-            "macd_histogram": round(self.macd_histogram, 4),
+            "macd_histogram": round(self.macd_histogram, 4) if has_valid_data else None,
             "bb_position": self.bb_position,
-            "atr_14": round(self.atr_14, 4),
-            "ema_20": round(self.ema_20, 4),
-            "ema_50": round(self.ema_50, 4),
-            "sma_200": round(self.sma_200, 4),
-            "current_price": round(self.current_price, 4),
-            "volume_sma_ratio": round(self.volume_sma_ratio, 2),
-            "support_levels": [round(s, 4) for s in self.support_levels[:3]],
-            "resistance_levels": [round(r, 4) for r in self.resistance_levels[:3]],
+            "atr_14": round(self.atr_14, 4) if has_valid_data else None,
+            "ema_20": round(self.ema_20, 4) if has_valid_data else None,
+            "ema_50": round(self.ema_50, 4) if has_valid_data else None,
+            "sma_200": round(self.sma_200, 4) if has_valid_data else None,
+            "current_price": round(self.current_price, 4) if has_valid_data else None,
+            "volume_sma_ratio": round(self.volume_sma_ratio, 2) if has_valid_data else None,
+            "support_levels": [round(s, 4) for s in self.support_levels[:3]] if has_valid_data and self.support_levels else None,
         }
         if self.slippage_info is not None:
             result["slippage"] = self.slippage_info
         return result
+
+    def get_llm_summary(self) -> str:
+        """Modeller için teknik durum özeti (String) üretir."""
+        lines = [
+            f"--- Teknik Analiz Özeti ({self.symbol}) ---",
+            f"Trend: {self.trend.upper()} (Güç: {self.trend_strength:.2f})",
+            f"Fiyat: {self.current_price:.6f}",
+            f"RSI (14): {self.rsi_14:.1f} ({'Aşırı Alım' if self.rsi_14 > 70 else 'Aşırı Satım' if self.rsi_14 < 30 else 'Nötr'})",
+            f"StochRSI: K={self.stoch_rsi_k:.1f}, D={self.stoch_rsi_d:.1f}",
+            f"MACD: {self.macd_signal} (Trend: {self.macd_trend}, Hist: {self.macd_histogram:.4f})",
+            f"SuperTrend: {self.supertrend.upper()}",
+            f"ADX (Trend Gücü): {self.adx_14:.1f}",
+            f"Bollinger Band: {self.bb_position.replace('_', ' ')}",
+            f"EMA 20/50: {'Golden Cross (Bullish)' if self.ema_20 > self.ema_50 else 'Death Cross (Bearish)'}",
+            f"Hacim Oranı: {self.volume_sma_ratio:.2f}x (Ortalamanın üzerinde)" if self.volume_sma_ratio > 1 else f"Hacim Oranı: {self.volume_sma_ratio:.2f}x (Düşük hacim)",
+            f"Destekler: {', '.join([str(s) for s in self.support_levels[:2]])}",
+            f"Dirençler: {', '.join([str(r) for r in self.resistance_levels[:2]])}",
+        ]
+        return "\n".join(lines)
 
 
 class TechnicalAnalyzer:
@@ -206,13 +232,34 @@ class TechnicalAnalyzer:
                 float(sma200.iloc[-1]) if not np.isnan(sma200.iloc[-1]) else 0.0
             )
 
-        # ── Hacim Analizi ─────────────────────────────────
         vol_sma = ta.sma(df["volume"], length=20)
         if vol_sma is not None and not vol_sma.empty:
             current_vol = float(df["volume"].iloc[-1])
             avg_vol = float(vol_sma.iloc[-1])
             if avg_vol > 0:
                 signals.volume_sma_ratio = current_vol / avg_vol
+
+        # ── ADX (14) ──────────────────────────────────────
+        adx = ta.adx(df["high"], df["low"], df["close"], length=14)
+        if adx is not None and not adx.empty:
+            signals.adx_14 = float(adx["ADX_14"].iloc[-1]) if not np.isnan(adx["ADX_14"].iloc[-1]) else 0.0
+
+        # ── SuperTrend (7, 3) ─────────────────────────────
+        st = ta.supertrend(df["high"], df["low"], df["close"], length=7, multiplier=3.0)
+        if st is not None and not st.empty:
+            # Sütun isimleri: SUPERT_7_3.0, SUPERTd_7_3.0 vb.
+            direction_col = "SUPERTd_7_3.0"
+            if direction_col in st.columns:
+                signals.supertrend = "bullish" if st[direction_col].iloc[-1] == 1 else "bearish"
+
+        # ── StochRSI (14, 3, 3) ────────────────────────────
+        stoch_rsi = ta.stochrsi(df["close"], length=14, k=3, d=3)
+        if stoch_rsi is not None and not stoch_rsi.empty:
+            k_col = "STOCHRSIk_14_14_3_3"
+            d_col = "STOCHRSId_14_14_3_3"
+            if k_col in stoch_rsi.columns:
+                signals.stoch_rsi_k = float(stoch_rsi[k_col].iloc[-1])
+                signals.stoch_rsi_d = float(stoch_rsi[d_col].iloc[-1])
 
         # ── Destek / Direnç ───────────────────────────────
         signals.support_levels, signals.resistance_levels = self._find_levels(df)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.state import TradingState
-from config.settings import PROMPTS_DIR, get_trading_params
+from config.settings import get_trading_params
 from models.sentiment_analyzer import create_agent_llm
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
@@ -70,6 +71,9 @@ def trader_node(state: TradingState) -> dict[str, Any]:
     tech = state.get("technical_signals", {})
     portfolio = state.get("portfolio_state", {})
 
+    # Faz 5: Dinamik kuralları enjekte et
+    dynamic_rules = state.get("dynamic_rules", "")
+    
     user_msg = f"""## Varlık: {symbol}
 
 ## Duyarlılık Analizi
@@ -85,20 +89,24 @@ def trader_node(state: TradingState) -> dict[str, Any]:
 - Konsensüs: {debate.get("consensus_score", 0):.2f}
 - Düzeltilmiş sinyal: {debate.get("adjusted_signal", "neutral")}
 
-## Risk Onayı
-- Karar: {risk.get("decision", "N/A")}
-- Önerilen boyut: {risk.get("approved_size", 0)}
-- Stop-loss: {risk.get("stop_loss_level", 0)}
-- Take-profit: {risk.get("take_profit_level", 0)}
+## KRITIK: Risk Yöneticisi Onayı
+RISK ONAYlandı! Aşağıdaki parametrelere göre işlem emri oluştur:
+- Onaylanan boyut: {risk.get("approved_size", 0)} USDT
+- Stop-loss seviyesi: {risk.get("stop_loss_level", 0):.2f}
+- Take-profit seviyesi: {risk.get("take_profit_level", 0):.2f}
 
 ## Teknik Göstergeler
 - Güncel fiyat: {tech.get("current_price", 0)}
 - ATR: {tech.get("atr_14", 0)}
 - RSI: {tech.get("rsi_14", 50)}
 - Trend: {tech.get("trend", "neutral")}
-
-## Portföy
-{json.dumps(portfolio, indent=2, ensure_ascii=False) if portfolio else "Bilgi yok"}
+"""
+    
+    # Dinamik kuralları ekle
+    if dynamic_rules:
+        user_msg += f"\n{dynamic_rules}"
+    
+    user_msg += f"""
 
 ## İşlem Parametreleri
 - Emir tipi: {params.execution.default_order_type}
@@ -106,7 +114,10 @@ def trader_node(state: TradingState) -> dict[str, Any]:
 - Kayma (slippage): %{params.execution.slippage_pct * 100}
 - Min risk/ödül: {params.limits.min_risk_reward}
 
-Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
+## Portföy
+{json.dumps(portfolio, indent=2, ensure_ascii=False) if portfolio else "Bilgi yok"}
+
+ÖNEMLI: Risk yöneticisi işlemi ONAYLADI. Yukarıdaki stop-loss ve take-profit seviyelerini kullanarak BUY veya SELL emri oluştur. Sadece ve sadece aşırı risk koşullarında "hold" kararı ver."""
 
     llm = create_agent_llm(
         provider=provider,
@@ -126,7 +137,17 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
             response_format={"type": "json_object"},
             max_retries=3,
             base_delay=2.0,
-            request_timeout=60,
+            request_timeout=None,
+            fallback_on_error=True,
+            fallback_value={
+                "action": "hold",
+                "symbol": symbol,
+                "amount": 0,
+                "confidence": 0.0,
+                "reasoning": "LLM API error - işlem yapılmıyor (güvenlik fallback)",
+                "stop_loss": 0,
+                "take_profit": 0,
+            },
         )
         trade_decision = extract_json(response.content)
         if trade_decision.get("__parse_error__"):
@@ -142,11 +163,13 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
             }
     except Exception as e:
         logger.error("İşlemci LLM hatası: %s", e)
+        # Fallback zaten döndü
         trade_decision = {
             "action": "hold",
             "symbol": symbol,
-            "reasoning": f"İşlem emri oluşturulamadı: {e}",
-            "error": f"LLM Timeout veya API Hatası: {e}",
+            "amount": 0,
+            "confidence": 0.0,
+            "reasoning": f"LLM API error - işlem yapılmıyor: {e}",
         }
 
     # Varsayılanları doldur
@@ -191,6 +214,8 @@ Lütfen kesin bir alım-satım emri oluştur veya "hold" kararı ver."""
 
 
 
+_log_lock = threading.Lock()
+
 def _log_decision_trace(state: dict, trade_decision: dict) -> None:
     try:
         log_dir = Path("data")
@@ -209,7 +234,8 @@ def _log_decision_trace(state: dict, trade_decision: dict) -> None:
                 "historical_context": bool(state.get("historical_context")),
             }
         }
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+        with _log_lock:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(trace, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.warning(f"Decision trace loglanamadı: {e}")

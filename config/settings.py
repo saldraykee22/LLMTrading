@@ -7,6 +7,7 @@ Tüm yapılandırma merkezi olarak buradan yönetilir.
 
 from __future__ import annotations
 
+import logging
 import os
 from enum import Enum
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# ── Logger ──────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
 
 # ── Paths ──────────────────────────────────────────────────
@@ -71,11 +76,17 @@ class Settings(BaseSettings):
     # Binance
     binance_api_key: str = ""
     binance_api_secret: str = ""
-    binance_testnet: bool = False  # Mainnet by default (unless sandbox keys are used)
+    binance_testnet: bool = True  # Safety: testnet by default
+    
+    # Multi-Account Support
+    binance_accounts_json: str = ""  # JSON array of account objects
+
+    # Telegram Notifications
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
     # News APIs
     finnhub_api_key: str = ""
-    cryptopanic_api_key: str = ""
 
     # System
     log_level: str = "INFO"
@@ -122,6 +133,33 @@ class Settings(BaseSettings):
     @property
     def masked_binance_key(self) -> str:
         return mask_api_key(self.binance_api_key)
+    
+    @property
+    def binance_accounts(self) -> list[dict[str, str]]:
+        """
+        Parse binance accounts from JSON or fallback to legacy single account.
+        
+        Returns:
+            List of account dicts: [{"name": "Main", "api_key": "...", "api_secret": "..."}, ...]
+        """
+        import json
+        
+        if self.binance_accounts_json:
+            try:
+                accounts = json.loads(self.binance_accounts_json)
+                if isinstance(accounts, list) and accounts:
+                    logger.info(f"Loaded {len(accounts)} accounts from BINANCE_ACCOUNTS_JSON")
+                    return accounts
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse BINANCE_ACCOUNTS_JSON: {e}")
+        
+        # Fallback to legacy single account (backwards compatibility)
+        if self.binance_api_key and self.binance_api_secret:
+            logger.info("Using legacy single account (Main) from BINANCE_API_KEY/SECRET")
+            return [{"name": "Main", "api_key": self.binance_api_key, "api_secret": self.binance_api_secret}]
+        
+        logger.warning("No Binance accounts configured")
+        return []
 
 
 # ── YAML Trading Parameters ───────────────────────────────
@@ -148,6 +186,11 @@ class RegimeParams(BaseModel):
     vix_threshold_multiplier: float = 1.10
     crypto_fear_greed_threshold: int = 20
     halt_on_high_vol: bool = True
+    # Rejim bazlı pozisyon limitleri
+    bull_max_exposure: float = 1.0
+    neutral_max_exposure: float = 0.60
+    bear_max_exposure: float = 0.20
+    crash_max_exposure: float = 0.0
 
 
 class StopLossParams(BaseModel):
@@ -166,12 +209,17 @@ class ExecutionParams(BaseModel):
     rate_limit_ms: int = 1200
     retry_count: int = 3
     retry_delay_ms: int = 2000
+    dca_enabled: bool = True
+    default_execution_size_pct: float = 1.0
+    min_dca_tranche_pct: float = 0.25
+    max_dca_tranches: int = 4
+    dca_price_improvement_pct: float = 0.02
 
 
 class SentimentParams(BaseModel):
     provider: LLMProvider = LLMProvider.OPENROUTER
-    model: str = "openai/gpt-oss-120b:free"
-    reasoning_model: str = "openai/gpt-oss-120b:free"
+    model: str = "qwen/qwen3.5-flash-02-23"
+    reasoning_model: str = "qwen/qwen3.5-flash-02-23"
     score_range: list[float] = [-1.0, 1.0]
     bullish_threshold: float = 0.3
     bearish_threshold: float = -0.3
@@ -181,13 +229,13 @@ class SentimentParams(BaseModel):
 class AgentParams(BaseModel):
     max_debate_rounds: int = 3
     max_retry_iterations: int = 3
-    coordinator_model: str = "openai/gpt-oss-120b:free"
-    analyst_model: str = "openai/gpt-oss-120b:free"
-    risk_model: str = "openai/gpt-oss-120b:free"
-    trader_model: str = "openai/gpt-oss-120b:free"
-    ensemble_enabled: bool = False
+    coordinator_model: str = "qwen/qwen3.5-flash-02-23"
+    analyst_model: str = "qwen/qwen3.5-flash-02-23"
+    risk_model: str = "qwen/qwen3.5-flash-02-23"
+    trader_model: str = "qwen/qwen3.5-flash-02-23"
+    ensemble_enabled: bool = True
     ensemble_models: list[str] = Field(
-        default_factory=lambda: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b"]
+        default_factory=lambda: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b", "openrouter/openai/gpt-4o-mini"]
     )
     ensemble_min_consensus: float = 0.5
 
@@ -221,23 +269,94 @@ class LimitsParams(BaseModel):
     monte_carlo_simulations: int = 5000
     sentiment_cache_minutes: int = 30
     news_rate_limit_delay: float = 0.5
-    max_tokens_sentiment: int = 300
-    max_tokens_research: int = 500
-    max_tokens_debate: int = 400
-    max_tokens_moderator: int = 400
-    max_tokens_risk: int = 400
-    max_tokens_trader: int = 250
-    max_tokens_coordinator: int = 200
+    max_tokens_sentiment: int = 2000
+    max_tokens_research: int = 8000
+    max_tokens_debate: int = 8000
+    max_tokens_moderator: int = 4000
+    max_tokens_risk: int = 4000
+    max_tokens_trader: int = 2000
+    max_tokens_coordinator: int = 2000
+
+
+class MomentumThreshold(BaseModel):
+    """Tek bir momentum skor basamağı."""
+    min_pct: float
+    max_pct: float
+    score: float
+
+
+class ScoringWeights(BaseModel):
+    """Kalite skoru ağırlıkları."""
+    volume_weight: float = 0.40
+    momentum_1h_weight: float = 0.30
+    momentum_24h_weight: float = 0.30
+
+
+class AtrNormalization(BaseModel):
+    """ATR bazlı normalizasyon ayarları."""
+    enabled: bool = True
+    lookback_days: int = 14
+    use_normalized_score: bool = True
+
+
+class SilentAccumulation(BaseModel):
+    """Sessiz birikim (divergence) tespiti."""
+    enabled: bool = True
+    volume_threshold: float = 2.0
+    price_threshold: float = 3.0
+    bonus_score: float = 15.0
+    min_quality_score: float = 40.0
 
 
 class ScannerParams(BaseModel):
     enabled: bool = True
     min_volume_24h_usdt: float = 1000000
     min_price_change_24h_pct: float = 2.0
+    max_price_change_24h_pct: float = 8.0
     max_initial_candidates: int = 30
     max_scout_recommendations: int = 5
-    scout_model: str = "deepseek/deepseek-chat-v3-0324"
+    scout_model: str = "qwen/qwen3.5-flash-02-23"
     quote_asset: str = "USDT"
+    dynamic_scanner_enabled: bool = True
+    scan_interval_hours: int = 6
+    scan_interval_hours_high_cash: int = 3
+    min_cash_ratio_for_frequent_scan: float = 0.50
+    
+    # Momentum skorlama
+    momentum_24h_thresholds: list[MomentumThreshold] = Field(
+        default_factory=lambda: [
+            MomentumThreshold(min_pct=2.0, max_pct=5.0, score=30),
+            MomentumThreshold(min_pct=5.0, max_pct=8.0, score=15),
+            MomentumThreshold(min_pct=0.0, max_pct=2.0, score=5),
+            MomentumThreshold(min_pct=8.0, max_pct=100.0, score=0),
+        ]
+    )
+    momentum_1h_thresholds: list[MomentumThreshold] = Field(
+        default_factory=lambda: [
+            MomentumThreshold(min_pct=0.0, max_pct=3.0, score=30),
+            MomentumThreshold(min_pct=3.0, max_pct=6.0, score=20),
+            MomentumThreshold(min_pct=-5.0, max_pct=0.0, score=10),
+            MomentumThreshold(min_pct=6.0, max_pct=100.0, score=5),
+        ]
+    )
+    
+    # Hacim skorlama
+    volume_score_multiplier: float = 8.0
+    max_volume_score_cap: float = 5.0
+    
+    # ATR normalizasyonu
+    atr_normalization: AtrNormalization = Field(default_factory=AtrNormalization)
+    
+    # Sessiz birikim
+    silent_accumulation: SilentAccumulation = Field(default_factory=SilentAccumulation)
+    
+    # Ağırlıklar
+    scoring_weights: ScoringWeights = Field(default_factory=ScoringWeights)
+    
+    # Filtreler
+    min_quality_score_threshold: float = 45.0
+    prefer_early_momentum: bool = True
+    avoid_overextended: bool = True
 
 
 class WatchdogParams(BaseModel):
@@ -246,12 +365,31 @@ class WatchdogParams(BaseModel):
     crash_1m_pct: float = 0.03
     crash_5m_pct: float = 0.05
     alert_5m_pct: float = 0.02
+    emergency_close_all: bool = True
+
+
+class SystemParams(BaseModel):
+    cleanup_cycle_interval: int = 96
+    max_workers: int = 5
+    rate_limit_consecutive_threshold: int = 3
+    llm_timeout_seconds: int = 60
+    reconnect_max_attempts: int = 5
+    circuit_breaker_state_ttl: int = 3600
+    reset_counters_on_startup: bool = True
+    max_symbol_length: int = 50
+    stop_file_path: str = "data/STOP"
+    # Fallback configuration
+    max_consecutive_fallbacks: int = 5
+    fallback_audit_enabled: bool = True
+    fallback_audit_retention_days: int = 7
 
 
 class LLMParams(BaseModel):
     default_model: str = "deepseek/deepseek-chat-v3-0324"
     reasoning_model: str = "deepseek/deepseek-reasoner"
     fallback_providers: list[str] = ["openrouter", "deepseek", "ollama"]
+    # Fallback values (YAML'den yüklenir)
+    fallbacks: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class TradingParams(BaseModel):
@@ -269,6 +407,7 @@ class TradingParams(BaseModel):
     limits: LimitsParams = LimitsParams()
     watchdog: WatchdogParams = WatchdogParams()
     scanner: ScannerParams = ScannerParams()
+    system: SystemParams = SystemParams()
 
 
 def load_trading_params(path: Path | None = None) -> TradingParams:
@@ -290,21 +429,67 @@ def mask_api_key(key: str) -> str:
 
 
 # ── Singleton Helpers ──────────────────────────────────────
+import threading
+
 _settings: Settings | None = None
 _trading_params: TradingParams | None = None
+_settings_lock = threading.Lock()
+_params_lock = threading.Lock()
 
 
 def get_settings() -> Settings:
-    """Tekil Settings nesnesi döndürür."""
+    """Tekil Settings nesnesi döndürür (thread-safe)."""
     global _settings
     if _settings is None:
-        _settings = Settings()
+        with _settings_lock:
+            if _settings is None:
+                _settings = Settings()
     return _settings
 
 
 def get_trading_params() -> TradingParams:
-    """Tekil TradingParams nesnesi döndürür."""
+    """Tekil TradingParams nesnesi döndürür (thread-safe)."""
     global _trading_params
     if _trading_params is None:
-        _trading_params = load_trading_params()
+        with _params_lock:
+            if _trading_params is None:
+                _trading_params = load_trading_params()
     return _trading_params
+
+
+def get_fallback_config(agent_name: str) -> dict[str, Any] | None:
+    """
+    Ajan bazlı fallback config döndürür.
+    
+    Args:
+        agent_name: "sentiment", "research", "debate_bull", "debate_bear", 
+                    "debate_moderator", "risk_manager", "trader"
+    
+    Returns:
+        Fallback config dict veya None
+    """
+    params = get_trading_params()
+    fallbacks = params.llm.fallbacks
+    
+    # Agent name mapping
+    agent_map = {
+        "sentiment": "sentiment",
+        "research": "research",
+        "research_analyst": "research",
+        "bull": "debate_bull",
+        "bear": "debate_bear",
+        "moderator": "debate_moderator",
+        "debate_moderator": "debate_moderator",
+        "risk": "risk_manager",
+        "risk_manager": "risk_manager",
+        "trader": "trader",
+    }
+    
+    config_key = agent_map.get(agent_name.lower(), agent_name.lower())
+    fallback_config = fallbacks.get(config_key)
+    
+    if fallback_config and fallback_config.get("enabled", True):
+        # "enabled" flag'i çıkar
+        return {k: v for k, v in fallback_config.items() if k != "enabled"}
+    
+    return None

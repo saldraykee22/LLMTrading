@@ -124,8 +124,9 @@ class EnsembleVoter:
 
         successful_votes: list[dict[str, Any]] = []
 
-        # Max workers cap: minimum of (configured models count, available hardware, or hard cap of 3)
-        max_workers_cap = min(len(target_models), 3)
+        # Max workers cap: min of (configured models count, system max_workers)
+        params = get_trading_params()
+        max_workers_cap = min(len(target_models), params.system.max_workers)
         
         with ThreadPoolExecutor(max_workers=max_workers_cap) as executor:
             logger.debug("Running ensemble with %d workers for %d models", max_workers_cap, len(target_models))

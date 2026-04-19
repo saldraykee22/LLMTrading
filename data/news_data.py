@@ -2,9 +2,8 @@
 Haber Verisi Modülü
 ====================
 Finansal haberleri çeker ve standart formata dönüştürür:
-- Finnhub API (hisse senedi & genel piyasa haberleri)
-- CryptoPanic API (kripto odaklı haberler)
-- Doğrudan web kazıma yedek (fallback)
+- Finnhub API (hisse seneti & genel piyasa haberleri)
+- Doğrudan web kazıma yedek (fallback RSS)
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+import feedparser
 
 from config.settings import get_settings, get_trading_params
 
@@ -58,6 +58,8 @@ class NewsClient:
         self,
         symbol: str,
         days: int | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
     ) -> list[NewsItem]:
         """
         Finnhub'dan şirkete özel haberleri çeker.
@@ -65,15 +67,18 @@ class NewsClient:
         Args:
             symbol: Hisse sembolü (ör. AAPL) — BIST için .IS olmadan
             days: Geriye dönük gün sayısı
+            from_date: Başlangıç tarihi
+            to_date: Bitiş tarihi
         """
         api_key = self._settings.finnhub_api_key
         if not api_key:
             logger.warning("Finnhub API anahtarı tanımlı değil — atlanıyor")
             return []
 
-        d = days or (self._params.data.news_lookback_hours // 24) or 1
-        to_date = datetime.now(timezone.utc)
-        from_date = to_date - timedelta(days=d)
+        if from_date is None or to_date is None:
+            d = days or (self._params.data.news_lookback_hours // 24) or 1
+            to_date = datetime.now(timezone.utc)
+            from_date = to_date - timedelta(days=d)
 
         # .IS uzantısını kaldır
         clean_symbol = symbol.replace(".IS", "").upper()
@@ -156,107 +161,147 @@ class NewsClient:
         logger.info("Finnhub genel: %d haber", len(items))
         return items
 
-    # ── CryptoPanic ────────────────────────────────────────
-    # NOTE: CryptoPanic Free API deprecated (2024) - Using Finnhub only
-    # def fetch_crypto_news(
-    #     self,
-    #     currencies: list[str] | None = None,
-    #     kind: str = "news",
-    # ) -> list[NewsItem]:
-    #     """
-    #     CryptoPanic'ten kripto haberlerini çeker.
-    #
-    #     Args:
-    #         currencies: Filtre (ör. ["BTC", "ETH"])
-    #         kind: "news" | "media" | "all"
-    #     """
-    #     api_key = self._settings.cryptopanic_api_key
-    #
-    #     params: dict[str, Any] = {"auth_token": api_key, "kind": kind, "public": "true"}
-    #     if currencies:
-    #         params["currencies"] = ",".join(currencies)
-    #
-    #     self._rate_limit()
-    #     try:
-    #         url = "https://cryptopanic.com/api/free/v1/posts/"
-    #         resp = self._http.get(url, params=params)
-    #         resp.raise_for_status()
-    #         data = resp.json()
-    #     except Exception as e:
-    #         logger.error("CryptoPanic hatası: %s", e)
-    #         return []
-    #
-    #     items: list[NewsItem] = []
-    #     for post in data.get("results", [])[:50]:
-    #         try:
-    #             votes = post.get("votes", {})
-    #             raw_sent = None
-    #             if votes:
-    #                 pos = votes.get("positive", 0)
-    #                 neg = votes.get("negative", 0)
-    #                 if pos > neg:
-    #                     raw_sent = "positive"
-    #                 elif neg > pos:
-    #                     raw_sent = "negative"
-    #                 else:
-    #                     raw_sent = "neutral"
-    #
-    #             syms = [
-    #                 c.get("code", "")
-    #                 for c in post.get("currencies", [])
-    #                 if c.get("code")
-    #             ]
-    #
-    #             items.append(
-    #                 NewsItem(
-    #                     title=post.get("title", ""),
-    #                     summary=post.get("title", ""),
-    #                     source=post.get("source", {}).get("title", "cryptopanic"),
-    #                     url=post.get("url", ""),
-    #                     published_at=datetime.fromisoformat(
-    #                         post.get("published_at", "").replace("Z", "+00:00")
-    #                     ),
-    #                     symbols=syms,
-    #                     category="crypto",
-    #                     raw_sentiment=raw_sent,
-    #                 )
-    #             )
-    #         except (ValueError, TypeError, KeyError):
-    #             continue
-    #
-    #     logger.info("CryptoPanic: %d haber", len(items))
-    #     return items
+    # ── RSS Fallback ────────────────────────────────────────
+    def fetch_rss_news(self, rss_urls: list[str] | None = None) -> list[NewsItem]:
+        """
+        RSS feed'lerinden haberleri çeker (fallback mekanizması).
+
+        Args:
+            rss_urls: RSS URL listesi. None ise varsayılan kaynaklar kullanılır.
+        """
+        if rss_urls is None:
+            rss_urls = [
+                "https://feeds.feedburner.com/coinDesk",  # CoinDesk
+                "https://feeds.feedburner.com/Cointelegraph",  # Cointelegraph
+                "https://rss.cnn.com/rss/money_news_international.rss",  # CNN Money
+                "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^IXIC,^DJI",  # Yahoo Finance
+            ]
+
+        all_items: list[NewsItem] = []
+
+        for rss_url in rss_urls:
+            try:
+                self._rate_limit()
+                feed = feedparser.parse(rss_url)
+
+                if feed.bozo:  # Parse hatası varsa atla
+                    logger.warning(
+                        "RSS parse hatası (%s): %s", rss_url, feed.bozo_exception
+                    )
+                    continue
+
+                for entry in feed.entries[:10]:  # Her RSS'den max 10 haber
+                    try:
+                        # Yayın tarihi
+                        published = None
+                        if (
+                            hasattr(entry, "published_parsed")
+                            and entry.published_parsed
+                        ):
+                            published = datetime(
+                                *entry.published_parsed[:6], tzinfo=timezone.utc
+                            )
+                        elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
+                            published = datetime(
+                                *entry.updated_parsed[:6], tzinfo=timezone.utc
+                            )
+                        else:
+                            published = datetime.now(timezone.utc)
+
+                        # Özet (description varsa al, yoksa title'dan kısalt)
+                        summary = ""
+                        if hasattr(entry, "description"):
+                            summary = entry.description
+                        elif hasattr(entry, "summary"):
+                            summary = entry.summary
+                        else:
+                            summary = (
+                                entry.title[:200] + "..."
+                                if len(entry.title) > 200
+                                else entry.title
+                            )
+
+                        # Kaynak adı
+                        source = (
+                            feed.feed.get("title", "RSS")
+                            if hasattr(feed, "feed")
+                            else "RSS"
+                        )
+
+                        all_items.append(
+                            NewsItem(
+                                title=entry.title,
+                                summary=summary,
+                                source=source,
+                                url=entry.link,
+                                published_at=published,
+                                category="general",
+                            )
+                        )
+                    except (AttributeError, ValueError, TypeError) as e:
+                        logger.debug("RSS entry parse hatası: %s", e)
+                        continue
+
+                logger.info("RSS (%s): %d haber", rss_url, len(feed.entries[:10]))
+
+            except Exception as e:
+                logger.warning("RSS fetch hatası (%s): %s", rss_url, e)
+                continue
+
+        # Tarihe göre sırala (en yeni önce)
+        all_items.sort(key=lambda x: x.published_at, reverse=True)
+
+        logger.info("RSS toplam: %d haber", len(all_items))
+        return all_items
 
     # ── Birleşik Haber Çekme ──────────────────────────────
     def fetch_all_news(
         self,
         symbol: str | None = None,
         include_general: bool = True,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
     ) -> list[NewsItem]:
         """
         Tüm kaynaklardan haberleri çeker ve birleştirir.
+        Finnhub başarısız olursa RSS fallback kullanılır.
 
         Args:
             symbol: Belirli bir sembol (ör. BTC, AAPL)
             include_general: Genel piyasa haberleri dahil edilsin mi
+            from_date: Başlangıç tarihi
+            to_date: Bitiş tarihi
         """
         all_news: list[NewsItem] = []
 
-        # Kripto haberleri - CryptoPanic deprecated, Finnhub kullanılıyor
+        # Sembol bazlı haberler
         if symbol:
             from data.symbol_resolver import resolve_symbol, AssetClass
 
             resolved = resolve_symbol(symbol)
-            if resolved.asset_class == AssetClass.CRYPTO:
-                pass  # CryptoPanic deprecated
-            else:
-                all_news.extend(self.fetch_finnhub_company_news(resolved.base))
-        else:
-            pass  # CryptoPanic deprecated
+            if resolved.asset_class != AssetClass.CRYPTO:
+                finnhub_news = self.fetch_finnhub_company_news(
+                    resolved.base, from_date=from_date, to_date=to_date
+                )
+                if finnhub_news:
+                    all_news.extend(finnhub_news)
+                else:
+                    logger.warning(
+                        "Finnhub şirket haberi başarısız, RSS fallback kullanılacak"
+                    )
 
         # Genel piyasa haberleri
         if include_general:
-            all_news.extend(self.fetch_finnhub_general_news())
+            finnhub_general = self.fetch_finnhub_general_news()
+            if finnhub_general:
+                all_news.extend(finnhub_general)
+            else:
+                logger.warning(
+                    "Finnhub genel haber başarısız, RSS fallback kullanılıyor"
+                )
+                # RSS fallback for general news
+                rss_news = self.fetch_rss_news()
+                all_news.extend(rss_news)
 
         # Tarihe göre sırala (en yeni önce)
         all_news.sort(key=lambda x: x.published_at, reverse=True)

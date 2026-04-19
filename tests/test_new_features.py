@@ -338,7 +338,7 @@ class TestRiskManager:
 
         state = _make_state(
             portfolio_state={
-                "open_positions": 5,
+                "open_positions": 15,
                 "current_drawdown": 0.05,
                 "equity": 10000,
                 "daily_pnl": 100,

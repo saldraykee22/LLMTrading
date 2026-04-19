@@ -16,26 +16,47 @@ venv/
 # Environment
 .env
 .env.local
+.env.backup
+*.bak
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.opencode/
 
-# Data
+# Testing & Coverage
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+pytest_out.txt
+nosetests.xml
+coverage.xml
+*.cover
+
+# Data & State
 data/cache/
 data/exports/
 data/vector_cache/
 data/prompt_versions/
+data/backtest_cache/
+data/backtest_results/
+data/sentiment_cache/
 data/drift_history.jsonl
 *.csv
 *.parquet
+*.jsonl
+*.json
 !data/examples/*.csv
+!data/templates/*.json
+!data/portfolio_state.json.example
 
 # Logs
 logs/
 *.log
+git_diff*.txt
 
 # OS
 .DS_Store

@@ -26,6 +26,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.globals import set_llm_cache
 from langchain_core.caches import InMemoryCache
 
+from utils.llm_retry import invoke_with_retry
+
 
 class TTLCache(InMemoryCache):
     """InMemoryCache with TTL and max size eviction."""
@@ -96,6 +98,16 @@ def create_llm(
     settings = get_settings()
     params = get_trading_params()
     prov = provider or params.sentiment.provider
+    
+    # Model ismi önekini temizle (ör. 'deepseek/deepseek-chat' -> 'deepseek-chat')
+    # Sadece OpenRouter tam yolu ("provider/model") bekler.
+    clean_model = model or params.sentiment.model
+    if prov != LLMProvider.OPENROUTER and "/" in clean_model:
+        # Eğer önek sağlayıcı ile eşleşiyorsa veya genel bir önekse temizle
+        # (Ör: 'openai/gpt-4o' -> 'gpt-4o', 'deepseek/chat' -> 'chat')
+        parts = clean_model.split("/", 1)
+        if len(parts) > 1:
+            clean_model = parts[1]
 
     model_kwargs = {
         "extra_headers": {
@@ -108,31 +120,28 @@ def create_llm(
 
     if prov == LLMProvider.OPENROUTER:
         return ChatOpenAI(
-            model=model or params.sentiment.model,
+            model=model or params.sentiment.model, # OpenRouter için tam yol kalsın
             openai_api_key=settings.openrouter_api_key,
             openai_api_base=settings.openrouter_base_url,
             temperature=temperature,
-            request_timeout=60,
             max_retries=2,
             model_kwargs=model_kwargs,
         )
     elif prov == LLMProvider.DEEPSEEK:
         return ChatOpenAI(
-            model=model or "deepseek-chat",
+            model=clean_model or "deepseek-chat",
             openai_api_key=settings.deepseek_api_key,
             openai_api_base=settings.deepseek_base_url,
             temperature=temperature,
-            request_timeout=60,
             max_retries=2,
             model_kwargs=model_kwargs,
         )
     elif prov == LLMProvider.OLLAMA:
         return ChatOpenAI(
-            model=model or settings.ollama_default_model,
+            model=clean_model or settings.ollama_default_model,
             openai_api_key="ollama",
             openai_api_base=f"{settings.ollama_base_url}/v1",
             temperature=temperature,
-            request_timeout=120,
             max_retries=2,
             model_kwargs=model_kwargs,
         )
@@ -208,15 +217,28 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
         ]
 
         try:
-            response = self._llm.invoke(
+            response = invoke_with_retry(
+                self._llm.invoke,
                 messages,
                 max_tokens=self._params.limits.max_tokens_sentiment,
                 response_format={"type": "json_object"},
-                request_timeout=60,
+                max_retries=2,
+                base_delay=2.0,
+                request_timeout=None,
+                fallback_on_error=True,
+                fallback_value=json.dumps({
+                    "sentiment_score": 0.0,
+                    "signal": "neutral",
+                    "confidence": 0.5,
+                    "risk_score": 0.5,
+                    "reasoning": "LLM API error - nötr duyarlılık (fallback)",
+                    "key_factors": ["API fallback - analiz yapılamadı"]
+                }),
             )
             raw_text = response.content
         except Exception as e:
             logger.error("LLM sentiment hatası (%s): %s", symbol, e)
+            # Fallback zaten döndü
             return self._fallback_record(symbol, str(e))
 
         # ── JSON çıkar ────────────────────────────────────

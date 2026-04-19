@@ -54,6 +54,32 @@ Return your analysis as STRICT JSON with this schema:
 
 Be concise. No markdown formatting outside the JSON block."""
 
+RULE_GENERATION_PROMPT = """\
+You are a Trading System Rule Generator.
+Your job is to convert retrospective trade analysis into actionable system rules.
+
+Analyze the following retrospective lessons from {num_trades} trades and generate adjustment rules:
+
+{lessons_summary}
+
+Generate JSON rules to improve system performance. Use this schema:
+{
+  "adjust_trend_weight": -0.1 to 0.1,  // Adjust trend importance
+  "adjust_sentiment_weight": -0.1 to 0.1,  // Adjust sentiment importance
+  "reduce_position_size": 0.5 to 1.0,  // Multiply position size (0.8 = reduce 20%)
+  "avoid_low_confidence": 0.5 to 0.8,  // Min confidence threshold
+  "preferred_timeframe": "1h|4h|1d",  // Focus timeframe
+  "max_positions": 3 to 7,  // Max concurrent positions
+  "stop_loss_multiplier": 0.8 to 1.2,  // Adjust SL distance
+  "take_profit_multiplier": 0.8 to 1.2,  // Adjust TP distance
+  "avoid_downtrend_entries": true/false,  // Don't buy in downtrends
+  "require_volume_confirmation": true/false,  // Need volume spike
+  "notes": "brief explanation of changes"
+}
+
+Only include fields that need adjustment. Keep values conservative.
+Return STRICT JSON only."""
+
 
 @dataclass
 class RetrospectiveResult:
@@ -79,7 +105,10 @@ class RetrospectiveResult:
 
 
 class RetrospectiveAgent:
-    """Kaybeden işlemleri analiz eden ve dersleri RAG'a kaydeden ajan."""
+    """
+    Kaybeden işlemleri analiz eden ve dersleri RAG'a kaydeden ajan.
+    + Dinamik kural üretimi (her 20 işlemde bir veya haftalık)
+    """
 
     def __init__(
         self,
@@ -91,6 +120,12 @@ class RetrospectiveAgent:
         self._market_client = MarketDataClient()
         self._news_client = NewsClient()
         self._memory_store = AgentMemoryStore()
+        
+        # Dinamik kural zamanlaması
+        self.review_trade_interval = 20  # Her 20 işlemde bir
+        self.review_days_interval = 7     # Veya haftalık
+        self.last_review_cycle = 0
+        self.last_review_date = None
 
     def analyze_losing_trade(
         self, trade_record: dict[str, Any], symbol: str
@@ -333,6 +368,7 @@ Analyze this losing trade and return your findings as STRICT JSON."""
                     max_tokens=self._params.limits.max_tokens_research,
                     response_format={"type": "json_object"},
                     max_retries=2, # Her dış denemede 2 iç retry
+                    request_timeout=None,
                 )
                 raw_text = response.content
                 result = extract_json(raw_text)
@@ -394,6 +430,234 @@ Analyze this losing trade and return your findings as STRICT JSON."""
         except Exception as e:
             logger.error("Vektör db retrospektif kayıt hatası: %s", e)
 
+    def should_review(self, cycle: int, completed_trades: int) -> bool:
+        """
+        Retrospektif inceleme zamanı geldi mi?
+        
+        Args:
+            cycle: Mevcut cycle
+            completed_trades: Tamamlanan işlem sayısı (son incelemeden beri)
+        
+        Returns:
+            True eğer inceleme zamanı
+        """
+        # Koşul 1: Her 20 işlem
+        if completed_trades >= self.review_trade_interval:
+            logger.info(
+                "🧠 Retrospektif zamanı: %d işlem tamamlandı (threshold: %d)",
+                completed_trades, self.review_trade_interval
+            )
+            return True
+        
+        # Koşul 2: Haftalık
+        today = datetime.now(timezone.utc).date()
+        if self.last_review_date is None:
+            return True
+        
+        days_since_review = (today - self.last_review_date).days
+        if days_since_review >= self.review_days_interval:
+            logger.info(
+                "🧠 Retrospektif zamanı: %d gün geçti (threshold: %d)",
+                days_since_review, self.review_days_interval
+            )
+            return True
+        
+        return False
+    
+    def generate_dynamic_rules(self, trades: list[dict]) -> dict | None:
+        """
+        İşlem analizinden dinamik sistem kuralları üret.
+        
+        Args:
+            trades: Son N işlem (kazanan + kaybeden)
+        
+        Returns:
+            Dinamik kurallar dict veya None
+        """
+        if not trades:
+            return None
+        
+        # Lessons özetini hazırla
+        lessons = []
+        for trade in trades:
+            if trade.get("retrospective_analyzed"):
+                lesson = {
+                    "symbol": trade.get("symbol"),
+                    "pnl": trade.get("pnl", 0),
+                    "root_cause": trade.get("retrospective_category", "unknown"),
+                    "lesson": trade.get("retrospective_lesson", ""),
+                }
+                lessons.append(lesson)
+        
+        if not lessons:
+            logger.debug("Henüz analiz edilmiş işlem yok, kural üretimi atlandı")
+            return None
+        
+        # LLM'e gönder
+        rules = self._llm_generate_rules(lessons, len(trades))
+        
+        if rules:
+            # Kuralları kaydet
+            self._save_dynamic_rules(rules)
+            logger.info(
+                "✅ Dinamik kurallar üretildi: %d ayarlama",
+                len([k for k in rules.keys() if k != "notes"])
+            )
+        
+        return rules
+    
+    def _llm_generate_rules(self, lessons: list[dict], num_trades: int) -> dict | None:
+        """LLM ile kural üret."""
+        # Lessons format string
+        lessons_text = "\n".join([
+            f"- {l['symbol']}: PnL={l['pnl']:.4f}, Cause={l['root_cause']}, Lesson={l['lesson']}"
+            for l in lessons
+        ])
+        
+        user_message = RULE_GENERATION_PROMPT.format(
+            num_trades=num_trades,
+            lessons_summary=lessons_text
+        )
+        
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from utils.json_utils import extract_json
+        from utils.llm_retry import invoke_with_retry
+        
+        messages = [
+            SystemMessage(content="You are a Trading System Rule Generator. Return STRICT JSON only."),
+            HumanMessage(content=user_message),
+        ]
+        
+        try:
+            response = invoke_with_retry(
+                self._llm.invoke,
+                messages,
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+                max_retries=2,
+            )
+            
+            result = extract_json(response.content)
+            
+            if "__parse_error__" not in result:
+                # Validasyon
+                if self._validate_rules(result):
+                    return result
+                else:
+                    logger.warning("Üretilen kurallar geçersiz")
+            
+            return None
+            
+        except Exception as e:
+            logger.error("Kural üretimi hatası: %s", e)
+            return None
+    
+    def _validate_rules(self, rules: dict) -> bool:
+        """Üretilen kuralları valide et."""
+        # Tip kontrolü
+        if not isinstance(rules, dict):
+            return False
+        
+        # Sayısal alanlar kontrolü
+        numeric_fields = [
+            ("adjust_trend_weight", -0.1, 0.1),
+            ("adjust_sentiment_weight", -0.1, 0.1),
+            ("reduce_position_size", 0.5, 1.0),
+            ("avoid_low_confidence", 0.5, 0.8),
+            ("stop_loss_multiplier", 0.8, 1.2),
+            ("take_profit_multiplier", 0.8, 1.2),
+        ]
+        
+        for field, min_val, max_val in numeric_fields:
+            if field in rules:
+                try:
+                    val = float(rules[field])
+                    if not (min_val <= val <= max_val):
+                        logger.warning(
+                            "%s out of range: %.2f (expected %.2f-%.2f)",
+                            field, val, min_val, max_val
+                        )
+                        return False
+                except (ValueError, TypeError):
+                    return False
+        
+        # Enum alanlar
+        if "preferred_timeframe" in rules:
+            if rules["preferred_timeframe"] not in ["1h", "4h", "1d"]:
+                return False
+        
+        if "max_positions" in rules:
+            try:
+                mp = int(rules["max_positions"])
+                if not (3 <= mp <= 7):
+                    return False
+            except (ValueError, TypeError):
+                return False
+        
+        if "avoid_downtrend_entries" in rules:
+            if not isinstance(rules["avoid_downtrend_entries"], bool):
+                return False
+        
+        if "require_volume_confirmation" in rules:
+            if not isinstance(rules["require_volume_confirmation"], bool):
+                return False
+        
+        return True
+    
+    def _save_dynamic_rules(self, rules: dict) -> None:
+        """Dinamik kuralları JSON'a kaydet."""
+        from pathlib import Path
+        from config.settings import DATA_DIR
+        import json
+        
+        rules_file = DATA_DIR / "dynamic_rules.json"
+        
+        rules_data = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "valid_until": (
+                datetime.now(timezone.utc).date() + 
+                timedelta(days=self.review_days_interval)
+            ).isoformat(),
+            "trades_analyzed": self.review_trade_interval,
+            "rules": rules,
+        }
+        
+        try:
+            rules_file.parent.mkdir(parents=True, exist_ok=True)
+            rules_file.write_text(json.dumps(rules_data, indent=2, ensure_ascii=False))
+            logger.info("📝 Dinamik kurallar kaydedildi: %s", rules_file)
+        except Exception as e:
+            logger.error("Kural kaydetme hatası: %s", e)
+    
+    @staticmethod
+    def load_dynamic_rules() -> dict | None:
+        """Dinamik kuralları yükle."""
+        from pathlib import Path
+        from config.settings import DATA_DIR
+        import json
+        
+        rules_file = DATA_DIR / "dynamic_rules.json"
+        
+        if not rules_file.exists():
+            return None
+        
+        try:
+            data = json.loads(rules_file.read_text(encoding="utf-8"))
+            
+            # Süresi dolmuş mu kontrol et
+            valid_until = data.get("valid_until", "")
+            if valid_until:
+                valid_date = datetime.fromisoformat(valid_until).date()
+                if datetime.now(timezone.utc).date() > valid_date:
+                    logger.warning("Dinamik kurallar süresi dolmuş, yeniden üretilmeli")
+                    return None
+            
+            return data.get("rules", {})
+            
+        except Exception as e:
+            logger.error("Kural yükleme hatası: %s", e)
+            return None
+    
     @staticmethod
     def _parse_iso(iso_str: str) -> datetime | None:
         """ISO format tarih stringini datetime'a çevirir."""
@@ -405,13 +669,20 @@ Analyze this losing trade and return your findings as STRICT JSON."""
             return None
 
 
-def check_and_analyze_losses(portfolio) -> list[RetrospectiveResult]:
+def check_and_analyze_losses(
+    portfolio,
+    cycle: int = 0,
+    generate_rules: bool = True,
+) -> list[RetrospectiveResult]:
     """
-    Portföydeki kapatılmış kayıp işlemleri kontrol eder ve
-    analiz edilmemiş olanları retrospektif analize sokar.
+    Portföydeki kapatılmış kayıp işlemleri kontrol eder,
+    analiz edilmemiş olanları retrospektif analize sokar
+    ve opsiyonel olarak dinamik kurallar üretir.
 
     Args:
         portfolio: PortfolioState instance
+        cycle: Mevcut cycle sayısı
+        generate_rules: Dinamik kural üretimi yap
 
     Returns:
         List of RetrospectiveResult for each analyzed trade.
@@ -425,14 +696,14 @@ def check_and_analyze_losses(portfolio) -> list[RetrospectiveResult]:
     agent = RetrospectiveAgent()
     results: list[RetrospectiveResult] = []
 
-    for trade in portfolio.closed_trades:
-        if trade.get("retrospective_analyzed", False):
-            continue
+    # Analiz edilmemiş kayıp işlemler
+    unanalyzed_losses = [
+        trade for trade in portfolio.closed_trades
+        if not trade.get("retrospective_analyzed", False)
+        and trade.get("pnl", 0.0) < 0
+    ]
 
-        pnl = trade.get("pnl", 0.0)
-        if pnl >= 0:
-            continue
-
+    for trade in unanalyzed_losses:
         symbol = trade.get("symbol", "UNKNOWN")
         try:
             result = agent.analyze_losing_trade(trade, symbol)
@@ -449,9 +720,24 @@ def check_and_analyze_losses(portfolio) -> list[RetrospectiveResult]:
 
     if results:
         logger.info(
-            "Retrospektif analiz tamamlandı: %d kayıp işlem incelendi", len(results)
+            "🧠 Retrospektif analiz: %d kayıp işlem incelendi", len(results)
         )
     else:
         logger.debug("Analiz edilecek kayıp işlem bulunamadı")
+
+    # Dinamik kural üretimi
+    if generate_rules and results:
+        # Son N işlemi al (kazanan + kaybeden)
+        recent_trades = portfolio.closed_trades[-agent.review_trade_interval:]
+        
+        if agent.should_review(cycle, len(recent_trades)):
+            logger.info("📝 Dinamik kural üretimi başlatılıyor...")
+            rules = agent.generate_dynamic_rules(recent_trades)
+            
+            if rules:
+                agent.last_review_cycle = cycle
+                agent.last_review_date = datetime.now(timezone.utc).date()
+        else:
+            logger.debug("Dinamik kural üretimi için henüz erken")
 
     return results

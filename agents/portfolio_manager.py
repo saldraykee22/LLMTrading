@@ -121,6 +121,12 @@ class PortfolioManager:
             len(self._symbols),
             max_workers,
         )
+        
+        from data.news_data import NewsClient
+        from models.technical_analyzer import TechnicalAnalyzer
+
+        self._news_client = NewsClient()
+        self._tech_analyzer = TechnicalAnalyzer()
 
         def _analyze_single(symbol: str) -> tuple[str, SymbolAnalysis]:
             try:
@@ -161,13 +167,16 @@ class PortfolioManager:
                     ),
                 )
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_analyze_single, sym): sym for sym in self._symbols
-            }
-            for future in as_completed(futures):
-                symbol, analysis = future.result()
-                self._analyses[symbol] = analysis
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(_analyze_single, sym): sym for sym in self._symbols
+                }
+                for future in as_completed(futures):
+                    symbol, analysis = future.result()
+                    self._analyses[symbol] = analysis
+        finally:
+            self._news_client.close()
 
         return self._analyses
 
@@ -260,6 +269,29 @@ class PortfolioManager:
         total = sum(allocations.values())
         if total > 0:
             allocations = {k: round(v / total, 4) for k, v in allocations.items()}
+        
+        # 4b. Rejim bazlı exposure limiti uygula
+        from risk.regime_filter import RegimeFilter
+        regime_filter = RegimeFilter()
+        max_exposure = regime_filter.get_max_exposure()
+        
+        # Toplam ağırlığı rejim limitine göre sınırla
+        current_total = sum(allocations.values())
+        if current_total > max_exposure:
+            logger.warning(
+                "⚠️ Rejim limiti aşıldı: %.2f > %.2f (%s rejimi)",
+                current_total,
+                max_exposure,
+                regime_filter.regime.value,
+            )
+            # Orantılı olarak düşür
+            scaling_factor = max_exposure / current_total
+            allocations = {k: round(v * scaling_factor, 4) for k, v in allocations.items()}
+            logger.info(
+                "✅ Allokasyonlar %.2f faktörü ile düşürüldü (toplam: %.2f)",
+                scaling_factor,
+                sum(allocations.values()),
+            )
 
         # 5. Sonuç
         portfolio = {
@@ -332,30 +364,23 @@ class PortfolioManager:
     def _fetch_news(self, symbol: str) -> list[dict]:
         """Sembol için haber verisi getirir."""
         try:
-            from data.news_data import NewsClient
-
             params = get_trading_params()
-
-            client = NewsClient()
-            try:
-                items = client.fetch_all_news(symbol)
-                result = []
-                for item in items[: params.limits.max_news_items]:
-                    result.append(
-                        {
-                            "title": item.title,
-                            "summary": item.summary[:300],
-                            "source": item.source,
-                            "url": item.url,
-                            "published_at": item.published_at.isoformat(),
-                            "symbols": item.symbols,
-                            "category": item.category,
-                            "raw_sentiment": item.raw_sentiment,
-                        }
-                    )
-                return result
-            finally:
-                client.close()
+            items = getattr(self, "_news_client").fetch_all_news(symbol)
+            result = []
+            for item in items[: params.limits.max_news_items]:
+                result.append(
+                    {
+                        "title": item.title,
+                        "summary": item.summary[:300],
+                        "source": item.source,
+                        "url": item.url,
+                        "published_at": item.published_at.isoformat(),
+                        "symbols": item.symbols,
+                        "category": item.category,
+                        "raw_sentiment": item.raw_sentiment,
+                    }
+                )
+            return result
         except Exception as e:
             logger.warning("Haber hatası (%s): %s", symbol, e)
             return []
@@ -363,13 +388,10 @@ class PortfolioManager:
     def _fetch_technical_signals(self, symbol: str) -> dict:
         """Sembol için teknik sinyaller getirir."""
         try:
-            from models.technical_analyzer import TechnicalAnalyzer
-
             df = self._market_data.fetch_ohlcv(symbol, days=90)
             if df.empty:
                 return {}
-            analyzer = TechnicalAnalyzer()
-            signals = analyzer.analyze(df, symbol)
+            signals = getattr(self, "_tech_analyzer").analyze(df, symbol)
             return signals.to_dict()
         except Exception as e:
             logger.warning("Teknik analiz hatası (%s): %s", symbol, e)
@@ -382,7 +404,8 @@ class PortfolioManager:
 
             portfolio = PortfolioState.load_from_file()
             return portfolio.to_dict()
-        except Exception:
+        except Exception as e:
+            logger.warning("Portföy durumu okunamadı: %s", e)
             return {}
 
     def _parse_result(self, symbol: str, result: dict) -> SymbolAnalysis:
@@ -412,8 +435,8 @@ class PortfolioManager:
             df = self._market_data.fetch_ohlcv(symbol, days=90)
             if not df.empty:
                 analysis.returns_series = df["close"].pct_change().dropna().tolist()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Getiri verisi okunamadı (%s): %s", symbol, e)
 
         return analysis
 

@@ -27,9 +27,16 @@ MANIFEST_FILE = VERSIONS_DIR / "manifest.json"
 _manifest_lock = threading.Lock()
 
 
+from functools import lru_cache
+
+@lru_cache(maxsize=64)
+def _read_prompt_file(path: Path) -> str:
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return ""
+
 def _ensure_dirs() -> None:
     VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def _load_manifest() -> dict[str, Any]:
     _ensure_dirs()
@@ -39,7 +46,6 @@ def _load_manifest() -> dict[str, Any]:
                 return json.load(f)
     return {"agents": {}}
 
-
 def _save_manifest(manifest: dict[str, Any]) -> None:
     _ensure_dirs()
     with _manifest_lock:
@@ -48,12 +54,9 @@ def _save_manifest(manifest: dict[str, Any]) -> None:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         tmp.replace(MANIFEST_FILE)
 
-
 def _read_original_prompt(agent_name: str) -> str:
     prompt_file = PROMPTS_DIR / f"{agent_name}.txt"
-    if prompt_file.exists():
-        return prompt_file.read_text(encoding="utf-8")
-    return ""
+    return _read_prompt_file(prompt_file)
 
 
 class PromptEvolver:
@@ -65,9 +68,11 @@ class PromptEvolver:
         prompt_content: str,
         version: int,
         changelog: str,
+        is_draft: bool = True,
     ) -> str:
         _ensure_dirs()
-        version_file = VERSIONS_DIR / f"{agent_name}_v{version}.txt"
+        version_str = f"v{version}_draft" if is_draft else f"v{version}"
+        version_file = VERSIONS_DIR / f"{agent_name}_{version_str}.txt"
         with open(version_file, "w", encoding="utf-8") as f:
             f.write(prompt_content)
 
@@ -81,12 +86,16 @@ class PromptEvolver:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "file": str(version_file),
             "rolled_back": False,
+            "status": "pending_review" if is_draft else "active"
         }
         manifest["agents"][agent_name]["versions"].append(entry)
-        manifest["agents"][agent_name]["current_version"] = version
+        
+        if not is_draft:
+            manifest["agents"][agent_name]["current_version"] = version
+            
         _save_manifest(manifest)
 
-        logger.info("Prompt stored: %s v%d (%s)", agent_name, version, changelog)
+        logger.info("Prompt stored: %s %s (%s)", agent_name, version_str, changelog)
         return str(version_file)
 
     def get_current_prompt(self, agent_name: str) -> str:
@@ -98,7 +107,7 @@ class PromptEvolver:
         current_version = agent_data["current_version"]
         version_file = VERSIONS_DIR / f"{agent_name}_v{current_version}.txt"
         if version_file.exists():
-            return version_file.read_text(encoding="utf-8")
+            return _read_prompt_file(version_file)
         return _read_original_prompt(agent_name)
 
     def get_prompt_history(self, agent_name: str) -> list[dict]:

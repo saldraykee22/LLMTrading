@@ -51,25 +51,56 @@ from models.technical_analyzer import TechnicalAnalyzer
 from agents.graph import run_analysis
 from execution.order_manager import parse_trade_decision, TradeOrder
 from execution.exchange_client import ExchangeClient
+from execution.sync_manager import SyncManager
+from execution.account_manager import MultiAccountManager
 from risk.regime_filter import RegimeFilter
 from risk.portfolio import PortfolioState
 from risk.circuit_breaker import CircuitBreaker
 from risk.watchdog import Watchdog
+from risk.system_status import SystemStatus
 from data.market_hours import MarketHours
 from data.scanner import MarketScanner
 from agents.lead_scout import LeadScout
+from utils.dynamic_rules import inject_dynamic_rules_into_prompt
 
 console = Console()
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Rich tabanlı loglama ayarla."""
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, markup=True)],
+    """Rich tabanlı ve dosyaya yazan loglama ayarla."""
+    from logging.handlers import TimedRotatingFileHandler
+    
+    # Logs dizini oluştur
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = LOGS_DIR / "trading.log"
+    
+    # Formatterlar
+    file_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    
+    # Handlers
+    console_handler = RichHandler(rich_tracebacks=True, markup=True)
+    file_handler = TimedRotatingFileHandler(
+        log_file, when="midnight", interval=1, backupCount=30, encoding="utf-8"
+    )
+    file_handler.setFormatter(file_formatter)
+    
+    # Root logger ayarı
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    
+    # Eski handlerları temizle
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+        
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+    
+    # Üçüncü parti loglarını kısıtla
+    logging.getLogger("ccxt").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def run_pipeline(
@@ -78,6 +109,7 @@ def run_pipeline(
     provider: str | None = None,
     circuit_breaker: CircuitBreaker | None = None,
     portfolio: PortfolioState | None = None,
+    account_manager: Any = None,
 ) -> dict:
     """
     Tam analiz pipeline'ını çalıştırır.
@@ -88,6 +120,7 @@ def run_pipeline(
         provider: LLM sağlayıcı override
         circuit_breaker: Paylaşılan CircuitBreaker instance'ı
         portfolio: Paylaşılan PortfolioState instance'ı
+        account_manager: MultiAccountManager for multi-account mode
 
     Returns:
         Analiz sonuçları
@@ -188,61 +221,6 @@ def run_pipeline(
         console.print(f"  Fiyat: {market_summary['current_price']:.4f}")
         console.print(f"  24h Değişim: {market_summary['price_change_24h']:.2%}")
 
-    # ── Portföy Otonom Çıkış Kontrolü (Stop-Loss / Take-Profit) ───
-    current_price_for_check = market_summary.get("current_price", 0)
-    if current_price_for_check > 0:
-        for pos in list(portfolio.positions):
-            if pos.symbol == resolved.symbol:
-                pos.update_price(current_price_for_check)
-
-                # Stop Loss Kontrolü
-                if pos.should_stop_loss(current_price_for_check):
-                    console.print(
-                        f"[bold red]🚨 OTONOM ÇIKIŞ: STOP-LOSS tetiklendi ({pos.symbol})[/bold red]"
-                    )
-                    if execute:
-                        client = ExchangeClient()
-                        order = TradeOrder(
-                            symbol=pos.symbol,
-                            action="sell",
-                            order_type="market",
-                            amount=pos.amount,
-                        )
-                        exec_res = client.execute_order(order, current_price_for_check)
-                        if exec_res.get("status") in ("filled", "closed", "open"):
-                            portfolio.close_position_safe(
-                                pos.symbol,
-                                float(exec_res.get("price") or current_price_for_check),
-                            )
-                    else:
-                        console.print(
-                            f"  [dim]Execute kapalı — {pos.symbol} stop-loss pozisyonu kapatılmadı (sadece log)[/dim]"
-                        )
-
-                # Take Profit Kontrolü
-                elif pos.should_take_profit(current_price_for_check):
-                    console.print(
-                        f"[bold green]🎯 OTONOM ÇIKIŞ: TAKE-PROFIT tetiklendi ({pos.symbol})[/bold green]"
-                    )
-                    if execute:
-                        client = ExchangeClient()
-                        order = TradeOrder(
-                            symbol=pos.symbol,
-                            action="sell",
-                            order_type="market",
-                            amount=pos.amount,
-                        )
-                        exec_res = client.execute_order(order, current_price_for_check)
-                        if exec_res.get("status") in ("filled", "closed", "open"):
-                            portfolio.close_position_safe(
-                                pos.symbol,
-                                float(exec_res.get("price") or current_price_for_check),
-                            )
-                    else:
-                        console.print(
-                            f"  [dim]Execute kapalı — {pos.symbol} take-profit pozisyonu kapatılmadı (sadece log)[/dim]"
-                        )
-
     # ── 3. Teknik Analiz ──────────────────────────────────
     console.print("\n[bold yellow]📐 Aşama 3: Teknik Analiz[/bold yellow]")
     tech_analyzer = TechnicalAnalyzer()
@@ -279,7 +257,10 @@ def run_pipeline(
 
         console.print("\n[bold yellow]🤖 Aşama 5: Çoklu Ajan Analizi[/bold yellow]")
         console.print("  Koordinatör → Araştırmacı → Tartışma → Risk → İşlemci")
-
+        
+        # Faz 5: Dinamik kuralları yükle ve prompt'a enjekte et
+        dynamic_rules_context = inject_dynamic_rules_into_prompt("", "Trader")
+        
         result = run_analysis(
             symbol=resolved.symbol,
             market_data=market_summary,
@@ -287,6 +268,7 @@ def run_pipeline(
             technical_signals=tech_dict,
             portfolio_state=portfolio_state_dict,
             provider=provider,
+            dynamic_rules=dynamic_rules_context if dynamic_rules_context else None,
         )
     except Exception as e:
         logger = logging.getLogger(__name__)
@@ -364,32 +346,40 @@ def run_pipeline(
         )
         if order:
             console.print("\n[bold red]⚡ Emir iletiliyor...[/bold red]")
-            client = ExchangeClient()
-            exec_result = client.execute_order(order, current_price=current_price)
-            console.print(f"  Sonuç: {exec_result}")
-            result["execution_result"] = exec_result
+            
+            # Multi-account fan-out execution
+            if account_manager:
+                exec_results = account_manager.execute_trade(order)
+                console.print(f"  Fan-out sonuçları: {exec_results}")
+                result["execution_result"] = exec_results
+                # Not: execute_trade zaten portföyü günceller
+            else:
+                client = ExchangeClient()
+                exec_result = client.execute_order(order, current_price=current_price)
+                console.print(f"  Sonuç: {exec_result}")
+                result["execution_result"] = exec_result
 
-            if exec_result.get("status") in ("filled", "closed", "open"):
-                exec_price = float(exec_result.get("price") or current_price)
-                exec_amount = float(exec_result.get("amount") or order.amount)
+                if exec_result.get("status") in ("filled", "closed", "open"):
+                    exec_price = float(exec_result.get("price") or current_price)
+                    exec_amount = float(exec_result.get("amount") or order.amount)
 
-                existing_pos = next(
-                    (p for p in portfolio.positions if p.symbol == order.symbol), None
-                )
+                    existing_pos = next(
+                        (p for p in portfolio.positions if p.symbol == order.symbol), None
+                    )
 
-                if order.action == "buy":
-                    if not existing_pos:
-                        portfolio.open_position(
-                            symbol=order.symbol,
-                            side="long",
-                            price=exec_price,
-                            amount=exec_amount,
-                            stop_loss=order.stop_loss,
-                            take_profit=order.take_profit,
-                        )
-                elif order.action == "sell":
-                    if existing_pos:
-                        portfolio.close_position_safe(order.symbol, exec_price)
+                    if order.action == "buy":
+                        if not existing_pos:
+                            portfolio.open_position(
+                                symbol=order.symbol,
+                                side="long",
+                                price=exec_price,
+                                amount=exec_amount,
+                                stop_loss=order.stop_loss,
+                                take_profit=order.take_profit,
+                            )
+                    elif order.action == "sell":
+                        if existing_pos:
+                            portfolio.close_position_safe(order.symbol, exec_price)
         else:
             console.print(
                 "[bold red]❌ Emir oluşturulamadı: Trade decision validasyon hatası[/bold red]"
@@ -402,12 +392,13 @@ def run_pipeline(
         console.print("\n[dim]--execute bayrağı olmadan emir gönderilmedi[/dim]")
 
     # ── Portföy kaydetme (persistence) ────────────────────
-    portfolio.update_drawdown()
-    portfolio.update_benchmark(df)
-    portfolio.save_to_file()
-    console.print(
-        f"\n[dim]💾 Portföy kaydedildi (equity: ${portfolio.equity:,.2f})[/dim]"
-    )
+    if portfolio:
+        portfolio.update_drawdown()
+        portfolio.update_benchmark(df)
+        portfolio.save_to_file()
+        console.print(
+            f"\n[dim]💾 Portföy kaydedildi (equity: ${portfolio.equity:,.2f})[/dim]"
+        )
 
     # Mesaj geçmişini göster
     console.print("\n[bold yellow]💬 Ajan İletişim Geçmişi[/bold yellow]")
@@ -474,6 +465,11 @@ def main() -> None:
     args = parser.parse_args()
     setup_logging(args.log_level)
 
+    # AUTO sembol desteği
+    if args.symbol and args.symbol.upper() == "AUTO":
+        args.auto_scan = True
+        args.symbol = None
+    
     symbols = args.symbols or ([args.symbol] if args.symbol else [])
     if not symbols and not args.auto_scan:
         console.print("[bold red]❌ --symbol, --symbols veya --auto-scan gerekli[/bold red]")
@@ -506,21 +502,100 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    portfolio = PortfolioState.load_from_file()
-    circuit_breaker = CircuitBreaker()
+    # Multi-Account Manager
+    account_manager = None
+    portfolio = None
+    client = None
+    
+    settings = get_settings()
+    accounts = settings.binance_accounts
+    
+    if accounts and len(accounts) > 1:
+        # Multi-account mode
+        from execution.account_manager import MultiAccountManager
 
-    # Thread-safe client ve watchdog
-    client = ExchangeClient()
-    client.set_portfolio(portfolio)  # Emergency close için referans
+        account_manager = MultiAccountManager(accounts)
+        console.print(f"[green]✅ Multi-account mode: {len(accounts)} accounts[/green]")
+
+        for name, acc in accounts.items():
+            console.print(f"  [dim]└ {name}: {acc['api_key'][:8]}...[/dim]")
+
+        portfolio = None
+        client = None
+    else:
+        # AUTO mode: İlk taramayı yap ve sembolleri bul
+        if args.auto_scan and not symbols:
+            console.print("[bold magenta]🔍 AUTO mode: Piyasa taraması başlatılıyor...[/bold magenta]")
+            try:
+                from data.scanner import MarketScanner
+                from agents.lead_scout import LeadScout
+                
+                scanner = MarketScanner()
+                scout = LeadScout()
+                
+                candidates = scanner.get_candidates()
+                if candidates:
+                    selected = scout.select_best_candidates(candidates, limit=5)
+                    if selected:
+                        symbols = selected
+                        console.print(f"[green]✅ AUTO mode: {len(symbols)} coin bulundu: {', '.join(symbols)}[/green]")
+                    else:
+                        console.print("[yellow]⚠️  Aday bulunamadı, BTC/USDT ile başlanıyor[/yellow]")
+                        symbols = ["BTC/USDT"]
+                else:
+                    console.print("[yellow]⚠️  Scanner aday bulamadı, BTC/USDT ile başlanıyor[/yellow]")
+                    symbols = ["BTC/USDT"]
+            except Exception as e:
+                console.print(f"[yellow]⚠️  AUTO scan hatası: {e}, BTC/USDT ile başlanıyor[/yellow]")
+                symbols = ["BTC/USDT"]
+        # Single account mode (legacy)
+        logger.info("Single account mode")
+        portfolio = PortfolioState.load_from_file()
+        client = ExchangeClient()
+        client.set_portfolio(portfolio)
+    
+    circuit_breaker = CircuitBreaker()
+    system_status = SystemStatus.get_instance()
+    
+    # ── Borsa Senkronizasyonu ────────────────────────────
+    # Bot başladığında borsa bakiyesi ile yerel state'i eşle
+    if execute:
+        try:
+            if account_manager:
+                # Multi-account: tüm hesapları senkronize et
+                for name, data in account_manager.get_all_accounts().items():
+                    console.print(f"[dim]🔄 {name} hesabı senkronize ediliyor...[/dim]")
+                    try:
+                        data["portfolio"].sync_with_exchange(data["client"])
+                    except Exception as sync_err:
+                        console.print(f"[yellow]⚠ {name} senkronizasyon hatası: {sync_err}[/yellow]")
+                        # IP hatası olabilir, hesabı deaktif et
+                        if "429" in str(sync_err) or "IP" in str(sync_err).upper():
+                            account_manager.set_account_inactive(name, str(sync_err))
+            else:
+                portfolio.sync_with_exchange(client)
+        except Exception as e:
+            console.print(f"[bold red]⚠ Senkronizasyon hatası: {e}[/bold red]")
+            # Kritik hata: Senkronizasyon başarısızsa ve canlı moddaysak durdur
+            if get_trading_params().execution.mode == TradingMode.LIVE and not account_manager:
+                console.print("[bold red]❌ Kritik hata: Canlı modda senkronizasyon başarısız. Bot durduruluyor.[/bold red]")
+                sys.exit(1)
 
     watchdog = None
     if args.watchdog:
         try:
-            watchdog = Watchdog(
-                symbols=symbols,
-                portfolio=portfolio,  # Aynı thread-safe instance
-                exchange_client=client,
-            )
+            # Multi-account mode için
+            if account_manager:
+                watchdog = Watchdog(
+                    symbols=symbols,
+                    account_manager=account_manager,
+                )
+            else:
+                watchdog = Watchdog(
+                    symbols=symbols,
+                    portfolio=portfolio,
+                    exchange_client=client,
+                )
             watchdog.start()
             console.print("[green]🐕 Watchdog başlatıldı[/green]")
         except Exception as e:
@@ -530,13 +605,35 @@ def main() -> None:
     scanner = MarketScanner()
     scout = LeadScout()
     portfolio_lock = threading.Lock()
+    
+    # Sync manager (her 10 cycle'da 1 çalışır)
+    if account_manager:
+        sync_manager = SyncManager(account_manager=account_manager, reconcile_every_n_cycles=10)
+    else:
+        sync_manager = SyncManager(portfolio, client, reconcile_every_n_cycles=10)
 
     cycle = 0
     try:
         while not stop_event.is_set():
+            # SystemStatus kontrolü (event-driven)
+            if not system_status.is_running():
+                reason = system_status.get_halt_reason() or "System halted"
+                console.print(f"[bold red]🚨 Sistem durduruldu: {reason}[/bold red]")
+                console.print("[dim]Bekleniyor... (resume için SystemStatus.resume() çağrın)[/dim]")
+                system_status.wait_for_resume(timeout=60)
+                if not system_status.is_running():
+                    console.print("[bold yellow]⏸️ Cycle atlandı - sistem hala durduruldu[/bold yellow]")
+                    stop_event.wait(interval_seconds)
+                    continue
+            
+            # Watchdog heartbeat kontrolü (her cycle'da)
+            if watchdog and not watchdog.check_heartbeat():
+                console.print("[bold red]🚨 Watchdog heartbeat timeout![/bold red]")
+                # SystemStatus zaten emergency_stop'a geçti (watchdog içinde)
+            
             if args.max_cycles > 0 and cycle >= args.max_cycles:
                 console.print(
-                    f"[dim]🏁 Maksimum döngü sayısına ulaşıldı ({cycle})[/dim]"
+                    f"[bold]🏁 Maksimum döngü sayısına ulaşıldı ({cycle})[/bold]"
                 )
                 break
 
@@ -549,14 +646,49 @@ def main() -> None:
 
             # ── Sembolleri Belirle ──────────────────────────────
             current_symbols = list(symbols)
+            
+            # Faz 3: Dinamik Tarayıcı (her N saatte bir)
+            params = get_trading_params()
+            cash_ratio = portfolio.cash / portfolio.equity if portfolio.equity > 0 else 1.0
+            
+            if params.scanner.dynamic_scanner_enabled and scanner.should_scan(cycle, cash_ratio):
+                console.print("[bold magenta]🔍 Dinamik Tarayıcı: Hacim Spike'ı Aranıyor...[/bold magenta]")
+                
+                try:
+                    dynamic_symbols = scanner.get_top_gainers_and_volume_spikes(limit=5)
+                    
+                    if dynamic_symbols:
+                        # [DINAMIK_KEŞIF] flag'li sembolleri ekle
+                        new_symbols = [s['symbol'] for s in dynamic_symbols if s['symbol'] not in current_symbols]
+                        
+                        if new_symbols:
+                            current_symbols = list(set(current_symbols + new_symbols))
+                            console.print(
+                                f"[green]✅ [DINAMIK_KEŞIF] Eklendi: {', '.join(new_symbols)}[/green]"
+                            )
+                            
+                            # Her birinin neden eklendiğini logla
+                            for s in dynamic_symbols:
+                                if s['symbol'] in new_symbols:
+                                    console.print(
+                                        f"  [dim]└ {s['symbol']}: {s['discovery_reason']}[/dim]"
+                                    )
+                    
+                    # Tarama tamamlandı olarak işaretle
+                    scanner.mark_scan_complete(cycle)
+                    
+                except Exception as e:
+                    console.print(f"[yellow]⚠ Dinamik tarayıcı hatası: {e}[/yellow]")
+            
+            # Lead Scout (Algoritmik tarama)
             if args.auto_scan:
-                console.print("[bold magenta]🔍 Otomatik Tarama Başlatılıyor...[/bold magenta]")
+                console.print("[bold magenta]🔍 Lead Scout: Erken Momentum Taraması...[/bold magenta]")
                 candidates = scanner.get_candidates()
                 if candidates:
                     selected = scout.select_best_candidates(candidates)
                     if selected:
                         current_symbols = list(set(current_symbols + selected))
-                        console.print(f"[green]✅ Yeni adaylar eklendi: {', '.join(selected)}[/green]")
+                        console.print(f"[green]✅ Lead Scout adayları eklendi: {', '.join(selected)}[/green]")
                 else:
                     console.print("[yellow]⚠ Tarayıcı kriterlere uygun aday bulamadı.[/yellow]")
 
@@ -569,8 +701,11 @@ def main() -> None:
                         provider=args.provider,
                         circuit_breaker=circuit_breaker,
                         portfolio=portfolio,
+                        account_manager=account_manager,
                     )
-                    with portfolio_lock:
+                    if account_manager:
+                        account_manager.save_all_portfolios()
+                    elif portfolio:
                         portfolio.save_to_file()
                     return res
                 except Exception as e:
@@ -585,11 +720,57 @@ def main() -> None:
                 with ThreadPoolExecutor(max_workers=num_workers) as executor:
                     executor.map(task_wrapper, current_symbols)
 
-            with portfolio_lock:
-                portfolio.save_to_file()
+            # Multi-account için tüm portföyleri kaydet
+            if account_manager:
+                account_manager.save_all_portfolios()
+            elif portfolio:
+                with portfolio_lock:
+                    portfolio.save_to_file()
+
+            # Cycle sonu özet tablo (her cycle'da)
+            from scripts.interactive_commands import cycle_end_prompt
+            try:
+                # Özet tablo göster
+                if portfolio:
+                    from rich.table import Table
+                    from rich.panel import Panel
+                    
+                    summary_table = Table(show_header=False, box=None, padding=(0, 2))
+                    summary_table.add_column("Metrik", style="cyan", width=20)
+                    summary_table.add_column("Değer", style="white")
+                    
+                    summary_table.add_row("Cycle", f"#{cycle} tamamlandı")
+                    summary_table.add_row("Özvarlık", f"${portfolio.equity:,.2f}")
+                    summary_table.add_row("PnL", f"${portfolio.total_pnl:+,.2f}")
+                    summary_table.add_row("Pozisyon", f"{portfolio.open_position_count} açık")
+                    
+                    cb_status = circuit_breaker.get_status()
+                    fb_count = cb_status['consecutive_fallbacks']
+                    summary_table.add_row("Fallback", f"{fb_count}/5 {'✓' if fb_count < 3 else '⚠️'}")
+                    
+                    console.print(Panel(summary_table, title=f"📊 CYCLE #{cycle} ÖZET", border_style="green"))
+                
+                # Kullanıcı komutu için fırsat ver
+                cmd_entered = cycle_end_prompt(portfolio, cycle, start_time, circuit_breaker)
+                if cmd_entered:
+                    console.print("[dim]Cycle devam ediyor...[/dim]\n")
+            except Exception as e:
+                pass  # Input hatası veya gösterim hatası, devam et
+
+            # Exchange sync (her 10 cycle'da 1)
+            if sync_manager.should_reconcile(cycle):
+                try:
+                    sync_result = sync_manager.reconcile(cycle)
+                    if sync_result.get("status") == "success":
+                        cleaned = sync_result.get("zombie_orders_cleaned", 0)
+                        console.print(f"[dim]🔄 Exchange sync: {cleaned} zombie orders cleaned[/dim]")
+                    elif sync_result.get("status") == "discrepancy":
+                        console.print(f"[yellow]⚠️  Balance discrepancy detected![/yellow]")
+                except Exception as e:
+                    console.print(f"[yellow]Sync manager error: {e}[/yellow]")
 
             # RAG hafıza temizliği (her 96 cycle'da bir)
-            if cycle % params.system.cleanup_cycle_interval == 0:
+            if cycle % 96 == 0:
                 try:
                     from data.vector_store import AgentMemoryStore
                     pruned = AgentMemoryStore().prune_entries_older_than(days=30)
@@ -618,8 +799,12 @@ def main() -> None:
         try:
             AgentMemoryStore().close()
         except Exception as cleanup_err:
-            logger.warning("ChromaDB cleanup error: %s", cleanup_err)
-        portfolio.save_to_file()
+            logging.getLogger(__name__).warning("ChromaDB cleanup error: %s", cleanup_err)
+        # Portföyleri kaydet
+        if account_manager:
+            account_manager.save_all_portfolios()
+        elif portfolio:
+            portfolio.save_to_file()
         console.print("\n[green]✓ Bot güvenli şekilde durduruldu[/green]")
 
 

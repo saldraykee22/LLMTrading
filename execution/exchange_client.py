@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import time
 import threading
-from pathlib import Path
 from typing import Any, cast
 
 import ccxt
@@ -19,6 +18,7 @@ from ccxt.base.types import OrderSide
 from config.settings import TradingMode, get_settings, get_trading_params
 from execution.order_manager import TradeOrder
 from execution.paper_engine import PaperTradingEngine
+from risk.system_status import SystemStatus, Status
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +26,25 @@ logger = logging.getLogger(__name__)
 class ExchangeClient:
     """CCXT tabanlı borsa istemcisi."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+    ) -> None:
         self._settings = get_settings()
         self._params = get_trading_params()
         self._exchange: ccxt.Exchange | None = None
         self._last_request_time: float = 0
         self._paper_engine: PaperTradingEngine | None = None
 
+        # Multi-account support: use provided keys or fallback to settings
+        self._api_key = api_key or self._settings.binance_api_key
+        self._api_secret = api_secret or self._settings.binance_api_secret
+
         # Fail-safe mechanism
         self._last_successful_call = time.time()
         self._connection_timeout = 300  # 5 dakika
-        self._emergency_mode = False
+        self._system_status = SystemStatus.get_instance()
 
         # Thread-safe portfolio reference for emergency close
         self._portfolio_ref: Any = None
@@ -51,8 +59,9 @@ class ExchangeClient:
         """
         Acil durum modundan çıkmak için yeniden bağlanma dene.
         Exponential backoff ile 5 deneme yapar.
+        Başarılı olursa SystemStatus'u RUNNING yapar.
         """
-        if not self._emergency_mode:
+        if not self._system_status.is_emergency() and not self._system_status.is_reconnecting():
             return True
         
         logger.info("Reconnection attempt (max %d attempts)...", max_attempts)
@@ -65,8 +74,9 @@ class ExchangeClient:
                         # Basit bir API çağrısı ile bağlantıyı test et
                         self._exchange.fetch_balance()
                     
-                    self._emergency_mode = False
                     self._last_successful_call = time.time()
+                    # SystemStatus'u RUNNING yap
+                    self._system_status.resume()
                     logger.info("✅ Reconnection successful after %d attempt(s)", attempt + 1)
                     return True
                     
@@ -87,14 +97,16 @@ class ExchangeClient:
     def _check_connection(self) -> bool:
         """Heartbeat kontrolü, timeout varsa emergency moda geç."""
         # Eğer emergency mode'daysak reconnect dene
-        if self._emergency_mode:
+        if self._system_status.is_emergency() or self._system_status.is_reconnecting():
             if self.try_reconnect():
                 return True
             return False
         
         if time.time() - self._last_successful_call > self._connection_timeout:
             logger.critical("API bağlantı kesildi — EMERGENCY MODE")
-            self._emergency_mode = True
+            # SystemStatus'u güncelle
+            self._system_status.emergency_stop("API connection timeout")
+            self._system_status.reconnecting("Attempting reconnection")
             self._emergency_close_all()
             return False
         
@@ -172,8 +184,8 @@ class ExchangeClient:
         if self._exchange is None:
             exchange_id = self._params.execution.exchange
             config: dict = {
-                "apiKey": self._settings.binance_api_key,
-                "secret": self._settings.binance_api_secret,
+                "apiKey": self._api_key,
+                "secret": self._api_secret,
                 "enableRateLimit": True,
                 "options": {"defaultType": "spot"},
                 "maxConcurrentRequests": 5,
@@ -228,14 +240,26 @@ class ExchangeClient:
         Returns:
             Emir sonucu (order ID, durum vb.)
         """
-        # Check for STOP file (Emergency Halt)
-        if order.action == "buy" and Path("data/STOP").exists():
-            logger.warning("EMERGENCY HALT (data/STOP detected): Yeni alım emri reddedildi.")
-            return {"status": "rejected", "message": "Emergency halt active"}
+        # 1. SystemStatus Check (event-driven, STOP file polling yerine)
+        if not self._system_status.is_running():
+            reason = self._system_status.get_halt_reason() or "System halted"
+            logger.warning("SYSTEM HALTED: Emir reddedildi (%s %s) - %s", order.action, order.symbol, reason)
+            return {"status": "rejected", "message": f"System halted: {reason}"}
         
-        with self._exchange_lock:
-            if not self._check_connection():
-                return {"status": "error", "message": "API bağlantı kesildi"}
+        # 2. Circuit Breaker Check (SystemStatus ile entegre)
+        from risk.circuit_breaker import CircuitBreaker
+        cb = CircuitBreaker()
+        is_halt, cb_reason = cb.should_halt(equity=0, daily_pnl=0)
+        if is_halt:
+            logger.warning("CIRCUIT BREAKER ACTIVE: New orders blocked. Reason: %s", cb_reason)
+            return {"status": "rejected", "message": "Circuit breaker active"}
+
+        from risk.portfolio import _portfolio_lock
+        
+        with _portfolio_lock:
+            with self._exchange_lock:
+                if not self._check_connection():
+                    return {"status": "error", "message": "API bağlantı kesildi"}
 
             # Paper mod — simülasyon
             if self._params.execution.mode == TradingMode.PAPER:
@@ -414,3 +438,162 @@ class ExchangeClient:
                 if not self._check_connection():
                     logger.warning("Bağlantı koptuğu için acil duruma geçildi.")
                 return {"error": str(e), "data": None}
+    
+    def sweep_dust(self, target_asset: str = "BNB") -> dict[str, Any]:
+        """
+        Dust (küçük bakiye) temizleme.
+        Binance "Convert to BNB" API'sini kullanır.
+        
+        Endpoint: /sapi/v1/asset/dust
+        Docs: https://binance-docs.github.io/apidocs/spot/en/#dust-transfer-user_data
+        
+        Args:
+            target_asset: Dönüştürülecek varlık (varsayılan: BNB)
+        
+        Returns:
+            {
+                "status": "success" | "paper_mode" | "no_dust" | "error",
+                "swept": ["BTC", "ETH", ...],
+                "received": 0.123,  # Alınan BNB miktarı
+                "target_asset": "BNB"
+            }
+        """
+        with self._exchange_lock:
+            # Paper mode kontrolü
+            if self._params.execution.mode == TradingMode.PAPER:
+                logger.info("🧹 Paper mode: Dust süpürme simüle edildi")
+                return {
+                    "status": "paper_mode",
+                    "swept": [],
+                    "received": 0.0,
+                    "target_asset": target_asset,
+                }
+            
+            exchange = self._get_exchange()
+            
+            # CCXT Binance'de dust transfer desteği kontrolü
+            if not hasattr(exchange, 'sapi_post_asset_dust'):
+                logger.warning("Borsa dust transfer'i desteklemiyor")
+                return {
+                    "status": "not_supported",
+                    "swept": [],
+                    "received": 0.0,
+                    "target_asset": target_asset,
+                }
+            
+            self._rate_limit()
+            
+            try:
+                # Dust bakiyeleri çek (min $1 altı)
+                dust_assets = self._get_dust_assets()
+                
+                if not dust_assets:
+                    logger.debug("🧹 Temizlenecek dust bulunamadı")
+                    return {
+                        "status": "no_dust",
+                        "swept": [],
+                        "received": 0.0,
+                        "target_asset": target_asset,
+                    }
+                
+                # Binance API çağrısı
+                # CCXT formatı: {'asset': ['BTC', 'ETH'], ...}
+                result = exchange.sapi_post_asset_dust({
+                    'asset': dust_assets
+                })
+                
+                self._last_successful_call = time.time()
+                
+                # Sonuç parse
+                total_bnb = float(result.get('totalTransferedAmount', 0))
+                swept_assets = [
+                    transfer['asset']
+                    for transfer in result.get('transferResult', [])
+                    if transfer.get('success')
+                ]
+                
+                logger.info(
+                    "✅ Dust süpürme tamamlandı: %d varlık → %.4f %s",
+                    len(swept_assets),
+                    total_bnb,
+                    target_asset
+                )
+                
+                return {
+                    "status": "success",
+                    "swept": swept_assets,
+                    "received": total_bnb,
+                    "target_asset": target_asset,
+                }
+                
+            except ccxt.BaseError as e:
+                logger.error("Dust süpürme hatası: %s", e)
+                if not self._check_connection():
+                    logger.warning("Bağlantı koptuğu için acil duruma geçildi.")
+                return {
+                    "status": "error",
+                    "swept": [],
+                    "received": 0.0,
+                    "target_asset": target_asset,
+                    "error": str(e),
+                }
+    
+    def _get_dust_assets(self, threshold_usdt: float = 1.0) -> list[str]:
+        """
+        $1 altı dust bakiyeleri tespit et.
+        
+        Args:
+            threshold_usdt: Dust eşiği (USD)
+        
+        Returns:
+            Dust varlık listesi (örn: ["BTC", "ETH", "ALT"])
+        """
+        try:
+            # Tüm bakiyeleri çek
+            balance = self.get_balance()
+            
+            if "error" in balance:
+                return []
+            
+            # USDT fiyatlarını çek
+            tickers = self._get_exchange().fetch_tickers()
+            
+            dust_assets = []
+            
+            for asset, amount in balance.items():
+                if asset in ["USDT", "BNB"]:  # USDT ve BNB'yi temizleme
+                    continue
+                
+                # USDT paritesi bul
+                symbol = f"{asset}/USDT"
+                
+                if symbol not in tickers:
+                    # USDT paritesi yoksa, BTC paritesini dene
+                    symbol = f"{asset}/BTC"
+                    if symbol not in tickers:
+                        continue
+                    
+                    # BTC/USDT fiyatı ile çapraz hesapla
+                    btc_usdt = tickers.get("BTC/USDT", {})
+                    btc_price = float(btc_usdt.get('last', 0) or 0)
+                    asset_btc = float(tickers[symbol].get('last', 0) or 0)
+                    usdt_price = btc_price * asset_btc
+                else:
+                    usdt_price = float(tickers[symbol].get('last', 0) or 0)
+                
+                # USD değeri hesapla
+                usdt_value = amount * usdt_price
+                
+                if usdt_value < threshold_usdt and usdt_value > 0:
+                    logger.debug(
+                        "🔍 Dust tespit edildi: %s = %.4f (%.2f USDT)",
+                        asset, amount, usdt_value
+                    )
+                    dust_assets.append(asset)
+            
+            logger.info("🧹 Toplam %d dust varlık bulundu", len(dust_assets))
+            return dust_assets
+            
+        except Exception as e:
+            logger.error("Dust tespit hatası: %s", e)
+            return []
