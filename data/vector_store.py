@@ -26,10 +26,10 @@ class AgentMemoryStore:
             return cls._instance
 
     def __init__(self, store_dir: Path | None = None):
-        if self._initialized:
+        if getattr(self, "_initialized", False):
             return
         with self._lock:
-            if self._initialized:
+            if getattr(self, "_initialized", False):
                 return
             self._dir = store_dir or STORE_DIR
             self._dir.mkdir(parents=True, exist_ok=True)

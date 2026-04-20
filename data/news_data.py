@@ -45,13 +45,16 @@ class NewsClient:
         self._http = httpx.Client(timeout=15.0)
         self._last_request_time: float = 0
         self._rate_limit_delay: float = self._params.limits.news_rate_limit_delay
+        import threading
+        self._lock = threading.RLock()
 
     def _rate_limit(self) -> None:
         """Basit rate limiting — istekler arası bekleme."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self._rate_limit_delay:
-            time.sleep(self._rate_limit_delay - elapsed)
-        self._last_request_time = time.time()
+        with self._lock:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self._rate_limit_delay:
+                time.sleep(self._rate_limit_delay - elapsed)
+            self._last_request_time = time.time()
 
     # ── Finnhub ────────────────────────────────────────────
     def fetch_finnhub_company_news(
@@ -241,9 +244,11 @@ class NewsClient:
                     except (AttributeError, ValueError, TypeError) as e:
                         logger.debug("RSS entry parse hatası: %s", e)
                         continue
+                    except Exception as e:
+                        logger.warning("RSS entry ayrıştırma atlandı: %s", e)
+                        continue
 
                 logger.info("RSS (%s): %d haber", rss_url, len(feed.entries[:10]))
-
             except Exception as e:
                 logger.warning("RSS fetch hatası (%s): %s", rss_url, e)
                 continue
@@ -320,4 +325,5 @@ class NewsClient:
 
     def close(self) -> None:
         """HTTP istemcisini kapatır."""
-        self._http.close()
+        with self._lock:
+            self._http.close()

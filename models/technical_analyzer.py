@@ -292,6 +292,9 @@ class TechnicalAnalyzer:
             except Exception as e:
                 logger.warning("Slippage analizi yapılamadı (%s): %s", symbol, e)
 
+        import gc
+        gc.collect()
+
         return signals
 
     def _determine_trend(self, s: TechnicalSignals) -> tuple[str, float]:

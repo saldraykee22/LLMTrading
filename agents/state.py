@@ -14,29 +14,20 @@ from typing import Annotated, Any, NotRequired, TypedDict
 from config.settings import get_trading_params
 
 
-def _get_max_messages() -> int:
-    """Get MAX_MESSAGES from config, fallback to 100."""
-    try:
-        params = get_trading_params()
-        return params.system.max_workers * 20  # Dynamic based on workers
-    except Exception:
-        return 100
-
-
-MAX_MESSAGES = 100  # Default, overridden by _get_max_messages() at runtime
-
-
 def _get_max_messages_runtime() -> int:
     """Get MAX_MESSAGES from config at runtime."""
     try:
         params = get_trading_params()
-        return params.system.max_workers * 20
+        if hasattr(params, "system") and hasattr(params.system, "max_workers"):
+            return params.system.max_workers * 20
     except Exception:
-        return MAX_MESSAGES
+        pass
+    return 100  # Safe deterministic fallback without external references
 
+MAX_MESSAGES = _get_max_messages_runtime()
 
 def merge_and_trim_messages(left: list[dict], right: list[dict]) -> list[dict]:
-    """Merges new messages and ensures the total count does not exceed MAX_MESSAGES."""
+    """Merges new messages and ensures the total count does not exceed the limit."""
     max_msgs = _get_max_messages_runtime()
     combined = (left or []) + (right or [])
     if len(combined) > max_msgs:
@@ -114,7 +105,7 @@ def create_initial_state(
 
 
 def trim_messages(messages: list[dict]) -> list[dict]:
-    """Keep only the last MAX_MESSAGES to prevent unbounded growth.
+    """Keep only the last max messages to prevent unbounded growth.
 
     Should be called at the end of each graph node to cap message list size.
     """
