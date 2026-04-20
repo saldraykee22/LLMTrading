@@ -29,13 +29,13 @@ class MarketDataClient:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._params = get_trading_params()
-        self._exchange_private: ccxt.Exchange | None = None
-        self._exchange_public: ccxt.Exchange | None = None
+        import threading
+        self._local = threading.local()
 
     # ── Binance CCXT Bağlantısı ────────────────────────────
     def _get_private_exchange(self) -> ccxt.Exchange:
         """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar)."""
-        if self._exchange_private is None:
+        if getattr(self._local, "exchange_private", None) is None:
             config: dict = {
                 "apiKey": self._settings.binance_api_key,
                 "secret": self._settings.binance_api_secret,
@@ -46,7 +46,7 @@ class MarketDataClient:
                 config["sandbox"] = True
 
             try:
-                self._exchange_private = ccxt.binance(config)
+                self._local.exchange_private = ccxt.binance(config)
             except Exception as e:
                 logger.error("Binance private connection failed: %s", str(e))
                 raise
@@ -54,22 +54,22 @@ class MarketDataClient:
                 config["apiKey"] = "***"
                 config["secret"] = "***"
             logger.info(
-                "Binance private connection established (testnet=%s)",
+                "Binance private connection established (testnet=%s) for thread",
                 self._settings.binance_testnet,
             )
-        return self._exchange_private
+        return self._local.exchange_private
 
     def _get_public_exchange(self) -> ccxt.Exchange:
         """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet)."""
-        if self._exchange_public is None:
+        if getattr(self._local, "exchange_public", None) is None:
             config: dict = {
                 "enableRateLimit": True,
                 "options": {"defaultType": "spot"},
             }
             # Public data için API key gerekmez, sandbox zorunluluğu yok
-            self._exchange_public = ccxt.binance(config)
-            logger.info("Binance public connection established (Mainnet)")
-        return self._exchange_public
+            self._local.exchange_public = ccxt.binance(config)
+            logger.info("Binance public connection established (Mainnet) for thread")
+        return self._local.exchange_public
 
     # ── Kripto OHLCV ───────────────────────────────────────
     def fetch_crypto_ohlcv(
@@ -93,7 +93,6 @@ class MarketDataClient:
         tf = timeframe or self._params.data.default_timeframe
         d = days or self._params.data.history_days
 
-        exchange = self._get_public_exchange()
         since_ms = int(
             (datetime.now(timezone.utc) - timedelta(days=d)).timestamp() * 1000
         )
@@ -102,6 +101,7 @@ class MarketDataClient:
         fetch_since = since_ms
 
         while True:
+            exchange = self._get_public_exchange()
             try:
                 batch = exchange.fetch_ohlcv(
                     resolved.symbol,
@@ -132,10 +132,17 @@ class MarketDataClient:
             all_ohlcv,
             columns=["timestamp", "open", "high", "low", "close", "volume"],
         )
+
+        # Free memory associated with the temporary list right away, to avoid huge RAM usage for 5M candle datasets
+        import gc
+        del all_ohlcv
+        gc.collect()
+
         df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-        df = df.drop(columns=["timestamp"])
-        df = df.sort_values("datetime").reset_index(drop=True)
-        df = df.drop_duplicates(subset=["datetime"])
+        df.drop(columns=["timestamp"], inplace=True)
+        df.sort_values("datetime", inplace=True)
+        df.drop_duplicates(subset=["datetime"], inplace=True)
+        df.reset_index(drop=True, inplace=True)
 
         logger.info(
             "Kripto OHLCV: %s - %d mum (%s -> %s)",
