@@ -113,8 +113,8 @@ class TestExchangeClient:
         assert exchange is mock_exchange
         assert client._exchange is mock_exchange
         mock_exchange_class.assert_called_once_with({
-            'apiKey': '***',
-            'secret': '***',
+            'apiKey': 'test_key',
+            'secret': 'test_secret',
             'enableRateLimit': True,
             'options': {'defaultType': 'spot'},
             'maxConcurrentRequests': 5,

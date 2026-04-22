@@ -5,8 +5,14 @@ Sistem sağlık kontrolü - Başlangıç validasyonu
 Kullanım: python scripts/health_check.py
 """
 
+import io
 import sys
 from pathlib import Path
+
+# Windows console encoding fix
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Proje kökünü path'e ekle
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
