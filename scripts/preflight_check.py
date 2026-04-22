@@ -38,6 +38,14 @@ def check_env():
 
 def check_exchange_connectivity():
     logger.info("🔍 2. Borsa Bağlantısı (CCXT)...")
+    settings = get_settings()
+    
+    # Canlı mod güvenliği
+    if settings.trading_mode == TradingMode.LIVE:
+        if not settings.confirm_live_trade:
+            logger.warning("⚠ CANLI MODDA AMA 'CONFIRM_LIVE_TRADE' KAPALI! Bağlantı testi atlanıyor.")
+            return True # Atla ama hata verme
+    
     try:
         client = ExchangeClient()
         balance = client.get_balance()
@@ -45,11 +53,14 @@ def check_exchange_connectivity():
             logger.error(f"❌ Bakiye çekilemedi: {balance['error']}")
             return False
         
-        logger.info(f"✅ Borsaya bağlanıldı. Cüzdandaki varlıklar: {list(balance.keys())}")
-        if "USDT" not in balance:
-            logger.warning("⚠ Cüzdanda USDT bulunamadı. Alım yapılamayabilir.")
+        # Filtrelenmiş varlıklar (sıfır olmayanlar)
+        active_assets = {k: v for k, v in balance.items() if v > 0}
+        logger.info(f"✅ Borsaya bağlanıldı. Aktif varlıklar: {list(active_assets.keys())}")
+        
+        if "USDT" not in balance or balance["USDT"] < 1:
+            logger.warning(f"⚠ Cüzdanda yeterli USDT bulunamadı: {balance.get('USDT', 0)}")
         else:
-            logger.info(f"💰 Mevcut USDT: {balance['USDT']}")
+            logger.info(f"💰 Mevcut USDT: {balance['USDT']:.2f}")
         return True
     except Exception as e:
         logger.error(f"❌ Bağlantı hatası: {e}")
