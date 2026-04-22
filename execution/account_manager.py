@@ -405,10 +405,8 @@ class MultiAccountManager:
                     "cash": data["portfolio"].cash,
                     "open_positions": data["portfolio"].open_position_count,
                 }
-                for name, (data, status) in zip(
-                    self._accounts.keys(),
-                    [(d, self._account_statuses[n]) for n, d in self._accounts.items()],
-                )
+                for name, data in self._accounts.items()
+                for status in [self._account_statuses[name]]
             }
         }
 

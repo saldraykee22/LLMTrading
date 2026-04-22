@@ -362,7 +362,7 @@ def cmd_hesaplar() -> int:
     
     settings = get_settings()
     
-    if not settings.binance_accounts or len(settings.binance_accounts) == 0:
+    if not settings.binance_accounts:
         console.print("[yellow]Multi-account yapılandırması bulunamadı[/]")
         return 0
     

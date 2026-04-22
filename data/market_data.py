@@ -44,15 +44,21 @@ class MarketDataClient:
             }
             if self._settings.binance_testnet:
                 config["sandbox"] = True
+            safe_config = {
+                **config,
+                "apiKey": "***" if config.get("apiKey") else "",
+                "secret": "***" if config.get("secret") else "",
+            }
 
             try:
                 self._exchange_private = ccxt.binance(config)
             except Exception as e:
-                logger.error("Binance private connection failed: %s", str(e))
+                logger.error(
+                    "Binance private connection failed: %s (config=%s)",
+                    str(e),
+                    safe_config,
+                )
                 raise
-            finally:
-                config["apiKey"] = "***"
-                config["secret"] = "***"
             logger.info(
                 "Binance private connection established (testnet=%s)",
                 self._settings.binance_testnet,
@@ -299,10 +305,6 @@ class MarketDataClient:
             except Exception as e:
                 logger.error("Fiyat hatası (%s): %s", resolved.symbol, e)
                 return None
-
-
-# ── Async Metodlar (Kademeli Migration) ─────────────────────
-
     async def fetch_ohlcv_async(
         self,
         symbol: str,

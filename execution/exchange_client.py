@@ -67,18 +67,22 @@ class ExchangeClient:
         logger.info("Reconnection attempt (max %d attempts)...", max_attempts)
         
         for attempt in range(max_attempts):
+            lock_acquired = False
             try:
                 # Bağlantı testi
-                with self._exchange_lock:
-                    if self._exchange:
-                        # Basit bir API çağrısı ile bağlantıyı test et
-                        self._exchange.fetch_balance()
-                    
-                    self._last_successful_call = time.time()
-                    # SystemStatus'u RUNNING yap
-                    self._system_status.resume()
-                    logger.info("✅ Reconnection successful after %d attempt(s)", attempt + 1)
-                    return True
+                lock_acquired = self._exchange_lock.acquire(timeout=5)
+                if not lock_acquired:
+                    raise TimeoutError("exchange lock timeout during reconnect")
+
+                if self._exchange:
+                    # Basit bir API çağrısı ile bağlantıyı test et
+                    self._exchange.fetch_balance()
+
+                self._last_successful_call = time.time()
+                # SystemStatus'u RUNNING yap
+                self._system_status.resume()
+                logger.info("✅ Reconnection successful after %d attempt(s)", attempt + 1)
+                return True
                     
             except Exception as e:
                 delay = 2 ** (attempt + 1)  # 2s, 4s, 8s, 16s, 32s
@@ -90,6 +94,9 @@ class ExchangeClient:
                     delay,
                 )
                 time.sleep(delay)
+            finally:
+                if lock_acquired:
+                    self._exchange_lock.release()
         
         logger.error("❌ Reconnection failed after %d attempts", max_attempts)
         return False
@@ -193,6 +200,11 @@ class ExchangeClient:
 
             if self._settings.binance_testnet:
                 config["sandbox"] = True
+            safe_config = {
+                **config,
+                "apiKey": "***" if config.get("apiKey") else "",
+                "secret": "***" if config.get("secret") else "",
+            }
 
             exchange_class = getattr(ccxt, exchange_id, None)
             if exchange_class is None:
@@ -203,11 +215,12 @@ class ExchangeClient:
                 # Market bilgisini (precision, limits vb.) yükle
                 self._exchange.load_markets()
             except Exception as e:
-                logger.error("Borsa bağlantısı başlatılamadı: %s", str(e))
+                logger.error(
+                    "Borsa bağlantısı başlatılamadı: %s (config=%s)",
+                    str(e),
+                    safe_config,
+                )
                 raise
-            finally:
-                config["apiKey"] = "***"
-                config["secret"] = "***"
             status = (
                 "TESTNET (Sandbox)" if self._settings.binance_testnet else "MAINNET"
             )
@@ -249,7 +262,10 @@ class ExchangeClient:
         # 2. Circuit Breaker Check (SystemStatus ile entegre)
         from risk.circuit_breaker import CircuitBreaker
         cb = CircuitBreaker()
-        is_halt, cb_reason = cb.should_halt(equity=0, daily_pnl=0)
+        portfolio = self._portfolio_ref
+        equity = getattr(portfolio, "equity", 1.0)
+        daily_pnl = getattr(portfolio, "daily_pnl", 0.0)
+        is_halt, cb_reason = cb.should_halt(equity=equity, daily_pnl=daily_pnl)
         if is_halt:
             logger.warning("CIRCUIT BREAKER ACTIVE: New orders blocked. Reason: %s", cb_reason)
             return {"status": "rejected", "message": "Circuit breaker active"}
@@ -257,9 +273,8 @@ class ExchangeClient:
         from risk.portfolio import _portfolio_lock
         
         with _portfolio_lock:
-            with self._exchange_lock:
-                if not self._check_connection():
-                    return {"status": "error", "message": "API bağlantı kesildi"}
+            if not self._check_connection():
+                return {"status": "error", "message": "API bağlantı kesildi"}
 
             # Paper mod — simülasyon
             if self._params.execution.mode == TradingMode.PAPER:
@@ -275,7 +290,8 @@ class ExchangeClient:
                 return result
 
             # Live mod — gerçek borsa
-            exchange = self._get_exchange()
+            with self._exchange_lock:
+                exchange = self._get_exchange()
 
             # Güvenlik kontrolü — live mode'da ekstra onay
             if self._params.execution.mode == TradingMode.LIVE:
@@ -297,31 +313,32 @@ class ExchangeClient:
 
             for attempt in range(self._params.execution.retry_count):
                 try:
-                    # Miktar ve fiyatı borsa hassasiyetine göre yuvarla
-                    exec_amount = exchange.amount_to_precision(order.symbol, order.amount)
-                    
-                    if order.order_type == "market":
-                        result = exchange.create_order(
-                            symbol=order.symbol,
-                            type="market",
-                            side=order.action,
-                            amount=exec_amount,
-                        )
-                    elif order.order_type == "limit":
-                        exec_price = exchange.price_to_precision(order.symbol, order.price)
-                        result = exchange.create_order(
-                            symbol=order.symbol,
-                            type="limit",
-                            side=order.action,
-                            amount=exec_amount,
-                            price=exec_price,
-                        )
-                    else:
-                        logger.error("Bilinmeyen emir tipi: %s", order.order_type)
-                        return {
-                            "status": "error",
-                            "message": f"Unknown order type: {order.order_type}",
-                        }
+                    with self._exchange_lock:
+                        # Miktar ve fiyatı borsa hassasiyetine göre yuvarla
+                        exec_amount = exchange.amount_to_precision(order.symbol, order.amount)
+
+                        if order.order_type == "market":
+                            result = exchange.create_order(
+                                symbol=order.symbol,
+                                type="market",
+                                side=order.action,
+                                amount=exec_amount,
+                            )
+                        elif order.order_type == "limit":
+                            exec_price = exchange.price_to_precision(order.symbol, order.price)
+                            result = exchange.create_order(
+                                symbol=order.symbol,
+                                type="limit",
+                                side=order.action,
+                                amount=exec_amount,
+                                price=exec_price,
+                            )
+                        else:
+                            logger.error("Bilinmeyen emir tipi: %s", order.order_type)
+                            return {
+                                "status": "error",
+                                "message": f"Unknown order type: {order.order_type}",
+                            }
 
                     order_status = result.get("status", "")
                     filled_status = "filled" if order_status == "closed" else order_status

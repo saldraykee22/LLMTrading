@@ -52,6 +52,24 @@ class MarketScanner:
         
         return atr.iloc[-1] if len(atr) > period else 0.0
 
+    def _get_average_daily_volume_usdt(self, symbol: str, lookback_days: int = 7) -> float:
+        """Son günler için ortalama günlük USDT hacmini tahmin et."""
+        try:
+            df = self.client.fetch_ohlcv(symbol, timeframe="1d", days=lookback_days + 2)
+        except Exception as e:
+            logger.debug("Ortalama hacim alınamadı (%s): %s", symbol, e)
+            return float(self.params.min_volume_24h_usdt)
+
+        if df.empty or len(df) < 2:
+            return float(self.params.min_volume_24h_usdt)
+
+        baseline = df.iloc[:-1].tail(lookback_days).copy()
+        if baseline.empty:
+            return float(self.params.min_volume_24h_usdt)
+
+        avg_volume = float((baseline["close"] * baseline["volume"]).mean())
+        return avg_volume if avg_volume > 0 else float(self.params.min_volume_24h_usdt)
+
     def _get_momentum_score(
         self, 
         change_pct: float, 
@@ -474,9 +492,8 @@ class MarketScanner:
             if not (self.params.min_price_change_24h_pct <= change_pct <= self.params.max_price_change_24h_pct):
                 continue
             
-            # Hacim oranı (şu anki / ortalama)
-            # Basit: 24h hacmi kullanıyoruz, detaylı analiz için 1h OHLCV gerekebilir
-            volume_ratio = volume_usdt / self.params.min_volume_24h_usdt
+            avg_volume_usdt = self._get_average_daily_volume_usdt(symbol)
+            volume_ratio = volume_usdt / avg_volume_usdt if avg_volume_usdt > 0 else 0.0
             
             # Hacim spike'ı: 2x+ ortalama
             if volume_ratio < 2.0:
@@ -487,6 +504,7 @@ class MarketScanner:
                 "price": float(data.get('last', 0) or 0),
                 "change_24h": change_pct,
                 "volume_24h": volume_usdt,
+                "avg_volume_7d": avg_volume_usdt,
                 "volume_ratio": volume_ratio,
                 "quality_score": volume_ratio * 10 + change_pct,  # Basit skor
                 "dynamic_discovery": True,  # [DINAMIK_KEŞIF] flag

@@ -196,6 +196,20 @@ class Watchdog:
             except Exception as e:
                 logger.warning(f"{prefix}SL/TP check failed for %s: %s", pos.symbol, e)
 
+    def _trigger_system_halt(self, reason: str) -> None:
+        """STOP dosyası ve merkezi durum yönetimini tek yerde tetikle."""
+        try:
+            stop_path = DATA_DIR / "STOP"
+            stop_path.parent.mkdir(parents=True, exist_ok=True)
+            stop_path.touch()
+            self._system_status.emergency_stop(reason)
+            logger.critical("EMERGENCY HALT triggered by Watchdog: %s", reason)
+        except OSError as stop_err:
+            logger.critical("Failed to create STOP file: %s", stop_err)
+            from risk.circuit_breaker import CircuitBreaker
+
+            CircuitBreaker().manual_stop()
+
     def _emergency_close(
         self,
         pos,
@@ -206,8 +220,6 @@ class Watchdog:
         account_name: str = "",
     ) -> None:
         """Executes an emergency close for a position - atomic."""
-        from risk.portfolio import _portfolio_lock
-
         client = exchange_client or self.exchange_client
         portf = portfolio or self.portfolio
         prefix = f"[{account_name}] " if account_name else ""
@@ -225,36 +237,23 @@ class Watchdog:
             amount=pos.amount,
         )
         try:
-            with _portfolio_lock:
-                if portf.get_position_by_symbol_safe(pos.symbol) is None:
-                    logger.info(f"{prefix}Position already closed: %s", pos.symbol)
-                    return
+            if portf.get_position_by_symbol_safe(pos.symbol) is None:
+                logger.info(f"{prefix}Position already closed: %s", pos.symbol)
+                return
 
             result = client.execute_order(order, price)
             if result.get("status") in ("filled", "closed", "open"):
                 fill_price = float(result.get("price") or price)
-                # Atomic: Tek lock bloğunda pozisyon kontrolü + kapatma
-                with _portfolio_lock:
-                    close_result = portf.close_position_safe(pos.symbol, fill_price)
-                    if close_result is None:
-                        logger.info(f"{prefix}Position already closed: %s", pos.symbol)
-                        return
-                    logger.warning(
-                        f"{prefix}Emergency sell executed for %s due to %s",
-                        pos.symbol,
-                        reason,
-                    )
-                # Stop further execution
-                try:
-                    STOP_PATH = DATA_DIR / "STOP"
-                    STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
-                    STOP_PATH.touch()
-                    logger.critical("EMERGENCY HALT triggered by Watchdog.")
-                except OSError as stop_err:
-                    logger.critical("Failed to create STOP file: %s", stop_err)
-                    from risk.circuit_breaker import CircuitBreaker
-                    cb = CircuitBreaker()
-                    cb.manual_stop()
+                close_result = portf.close_position_safe(pos.symbol, fill_price)
+                if close_result is None:
+                    logger.info(f"{prefix}Position already closed: %s", pos.symbol)
+                    return
+                logger.warning(
+                    f"{prefix}Emergency sell executed for %s due to %s",
+                    pos.symbol,
+                    reason,
+                )
+                self._trigger_system_halt(f"Watchdog {reason}: {pos.symbol}")
         except Exception as e:
             logger.error(f"{prefix}Emergency sell failed for %s: %s", pos.symbol, e)
 
@@ -328,24 +327,18 @@ class Watchdog:
                 if result.get("status") in ("filled", "closed", "open"):
                     fill_price = float(result.get("price") or price)
                     # Thread-safe kapatma ve P&L kaydı
-                    portfolio.close_position_safe(symbol, fill_price)
+                    close_result = portfolio.close_position_safe(symbol, fill_price)
+                    if close_result is None:
+                        logger.info(f"{prefix}Position already closed: %s", symbol)
+                        return
                     logger.warning(
                         f"{prefix}Emergency sell executed for %s due to flash crash (%.2f%% drop)",
                         symbol,
                         drop_pct,
                     )
-                    # Stop further execution
-                    try:
-                        STOP_PATH = DATA_DIR / "STOP"
-                        STOP_PATH.parent.mkdir(parents=True, exist_ok=True)
-                        STOP_PATH.touch()
-                        logger.critical("EMERGENCY HALT triggered by Watchdog.")
-                    except OSError as stop_err:
-                        logger.critical("Failed to create STOP file: %s", stop_err)
-                        # Fallback: Circuit breaker'ı tetikle
-                        from risk.circuit_breaker import CircuitBreaker
-                        cb = CircuitBreaker()
-                        cb.manual_stop()
+                    self._trigger_system_halt(
+                        f"Flash crash detected for {symbol} ({drop_pct:.2f}% drop)"
+                    )
             except Exception as e:
                 logger.error(f"{prefix}Emergency sell failed for %s: %s", symbol, e)
 

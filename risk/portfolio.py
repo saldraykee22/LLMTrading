@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -185,8 +187,27 @@ class PortfolioState:
                 "alpha": self.alpha,
             }
             tmp_path = filepath.with_suffix(".tmp")
-            tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-            tmp_path.replace(filepath)
+            tmp_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            last_error: PermissionError | None = None
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, filepath)
+                    break
+                except PermissionError as exc:
+                    last_error = exc
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.1 * (attempt + 1))
+
+            if last_error is not None:
+                logger.warning(
+                    "Portföy dosyası yeniden adlandırma retry ile başarılı oldu: %s",
+                    filepath,
+                )
             logger.info("Portföy kaydedildi: %s (equity: %.2f)", filepath, self.equity)
 
     @classmethod

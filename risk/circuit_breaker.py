@@ -287,12 +287,25 @@ class CircuitBreaker:
             system_status.resume()
         logger.info("Manuel durdurma kaldırıldı ve sayaçlar sıfırlandı")
 
-    def get_status(self) -> dict:
+    def get_status(
+        self,
+        equity: float | None = None,
+        daily_pnl: float | None = None,
+    ) -> dict:
         """Circuit breaker durumu."""
-        halted, reason = self.should_halt(equity=0, daily_pnl=0)
+        if equity is not None and daily_pnl is not None:
+            halted, reason = self.should_halt(equity=equity, daily_pnl=daily_pnl)
+        else:
+            halted, reason = self._check_halt_conditions(equity=-1, daily_pnl=0)
+
+        system_status = SystemStatus.get_instance()
+        system_halted = system_status.is_emergency() or system_status.is_cooldown()
+        reason = reason or system_status.get_halt_reason() or ""
+        is_halted = halted or STOP_FILE.exists() or system_halted
+
         return {
-            "halted": halted or STOP_FILE.exists(),
-            "halt_reason": reason if halted else "",
+            "halted": is_halted,
+            "halt_reason": reason if is_halted else "",
             "consecutive_losses": self.consecutive_losses,
             "consecutive_llm_errors": self.consecutive_llm_errors,
             "consecutive_fallbacks": self.consecutive_fallbacks,

@@ -27,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Windows console encoding fix
 if sys.platform == "win32":
@@ -638,9 +639,10 @@ def main() -> None:
                 break
 
             cycle += 1
+            start_time = datetime.now(timezone.utc)
             console.print(f"\n{'=' * 60}")
             console.print(
-                f"[bold]🔄 Döngü {cycle} — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}[/bold]"
+                f"[bold]🔄 Döngü {cycle} — {start_time.strftime('%Y-%m-%d %H:%M UTC')}[/bold]"
             )
             console.print(f"{'=' * 60}")
 
@@ -716,7 +718,8 @@ def main() -> None:
                     return {"symbol": sym, "error": str(e)}
 
             if current_symbols:
-                num_workers = min(len(current_symbols), 5)
+                configured_workers = max(1, get_trading_params().system.max_workers)
+                num_workers = min(len(current_symbols), configured_workers)
                 with ThreadPoolExecutor(max_workers=num_workers) as executor:
                     executor.map(task_wrapper, current_symbols)
 

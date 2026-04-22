@@ -49,6 +49,7 @@ data/drift_history.jsonl
 *.parquet
 *.jsonl
 *.json
+data/portfolio_state.json
 !data/examples/*.csv
 !data/templates/*.json
 !data/portfolio_state.json.example
