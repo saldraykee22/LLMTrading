@@ -444,6 +444,7 @@ def main() -> None:
     parser.add_argument(
         "--auto-scan", action="store_true", help="Piyasayı otomatik tara ve fırsatları bul"
     )
+    parser.add_argument("--model", "-m", help="LLM modeli override")
 
     args = parser.parse_args()
     setup_logging(args.log_level)
@@ -798,12 +799,6 @@ def main() -> None:
             AgentMemoryStore().close()
         except Exception as cleanup_err:
             logging.getLogger(__name__).warning("ChromaDB cleanup error: %s", cleanup_err)
-        # Portföyleri kaydet
-        if account_manager:
-            account_manager.save_all_portfolios()
-        elif portfolio:
-            portfolio.save_to_file()
-        console.print("\n[green]✓ Bot güvenli şekilde durduruldu[/green]")
 
 
 if __name__ == "__main__":

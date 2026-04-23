@@ -20,6 +20,7 @@ from models.sentiment_analyzer import create_agent_llm
 from risk.regime_filter import CryptoFearGreedFilter, RegimeFilter
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
+from agents.prompt_evolver import PromptEvolver
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +216,6 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
             "risk_approved": False,
             "phase": "analysis",
         }
-
-    from agents.prompt_evolver import PromptEvolver
 
     evolver = PromptEvolver()
     system_prompt = evolver.get_current_prompt("risk_manager")

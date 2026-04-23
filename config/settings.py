@@ -462,8 +462,9 @@ def reload_settings() -> Settings:
     global _settings
     with _settings_lock:
         _settings = Settings()
-    logger.info("Settings reloaded (hot-reload)")
-    return _settings
+        _settings._validate_security()
+        logger.info("Settings reloaded (hot-reload)")
+        return _settings
 
 
 def reload_trading_params() -> TradingParams:

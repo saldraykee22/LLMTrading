@@ -1,6 +1,6 @@
 agents:
-  analyst_model: openrouter/elephant-alpha
-  coordinator_model: openrouter/elephant-alpha
+  analyst_model: qwen/qwen3.5-flash-02-23
+  coordinator_model: qwen/qwen3.5-flash-02-23
   ensemble_enabled: true
   ensemble_min_consensus: 0.5
   ensemble_models:
@@ -9,8 +9,8 @@ agents:
   - openrouter/openai/gpt-4o-mini
   max_debate_rounds: 3
   max_retry_iterations: 3
-  risk_model: openrouter/elephant-alpha
-  trader_model: openrouter/elephant-alpha
+  risk_model: qwen/qwen3.5-flash-02-23
+  trader_model: qwen/qwen3.5-flash-02-23
 backtest:
   benchmark: BTC/USDT
   initial_cash: 10000
@@ -62,12 +62,12 @@ limits:
   vix_crisis_threshold: 40
   vix_low_vol_multiplier: 0.8
 llm:
-  default_model: openrouter/elephant-alpha
+  default_model: qwen/qwen3.5-flash-02-23
   fallback_providers:
   - openrouter
   - deepseek
   - ollama
-  reasoning_model: openrouter/elephant-alpha
+  reasoning_model: qwen/qwen3.5-flash-02-23
   # Fallback configuration
   fallbacks:
     sentiment:
@@ -189,7 +189,7 @@ scanner:
     momentum_1h_weight: 0.3
     momentum_24h_weight: 0.3
     volume_weight: 0.4
-  scout_model: openrouter/elephant-alpha
+  scout_model: qwen/qwen3.5-flash-02-23
   silent_accumulation:
     bonus_score: 15
     enabled: true
@@ -201,9 +201,9 @@ sentiment:
   bearish_threshold: -0.3
   bullish_threshold: 0.3
   min_confidence: 0.6
-  model: openrouter/elephant-alpha
+  model: qwen/qwen3.5-flash-02-23
   provider: openrouter
-  reasoning_model: openrouter/elephant-alpha
+  reasoning_model: qwen/qwen3.5-flash-02-23
   score_range:
   - -1
   - 1

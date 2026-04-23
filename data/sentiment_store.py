@@ -61,8 +61,8 @@ class SentimentStore:
             clean = clean.replace("/", "_").replace(".", "_").replace("\\", "_")
             clean = clean.replace("..", "_")
         else:
-            # Valid symbols like BTC/USDT still contain '/' which is invalid in filenames
-            clean = clean.replace("/", "_")
+            # Valid symbols like BTC/USDT still contain '/' or '\' which are invalid in filenames
+            clean = clean.replace("/", "_").replace("\\", "_")
         return self._dir / f"{clean}_sentiment.jsonl"
 
     def _update_lru(self, symbol: str) -> None:
