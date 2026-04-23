@@ -63,6 +63,15 @@ def vector_store_state():
     }
 
 
+@pytest.fixture(autouse=True)
+def cleanup_agent_memory_store():
+    """Clean up AgentMemoryStore singleton before each test."""
+    from data.vector_store import AgentMemoryStore
+    AgentMemoryStore.close_all()
+    yield
+    AgentMemoryStore.close_all()
+
+
 @pytest.fixture
 def tmp_data_dir(tmp_path):
     """Create a temporary data directory and patch DATA_DIR."""
@@ -755,7 +764,7 @@ class TestEnsembleVoter:
         ]
         result = voter._aggregate_votes(votes)
         assert result["action"] == "buy"
-        assert result["consensus_score"] == pytest.approx(2 / 3, abs=0.01)
+        assert result["consensus_score"] == pytest.approx(0.7143, abs=0.01)
 
     def test_weighted_averaging_for_numerics(self):
         from agents.ensemble_voter import EnsembleVoter
@@ -787,7 +796,7 @@ class TestEnsembleVoter:
             self._make_mock_vote("m4", "buy", 0.9),
         ]
         result = voter._aggregate_votes(votes)
-        assert result["consensus_score"] == pytest.approx(0.75, abs=0.01)
+        assert result["consensus_score"] == pytest.approx(0.8, abs=0.01)
 
     def test_graceful_failure_handling(self):
         from agents.ensemble_voter import EnsembleVoter
@@ -1122,8 +1131,7 @@ class TestPromptEvolver:
 # H) Integration Tests
 # ──────────────────────────────────────────────
 
-
-
+class TestIntegrationDriftRisk:
 
     def test_drift_risk_manager_integration(self, tmp_path):
         from evaluation.drift_monitor import DriftMonitor

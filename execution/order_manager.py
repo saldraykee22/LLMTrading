@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -38,43 +39,116 @@ class TradeOrder:
     is_dca_tranche: bool = False  # Bu bir DCA kademesi mi?
     tranche_number: int = 0  # Kaçıncı kademe?
 
-    def validate(self) -> tuple[bool, str]:
-        """Emrin geçerliliğini kontrol eder."""
+    def validate(self, current_price: float | None = None) -> tuple[bool, str]:
+        """
+        Emrin geçerliliğini kontrol eder.
+        
+        Args:
+            current_price: Market emirler için güncel fiyat (SL/TP validation için)
+        
+        Returns:
+            (valid, message) tuple
+        """
+        from config.constants import MIN_PRICE, MIN_AMOUNT, MAX_PRICE, MAX_AMOUNT
+        
+        # Symbol validation
+        if not self.symbol or not isinstance(self.symbol, str):
+            return False, f"Geçersiz sembol: {self.symbol}"
+        if len(self.symbol) > 50:
+            return False, f"Sembol çok uzun (max 50): {self.symbol[:20]}..."
+        
+        # Action validation
         if self.action not in ("buy", "sell"):
             return False, f"Geçersiz aksiyon: {self.action}"
+        
+        # Amount validation
+        if not isinstance(self.amount, (int, float)):
+            return False, f"amount sayısal olmalı: {self.amount}"
         if self.amount <= 0:
             return False, f"Geçersiz miktar: {self.amount}"
-        if self.order_type == "limit" and (self.price is None or self.price <= 0):
-            return False, "Limit emri için fiyat gerekli"
+        if self.amount < MIN_AMOUNT:
+            return False, f"Miktar çok küçük (min {MIN_AMOUNT}): {self.amount}"
+        if self.amount > MAX_AMOUNT:
+            return False, f"Miktar çok büyük (max {MAX_AMOUNT}): {self.amount}"
+        
+        # Order type validation
+        if self.order_type not in ("market", "limit"):
+            return False, f"Geçersiz emir tipi: {self.order_type}"
+        
+        # Limit order price validation
+        if self.order_type == "limit":
+            if self.price is None:
+                return False, "Limit emri için fiyat gerekli"
+            if not isinstance(self.price, (int, float)):
+                return False, f"price sayısal olmalı: {self.price}"
+            if self.price <= 0:
+                return False, f"price pozitif olmalı: {self.price}"
+            if self.price < MIN_PRICE or self.price > MAX_PRICE:
+                return False, f"price limit dışı ({MIN_PRICE}-{MAX_PRICE}): {self.price}"
         
         # SL/TP Mantık Kontrolü
-        ref_price = self.price if self.order_type == "limit" else self.stop_loss
-        # Limit emri değilse ve market ise, SL ve TP yine de mantıklı olmalı (entry_price genelde reel fiyattır)
+        # Market emirlerde current_price kullan, limit emirlerde self.price
+        ref_price = self.price if self.order_type == "limit" else current_price
         
         if self.action == "buy":
-            if self.stop_loss > 0 and self.price and self.stop_loss >= self.price:
-                return False, f"Alış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({self.price}) küçük olmalı"
-            if self.take_profit > 0 and self.price and self.take_profit <= self.price:
-                return False, f"Alış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({self.price}) büyük olmalı"
+            if self.stop_loss > 0 and ref_price is not None and ref_price > 0:
+                if self.stop_loss >= ref_price:
+                    return False, f"Alış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({ref_price}) KÜÇÜK olmalı"
+            if self.take_profit > 0 and ref_price is not None and ref_price > 0:
+                if self.take_profit <= ref_price:
+                    return False, f"Alış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({ref_price}) büyük olmalı"
         
         elif self.action == "sell":
             # Satış (Short) bu sistemde şimdilik desteklenmiyor (SPOT focus)
-            # Ancak yine de mantığı kuralım
-            if self.stop_loss > 0 and self.price and self.stop_loss <= self.price:
-                return False, f"Satış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({self.price}) büyük olmalı"
-            if self.take_profit > 0 and self.price and self.take_profit >= self.price:
-                return False, f"Satış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({self.price}) küçük olmalı"
+            if self.stop_loss > 0 and ref_price is not None and ref_price > 0:
+                if self.stop_loss <= ref_price:
+                    return False, f"Satış emrinde Stop-Loss ({self.stop_loss}) giriş fiyatından ({ref_price}) büyük olmalı"
+            if self.take_profit > 0 and ref_price is not None and ref_price > 0:
+                if self.take_profit >= ref_price:
+                    return False, f"Satış emrinde Take-Profit ({self.take_profit}) giriş fiyatından ({ref_price}) küçük olmalı"
 
+        # Stop-loss zorunluluğu (buy emirleri için)
         if self.stop_loss <= 0 and self.action == "buy":
             return False, "Alış emri için Stop-Loss tanımlı değil"
+        
+        # Confidence validation (0-1 arası)
+        if not isinstance(self.confidence, (int, float)):
+            return False, f"confidence sayısal olmalı: {self.confidence}"
+        if self.confidence < 0 or self.confidence > 1:
+            return False, f"confidence 0-1 arası olmalı: {self.confidence}"
+        
+        # DCA execution_size_pct validation (0-1 arası)
+        if not isinstance(self.execution_size_pct, (int, float)):
+            return False, f"execution_size_pct sayısal olmalı: {self.execution_size_pct}"
+        if self.execution_size_pct < 0 or self.execution_size_pct > 1:
+            return False, f"execution_size_pct 0-1 arası olmalı: {self.execution_size_pct}"
             
         return True, "OK"
+
+
+class OrderManager:
+    """Emirlerin yönetimi ve tagging mantığını kapsüller."""
+
+    def __init__(self, order_prefix: str = "llm_") -> None:
+        self.order_prefix = order_prefix
+        self._lock = threading.RLock()
+        self._active_orders: dict[str, Any] = {}
+
+    def get_client_order_id(self, symbol: str) -> str:
+        """Yeni bir unique client_order_id üretir (prefix ile)."""
+        ts = int(time.time() * 1000)
+        return f"{self.order_prefix}{symbol}_{ts}"
+
+    def is_llm_order(self, client_order_id: str) -> bool:
+        """Emrin bu bot tarafından verilip verilmediğini kontrol eder."""
+        return client_order_id.startswith(self.order_prefix)
 
 
 def parse_trade_decision(
     decision: dict[str, Any],
     current_price: float = 0.0,
     atr_value: float = 0.0,
+    approved_size: float = 0.0,
 ) -> TradeOrder | None:
     """
     LLM trader kararını TradeOrder'a dönüştürür.
@@ -113,7 +187,7 @@ def parse_trade_decision(
         take_profit = 0.0
 
     try:
-        entry_price = float(decision.get("entry_price", 0)) or None
+        entry_price = float(decision.get("entry_price", 0))
     except (ValueError, TypeError):
         entry_price = None
 
@@ -155,6 +229,15 @@ def parse_trade_decision(
             amount, execution_size_pct, actual_amount, target_size
         )
 
+    # Risk onaylı boyut sınırlandırması
+    if approved_size > 0 and actual_amount > approved_size:
+        logger.warning(
+            "Order amount (%.2f) exceeds approved size (%.2f) — capping",
+            actual_amount,
+            approved_size,
+        )
+        actual_amount = approved_size
+
     order = TradeOrder(
         symbol=decision.get("symbol", ""),
         action=action,
@@ -173,7 +256,8 @@ def parse_trade_decision(
         tranche_number=1 if execution_size_pct < 1.0 else 0,
     )
 
-    valid, msg = order.validate()
+    # Market emirlerde current_price ile validate et (SL/TP kontrolü için)
+    valid, msg = order.validate(current_price=current_price if order.order_type == "market" else None)
     if not valid:
         logger.warning("Geçersiz emir: %s", msg)
         return None

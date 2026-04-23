@@ -7,9 +7,89 @@ Dinamik olarak üretilen kuralları ajan prompt'larına enjekte eder.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
+from config.constants import MAX_DYNAMIC_RULES_LENGTH
+
 logger = logging.getLogger(__name__)
+
+
+def sanitize_dynamic_rules(rules: str) -> str:
+    """
+    Dynamic rules'ü güvenlik için sanitize eder. Tüm ajanlar için kullanılır.
+
+    Security layers:
+    1. Max length enforcement
+    2. Unicode normalization (bypass prevention)
+    3. Template injection blocking (nested patterns dahil)
+    4. Code injection blocking
+    5. HTML/JS injection blocking
+    6. Path traversal blocking
+    7. SQL injection blocking
+    8. Base64 encoded payload detection
+    9. Null byte injection
+    10. Control characters
+    """
+    if not rules:
+        return ""
+
+    # 1. Max length enforcement
+    sanitized = rules[:MAX_DYNAMIC_RULES_LENGTH]
+
+    # 2. Unicode normalization (NFKC)
+    import unicodedata
+    sanitized = unicodedata.normalize('NFKC', sanitized)
+
+    # 3. Template injection blocking
+    sanitized = re.sub(r'\{\{.*?\}\}', '[BLOCKED_TEMPLATE]', sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r'\{%.*?%\}', '[BLOCKED_JINJA]', sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r'\{#.*?#\}', '[BLOCKED_COMMENT]', sanitized, flags=re.DOTALL)
+    sanitized = re.sub(r'\{+', '[BLOCKED]', sanitized)
+    sanitized = re.sub(r'\}+', '[BLOCKED]', sanitized)
+
+    # 4. Code injection blocking
+    sanitized = re.sub(r'`[^`]*`', '[BLOCKED_CODE]', sanitized)
+    dangerous_funcs = [
+        r'\beval\s*\(', r'\bexec\s*\(', r'\b__import__\s*\(',
+        r'\bcompile\s*\(', r'\bgetattr\s*\(', r'\bsetattr\s*\(',
+        r'\bdelattr\s*\(', r'\bvars\s*\(', r'\bdir\s*\(',
+        r'\bopen\s*\(', r'\bfile\s*\(', r'\bos\.', r'\bsys\.',
+        r'\bsubprocess\.', r'\bshutil\.', r'\bimportlib\.',
+    ]
+    for pattern in dangerous_funcs:
+        sanitized = re.sub(pattern, '[BLOCKED_FUNC]', sanitized, flags=re.IGNORECASE)
+
+    # 5. HTML/JS injection blocking
+    sanitized = re.sub(r'<script[^>]*>.*?</script>', '[BLOCKED_SCRIPT]', sanitized, flags=re.IGNORECASE | re.DOTALL)
+    sanitized = re.sub(r'<[^>]+>', '[BLOCKED_HTML]', sanitized)
+    sanitized = re.sub(r'\bon\w+\s*=', '[BLOCKED_EVENT]', sanitized, flags=re.IGNORECASE)
+
+    # 6. Path traversal blocking
+    sanitized = re.sub(r'\.\./', '[BLOCKED_PATH]', sanitized)
+    sanitized = re.sub(r'\.\.\\', '[BLOCKED_PATH]', sanitized)
+
+    # 7. SQL injection blocking
+    sanitized = re.sub(r'--', '[BLOCKED]', sanitized)
+    sanitized = re.sub(r'/\*.*?\*/', '[BLOCKED]', sanitized, flags=re.DOTALL)
+
+    # 8. Base64 encoded payload detection
+    base64_pattern = r'[A-Za-z0-9+/]{200,}={0,2}'
+    sanitized = re.sub(base64_pattern, '[BLOCKED_BASE64]', sanitized)
+
+    # 9. Null byte injection
+    sanitized = sanitized.replace('\x00', '')
+
+    # 10. Control characters (except \n, \t)
+    sanitized = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', sanitized)
+
+    if len(sanitized) < len(rules) * 0.8:
+        logger.warning(
+            "Dynamic rules heavy sanitization: %d → %d chars (%.1f%% removed)",
+            len(rules), len(sanitized), (1 - len(sanitized)/len(rules)) * 100
+        )
+
+    return sanitized.strip()
 
 
 def validate_dynamic_rules(rules: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -179,23 +259,25 @@ def get_dynamic_rules_context() -> str:
 
 def inject_dynamic_rules_into_prompt(prompt: str, agent_name: str = "Trader") -> str:
     """
-    Dinamik kuralları prompt'a enjekte et.
-    
+    Dinamik kuralları prompt'a enjekte et. Tüm ajanlar için sanitization uygulanır.
+
     Args:
         prompt: Orijinal prompt
         agent_name: Ajan adı (Trader, RiskManager, vb.)
-    
+
     Returns:
-        Güncellenmiş prompt
+        Güncellenmiş prompt (sanitize edilmiş kurallar ile)
     """
     rules_context = get_dynamic_rules_context()
-    
+
     if not rules_context:
-        # Kurallar yoksa orijinal prompt'u döndür
         return prompt
-    
-    # Prompt'un sonuna ekle
-    return f"{prompt}\n\n{rules_context}"
+
+    # Security: Sanitize rules for ALL agents (not just trader)
+    sanitized_rules = sanitize_dynamic_rules(rules_context)
+    logger.debug("Dynamic rules sanitized for %s: %d chars (original: %d)", agent_name, len(sanitized_rules), len(rules_context))
+
+    return f"{prompt}\n\n{sanitized_rules}"
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from agents.state import TradingState
 from config.settings import get_trading_params
 from models.sentiment_analyzer import create_agent_llm
+from risk.regime_filter import CryptoFearGreedFilter, RegimeFilter
 from utils.json_utils import extract_json
 from utils.llm_retry import invoke_with_retry
 
@@ -80,7 +81,8 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     else:
         checks_passed.append("Duyarlılık-teknik uyumu kabul edilebilir")
 
-    open_positions = portfolio.get("open_positions", 0)
+    # Type-safe portfolio value conversions (None/string koruması)
+    open_positions = int(portfolio.get("open_positions", 0) or 0)
     if open_positions >= params.risk.max_open_positions:
         critical_failed.append(
             f"Max pozisyon limiti aşıldı: {open_positions} >= {params.risk.max_open_positions}"
@@ -88,7 +90,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     else:
         checks_passed.append(f"Açık pozisyon sayısı uygun: {open_positions}")
 
-    current_dd = portfolio.get("current_drawdown", 0)
+    current_dd = float(portfolio.get("current_drawdown", 0) or 0)
     if current_dd >= params.risk.max_drawdown_pct:
         critical_failed.append(
             f"Drawdown limiti aşıldı: {current_dd:.2%} >= {params.risk.max_drawdown_pct:.2%}"
@@ -97,10 +99,9 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
         checks_passed.append(f"Drawdown limiti içinde: {current_dd:.2%}")
 
     # Rejim filtresi kontrolü
-    try:
-        from risk.regime_filter import RegimeFilter
-        vix_data = state.get("vix_data")
-        if vix_data is not None and not vix_data.empty:
+    vix_data = state.get("vix_data")
+    if vix_data is not None and hasattr(vix_data, 'empty') and not vix_data.empty:
+        try:
             regime_filter = RegimeFilter()
             regime = regime_filter.update(vix_data)
             if regime_filter.should_halt_trading():
@@ -109,14 +110,13 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
                 )
             else:
                 checks_passed.append(f"Piyasa rejimi uygun: {regime.value}")
-    except Exception as e:
-        warnings.append(f"Rejim filtresi hatası: {e}")
+        except Exception as e:
+            warnings.append(f"Rejim filtresi hatası: {e}")
 
     # Crypto Fear & Greed kontrolü
-    try:
-        from risk.regime_filter import CryptoFearGreedFilter
-        fear_greed_index = state.get("fear_greed_index")
-        if fear_greed_index is not None:
+    fear_greed_index = state.get("fear_greed_index")
+    if fear_greed_index is not None:
+        try:
             fg_filter = CryptoFearGreedFilter()
             classification = fg_filter.update(fear_greed_index)
             if fg_filter.should_reduce_exposure():
@@ -125,8 +125,8 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
                 )
             else:
                 checks_passed.append(f"Fear & Greed seviyesi normal: {classification}")
-    except Exception as e:
-        warnings.append(f"Fear & Greed filtresi hatası: {e}")
+        except Exception as e:
+            warnings.append(f"Fear & Greed filtresi hatası: {e}")
 
     try:
         drift_monitor = _get_drift_monitor()
@@ -142,8 +142,9 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     except Exception as e:
         warnings.append(f"Drift monitor hatası: {e}")
 
-    equity = portfolio.get("equity", 10000)
-    daily_pnl = portfolio.get("daily_pnl", 0)
+    # Type-safe equity ve daily_pnl conversions
+    equity = float(portfolio.get("equity", 10000) or 10000)
+    daily_pnl = float(portfolio.get("daily_pnl", 0) or 0)
     daily_loss = abs(min(daily_pnl, 0))
     if equity > 0 and daily_loss / equity >= params.risk.max_daily_loss_pct:
         critical_failed.append(
@@ -298,7 +299,10 @@ Deterministik kontrollerin tamamı geçti. KESİN KURALLAR'I dikkate al. approve
                 "warnings": warnings,
             },
         )
-        llm_assessment = extract_json(response.content)
+        if isinstance(response, dict):
+            llm_assessment = response
+        else:
+            llm_assessment = extract_json(response.content)
         if llm_assessment.get("__parse_error__"):
             logger.warning(
                 "Risk LLM JSON parse hatası: %s",

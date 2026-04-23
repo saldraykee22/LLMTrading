@@ -15,6 +15,8 @@ from typing import Literal
 import ccxt
 import numpy as np
 import pandas as pd
+import threading
+import time
 import yfinance as yf
 
 from config.settings import get_settings, get_trading_params
@@ -24,58 +26,67 @@ logger = logging.getLogger(__name__)
 
 
 class MarketDataClient:
-    """Birleşik piyasa verisi istemcisi."""
+    """Birleşik piyasa verisi istemcisi (thread-safe)."""
 
     def __init__(self) -> None:
         self._settings = get_settings()
         self._params = get_trading_params()
         self._exchange_private: ccxt.Exchange | None = None
         self._exchange_public: ccxt.Exchange | None = None
+        # Thread-safety için lock'lar
+        self._exchange_private_lock = threading.RLock()
+        self._exchange_public_lock = threading.RLock()
+        # Ticker cache
+        self._tickers_cache: dict | None = None
+        self._tickers_cache_time: float = 0.0
+        self._tickers_cache_ttl: float = 30.0
 
     # ── Binance CCXT Bağlantısı ────────────────────────────
     def _get_private_exchange(self) -> ccxt.Exchange:
-        """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar)."""
-        if self._exchange_private is None:
-            config: dict = {
-                "apiKey": self._settings.binance_api_key,
-                "secret": self._settings.binance_api_secret,
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            }
-            if self._settings.binance_testnet:
-                config["sandbox"] = True
-            safe_config = {
-                **config,
-                "apiKey": "***" if config.get("apiKey") else "",
-                "secret": "***" if config.get("secret") else "",
-            }
+        """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar). Thread-safe."""
+        with self._exchange_private_lock:
+            if self._exchange_private is None:
+                config: dict = {
+                    "apiKey": self._settings.binance_api_key,
+                    "secret": self._settings.binance_api_secret,
+                    "enableRateLimit": True,
+                    "options": {"defaultType": "spot"},
+                }
+                if self._settings.binance_testnet:
+                    config["sandbox"] = True
+                safe_config = {
+                    **config,
+                    "apiKey": "***" if config.get("apiKey") else "",
+                    "secret": "***" if config.get("secret") else "",
+                }
 
-            try:
-                self._exchange_private = ccxt.binance(config)
-            except Exception as e:
-                logger.error(
-                    "Binance private connection failed: %s (config=%s)",
-                    str(e),
-                    safe_config,
+                try:
+                    self._exchange_private = ccxt.binance(config)
+                except Exception as e:
+                    logger.error(
+                        "Binance private connection failed: %s (config=%s)",
+                        str(e),
+                        safe_config,
+                    )
+                    raise
+                logger.info(
+                    "Binance private connection established (testnet=%s)",
+                    self._settings.binance_testnet,
                 )
-                raise
-            logger.info(
-                "Binance private connection established (testnet=%s)",
-                self._settings.binance_testnet,
-            )
-        return self._exchange_private
+            return self._exchange_private
 
     def _get_public_exchange(self) -> ccxt.Exchange:
-        """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet)."""
-        if self._exchange_public is None:
-            config: dict = {
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            }
-            # Public data için API key gerekmez, sandbox zorunluluğu yok
-            self._exchange_public = ccxt.binance(config)
-            logger.info("Binance public connection established (Mainnet)")
-        return self._exchange_public
+        """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet). Thread-safe."""
+        with self._exchange_public_lock:
+            if self._exchange_public is None:
+                config: dict = {
+                    "enableRateLimit": True,
+                    "options": {"defaultType": "spot"},
+                }
+                # Public data için API key gerekmez, sandbox zorunluluğu yok
+                self._exchange_public = ccxt.binance(config)
+                logger.info("Binance public connection established (Mainnet)")
+            return self._exchange_public
 
     # ── Kripto OHLCV ───────────────────────────────────────
     def fetch_crypto_ohlcv(
@@ -143,13 +154,18 @@ class MarketDataClient:
         df = df.sort_values("datetime").reset_index(drop=True)
         df = df.drop_duplicates(subset=["datetime"])
 
-        logger.info(
-            "Kripto OHLCV: %s - %d mum (%s -> %s)",
-            resolved.symbol,
-            len(df),
-            df["datetime"].iloc[0].strftime("%Y-%m-%d"),
-            df["datetime"].iloc[-1].strftime("%Y-%m-%d"),
-        )
+        # Empty DataFrame check before accessing .iloc[]
+        if not df.empty:
+            logger.info(
+                "Kripto OHLCV: %s - %d mum (%s -> %s)",
+                resolved.symbol,
+                len(df),
+                df["datetime"].iloc[0].strftime("%Y-%m-%d"),
+                df["datetime"].iloc[-1].strftime("%Y-%m-%d"),
+            )
+        else:
+            logger.warning("Kripto OHLCV: %s - Veri bulunamadı", resolved.symbol)
+        
         return df
 
     # ── Hisse Senedi OHLCV (yfinance) ─────────────────────
@@ -190,7 +206,10 @@ class MarketDataClient:
             period = "max"
 
         try:
-            ticker = yf.Ticker(resolved.symbol)
+            import requests
+            session = requests.Session()
+            session.request = lambda method, url, **kwargs: requests.Session.request(session, method, url, timeout=15.0, **kwargs)
+            ticker = yf.Ticker(resolved.symbol, session=session)
             df = ticker.history(period=period, interval=interval)
         except Exception as e:
             logger.error("yfinance hatası (%s): %s", resolved.symbol, e)
@@ -216,13 +235,18 @@ class MarketDataClient:
         df = df[[c for c in keep if c in df.columns]]
         df = df.sort_values("datetime").reset_index(drop=True)
 
-        logger.info(
-            "Hisse OHLCV: %s - %d mum (%s -> %s)",
-            resolved.symbol,
-            len(df),
-            str(df["datetime"].iloc[0])[:10],
-            str(df["datetime"].iloc[-1])[:10],
-        )
+        # Double-check empty before logging
+        if not df.empty:
+            logger.info(
+                "Hisse OHLCV: %s - %d mum (%s -> %s)",
+                resolved.symbol,
+                len(df),
+                str(df["datetime"].iloc[0])[:10],
+                str(df["datetime"].iloc[-1])[:10],
+            )
+        else:
+            logger.warning("Hisse OHLCV: %s - Veri bulunamadı (after processing)", resolved.symbol)
+        
         return df
 
     # ── Birleşik Arayüz ───────────────────────────────────
@@ -255,14 +279,20 @@ class MarketDataClient:
             return self.fetch_stock_ohlcv(symbol, interval, days)
 
     def fetch_tickers(self) -> dict:
-        """Binance'deki tüm ticker verilerini (fiyat, hacim, değişim) çeker."""
+        """Binance'deki tüm ticker verilerini (fiyat, hacim, değişim) çeker. Thread-safe."""
         exchange = self._get_public_exchange()
-        try:
-            tickers = exchange.fetch_tickers()
-            return tickers
-        except ccxt.BaseError as e:
-            logger.error("Ticker verisi çekme hatası: %s", e)
-            return {}
+        with self._exchange_public_lock:
+            # Cache kontrolü (30s TTL)
+            if self._tickers_cache is not None and (time.time() - self._tickers_cache_time) < self._tickers_cache_ttl:
+                return self._tickers_cache
+            try:
+                tickers = exchange.fetch_tickers()
+                self._tickers_cache = tickers
+                self._tickers_cache_time = time.time()
+                return tickers
+            except ccxt.BaseError as e:
+                logger.error("Ticker verisi çekme hatası: %s", e)
+                return {}
 
     # ── VIX Verisi ─────────────────────────────────────────
     def fetch_vix(self, days: int = 90) -> pd.DataFrame:
@@ -300,8 +330,8 @@ class MarketDataClient:
         else:
             try:
                 t = yf.Ticker(resolved.symbol)
-                info = t.fast_info
-                return float(info.get("lastPrice", 0))
+                info = t.info
+                return float(info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose", 0))
             except Exception as e:
                 logger.error("Fiyat hatası (%s): %s", resolved.symbol, e)
                 return None
@@ -311,16 +341,128 @@ class MarketDataClient:
         timeframe: str | None = None,
         days: int | None = None,
     ) -> pd.DataFrame:
-        """Async versiyon - aynı veri kaynağını kullanır."""
+        """
+        Async versiyon - thread-safe exchange instance kullanır.
+        
+        Her async call için yeni exchange instance oluşturur,
+        böylece concurrent call'larda thread-safety sağlanır.
+        """
         import asyncio
-        return await asyncio.to_thread(self.fetch_ohlcv, symbol, timeframe, days)
+        import ccxt
+        
+        # Thread-safe: Her async call için yeni public exchange instance
+        def _fetch_with_new_exchange():
+            temp_exchange = ccxt.binance({
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            })
+            try:
+                temp_exchange.load_markets()
+                resolved = resolve_symbol(symbol)
+                tf = timeframe or self._params.data.default_timeframe
+                d = days or self._params.data.history_days
+                since_ms = int(
+                    (datetime.now(timezone.utc) - timedelta(days=d)).timestamp() * 1000
+                )
+                
+                all_ohlcv = []
+                fetch_since = since_ms
+                
+                while True:
+                    batch = temp_exchange.fetch_ohlcv(
+                        resolved.symbol,
+                        timeframe=tf,
+                        since=fetch_since,
+                        limit=1000,
+                    )
+                    if not batch:
+                        break
+                    all_ohlcv.extend(batch)
+                    fetch_since = batch[-1][0] + 1
+                    if len(batch) < 1000:
+                        break
+                
+                if not all_ohlcv:
+                    return pd.DataFrame(
+                        columns=["datetime", "open", "high", "low", "close", "volume"]
+                    )
+                
+                df = pd.DataFrame(all_ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+                df = df.drop(columns=["timestamp"]).sort_values("datetime").reset_index(drop=True)
+                return df
+            finally:
+                try:
+                    temp_exchange.close()
+                except Exception as close_err:
+                    logger.debug("Exchange close error (async): %s", close_err)
+        
+        return await asyncio.to_thread(_fetch_with_new_exchange)
 
     async def fetch_balance_async(self) -> dict:
-        """Async versiyon - Binance bakiyesi."""
+        """
+        Async versiyon - thread-safe exchange instance kullanır.
+        
+        Her async call için yeni private exchange instance oluşturur.
+        """
         import asyncio
-        return await asyncio.to_thread(self.fetch_balance)
+        import ccxt
+        
+        def _fetch_with_new_exchange():
+            config = {
+                "apiKey": self._settings.binance_api_key,
+                "secret": self._settings.binance_api_secret,
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            }
+            if self._settings.binance_testnet:
+                config["sandbox"] = True
+            
+            temp_exchange = ccxt.binance(config)
+            try:
+                temp_exchange.load_markets()
+                balance = temp_exchange.fetch_balance()
+                return {
+                    "total": {
+                        k: v for k, v in balance.get("total", {}).items() 
+                        if v and float(v) > 0
+                    },
+                    "free": balance.get("free", {}),
+                }
+            finally:
+                try:
+                    temp_exchange.close()
+                except Exception as close_err:
+                    logger.debug("Exchange close error (async balance): %s", close_err)
+        
+        return await asyncio.to_thread(_fetch_with_new_exchange)
 
     async def fetch_current_price_async(self, symbol: str) -> float | None:
-        """Async versiyon - güncel fiyat."""
+        """
+        Async versiyon - thread-safe exchange instance kullanır.
+        
+        Her async call için yeni public exchange instance oluşturur.
+        """
         import asyncio
-        return await asyncio.to_thread(self.fetch_current_price, symbol)
+        import ccxt
+        
+        def _fetch_with_new_exchange():
+            resolved = resolve_symbol(symbol)
+            temp_exchange = ccxt.binance({
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            })
+            try:
+                temp_exchange.load_markets()
+                ticker = temp_exchange.fetch_ticker(resolved.symbol)
+                return float(ticker.get("last", 0))
+            except ccxt.BaseError as e:
+                logger.error("Fiyat hatasi (%s): %s", resolved.symbol, e)
+                return None
+            finally:
+                try:
+                    temp_exchange.close()
+                except Exception as close_err:
+                    logger.debug("Exchange close error (async price): %s", close_err)
+        
+        return await asyncio.to_thread(_fetch_with_new_exchange)

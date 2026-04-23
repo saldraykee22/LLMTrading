@@ -15,6 +15,10 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+
 # Proje kokunu path'e ekle
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -35,7 +39,7 @@ def print_bolum(bolum_adi: str) -> None:
 
 
 def cmd_saglik(args) -> int:
-    """Saglik kontrolu."""
+    """Sistem saglik kontrolu."""
     from scripts.health_check import main as saglik_ana
     return saglik_ana()
 
@@ -62,6 +66,9 @@ def cmd_calistir(args) -> int:
     
     if args.maks_dongu:
         cmd.extend(["--max-cycles", str(args.maks_dongu)])
+    
+    if args.model:
+        cmd.extend(["--model", args.model])
     
     try:
         subprocess.run(cmd, check=True)
@@ -238,196 +245,8 @@ def cmd_tarama(args) -> int:
     return 0
 
 
-def cmd_fallbacklar(limit: int = 10) -> int:
-    """Son fallback kayıtlarını göster."""
-    from rich.console import Console
-    from rich.table import Table
-    
-    console = Console()
-    
-    from data.fallback_store import get_fallback_store
-    store = get_fallback_store()
-    fallbacks = store.get_fallbacks(limit=limit)
-    summary = store.get_fallback_summary(hours=24)
-    
-    if not fallbacks:
-        console.print("[yellow]Fallback kaydı bulunamadı[/]")
-        return 0
-    
-    # Summary
-    console.print(f"\n[bold cyan]Fallback Özeti (Son 24s)[/]")
-    console.print(f"  Toplam: {summary['total_fallbacks']}")
-    if summary.get('by_agent'):
-        console.print(f"  Ajanlara göre:")
-        for agent, count in summary['by_agent'].items():
-            console.print(f"    - {agent}: {count}")
-    
-    # Table
-    table = Table(title="Fallback Audit Log", show_lines=True)
-    table.add_column("Zaman", style="cyan", width=10)
-    table.add_column("Ajan", style="magenta", width=15)
-    table.add_column("Neden", style="yellow", width=40)
-    table.add_column("Sembol", style="green", width=12)
-    
-    for fb in fallbacks:
-        zaman = datetime.fromisoformat(fb['timestamp']).strftime('%H:%M:%S')
-        ajan = fb['agent']
-        neden = fb['reason'][:40]
-        sembol = fb.get('symbol', '-')
-        table.add_row(zaman, ajan, neden, sembol)
-    
-    console.print(table)
-    return 0
-
-
-def cmd_circuit_breaker() -> int:
-    """Circuit breaker durumunu göster."""
-    from rich.console import Console
-    from rich.panel import Panel
-    
-    console = Console()
-    
-    from risk.circuit_breaker import CircuitBreaker
-    cb = CircuitBreaker()
-    status = cb.get_status()
-    
-    console.print(f"\n[bold]Circuit Breaker Durumu[/]")
-    
-    if status['halted']:
-        console.print(f"  Durum: [bold red]DURDURULDU[/]")
-        console.print(f"  Neden: [red]{status['halt_reason']}[/]")
-    else:
-        console.print(f"  Durum: [bold green]AKTİF[/]")
-    
-    console.print(f"\n  Sayaçlar:")
-    
-    # Fallbacks
-    fb_count = status['consecutive_fallbacks']
-    fb_max = 5
-    fb_pct = (fb_count / fb_max) * 100
-    fb_color = "red" if fb_count >= 4 else "yellow" if fb_count >= 2 else "green"
-    fb_bar = '#' * int(fb_pct/10) + '-' * (10 - int(fb_pct/10))
-    console.print(f"    Fallbacklar:  [{fb_color}]{fb_count}/{fb_max}[/{fb_color}] [{fb_bar}]")
-    
-    # LLM Errors
-    llm_count = status['consecutive_llm_errors']
-    llm_max = 10
-    llm_pct = (llm_count / llm_max) * 100
-    llm_color = "red" if llm_count >= 8 else "yellow" if llm_count >= 4 else "green"
-    llm_bar = '#' * int(llm_pct/10) + '-' * (10 - int(llm_pct/10))
-    console.print(f"    LLM Hatalari: [{llm_color}]{llm_count}/{llm_max}[/{llm_color}] [{llm_bar}]")
-    
-    # Losses
-    loss_count = status['consecutive_losses']
-    loss_max = 5
-    loss_pct = (loss_count / loss_max) * 100
-    loss_color = "red" if loss_count >= 4 else "yellow" if loss_count >= 2 else "green"
-    loss_bar = '#' * int(loss_pct/10) + '-' * (10 - int(loss_pct/10))
-    console.print(f"    Kayiplar:     [{loss_color}]{loss_count}/{loss_max}[/{loss_color}] [{loss_bar}]")
-    
-    console.print()
-    return 0
-
-
-def cmd_circuit_breaker_reset() -> int:
-    """Circuit breaker sayaçlarını sıfırla."""
-    from rich.console import Console
-    from rich.prompt import Confirm
-    
-    console = Console()
-    
-    if not Confirm.ask("[yellow]Tüm circuit breaker sayaçları sıfırlansın mı?[/]"):
-        return 0
-    
-    from risk.circuit_breaker import CircuitBreaker
-    cb = CircuitBreaker()
-    cb.reset_fallbacks()
-    cb.reset_llm_errors()
-    cb.consecutive_losses = 0
-    cb._save_state()
-    
-    console.print("[green]✓ Circuit breaker sayaçları sıfırlandı[/]")
-    return 0
-
-
-def cmd_hesaplar() -> int:
-    """Tüm hesapların durumunu göster."""
-    from rich.console import Console
-    from rich.table import Table
-    
-    console = Console()
-    
-    from config.settings import get_settings
-    from execution.account_manager import MultiAccountManager
-    
-    settings = get_settings()
-    
-    if not settings.binance_accounts:
-        console.print("[yellow]Multi-account yapılandırması bulunamadı[/]")
-        return 0
-    
-    try:
-        manager = MultiAccountManager(settings.binance_accounts)
-        summary = manager.get_status_summary()
-        
-        console.print(f"\n[bold cyan]Hesap Durumu[/]")
-        console.print(f"  Toplam Hesap: {summary['total_accounts']}")
-        console.print(f"  Aktif Hesap:  {summary['active_accounts']}\n")
-        
-        # Table
-        table = Table(title="Hesaplar", show_lines=True)
-        table.add_column("Ad", style="cyan", width=15)
-        table.add_column("Durum", style="magenta", width=10)
-        table.add_column("Equity", style="green", width=15)
-        table.add_column("Cash", style="blue", width=15)
-        table.add_column("Pozisyon", style="yellow", width=10)
-        table.add_column("Hata", style="red", width=20)
-        
-        for name, data in summary['accounts'].items():
-            durum = "[green]Aktif[/]" if data['is_active'] else "[red]Pasif[/]"
-            equity = f"${data['equity']:,.2f}"
-            cash = f"${data['cash']:,.2f}"
-            pozisyon = str(data['open_positions'])
-            hata = data['last_error'][:20] if data['last_error'] else "-"
-            table.add_row(name, durum, equity, cash, pozisyon, hata)
-        
-        console.print(table)
-        
-        # Combined view
-        if summary['total_accounts'] > 1:
-            total_equity = sum(acc['equity'] for acc in summary['accounts'].values())
-            total_cash = sum(acc['cash'] for acc in summary['accounts'].values())
-            total_positions = sum(acc['open_positions'] for acc in summary['accounts'].values())
-            
-            console.print(f"\n[bold]★ Kombin Görünüm (Tüm Hesaplar)[/]")
-            console.print(f"  Toplam Equity:  [green]${total_equity:,.2f}[/]")
-            console.print(f"  Toplam Cash:    [blue]${total_cash:,.2f}[/]")
-            console.print(f"  Toplam Pozisyon: {total_positions}\n")
-        
-    except Exception as e:
-        console.print(f"[red]Hata: {e}[/]")
-    return 0
-
-
-def cmd_dashboard() -> int:
-    """Web dashboard URL'sini göster."""
-    from rich.console import Console
-    
-    console = Console()
-    
-    console.print(f"\n[bold cyan]Web Dashboard[/]")
-    console.print(f"  URL: [link=http://localhost:8000]http://localhost:8000[/]")
-    console.print(f"  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
-    console.print(f"\n  Başlatmak için: [cyan]python dashboard/server.py[/]\n")
-    return 0
-
-
 def cmd_durum(args) -> int:
     """Sistem durumu."""
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    
     console = Console()
     
     print_baslik("SISTEM DURUMU")
@@ -464,6 +283,180 @@ def cmd_durum(args) -> int:
     console.print(portfoy_tablo)
     print()
     
+    return 0
+
+
+def cmd_fallbacklar(args) -> int:
+    """Son fallback kayitlarini goster."""
+    console = Console()
+    
+    from data.fallback_store import get_fallback_store
+    store = get_fallback_store()
+    fallbacks = store.get_fallbacks(limit=args.limit)
+    summary = store.get_fallback_summary(hours=24)
+    
+    if not fallbacks:
+        console.print("[yellow]Fallback kaydi bulunamadi[/]")
+        return 0
+    
+    # Summary
+    console.print(f"\n[bold cyan]Fallback Ozeti (Son 24s)[/]")
+    console.print(f"  Toplam: {summary['total_fallbacks']}")
+    if summary.get('by_agent'):
+        console.print(f"  Ajanlara gore:")
+        for agent, count in summary['by_agent'].items():
+            console.print(f"    - {agent}: {count}")
+    
+    # Table
+    table = Table(title="Fallback Audit Log", show_lines=True)
+    table.add_column("Zaman", style="cyan", width=10)
+    table.add_column("Ajan", style="magenta", width=15)
+    table.add_column("Neden", style="yellow", width=40)
+    table.add_column("Sembol", style="green", width=12)
+    
+    for fb in fallbacks:
+        zaman = datetime.fromisoformat(fb['timestamp']).strftime('%H:%M:%S')
+        ajan = fb['agent']
+        neden = fb['reason'][:40]
+        sembol = fb.get('symbol', '-')
+        table.add_row(zaman, ajan, neden, sembol)
+    
+    console.print(table)
+    return 0
+
+
+def cmd_circuit_breaker(args) -> int:
+    """Circuit breaker durumunu goster."""
+    console = Console()
+    
+    from risk.circuit_breaker import CircuitBreaker
+    cb = CircuitBreaker()
+    status = cb.get_status()
+    
+    console.print(f"\n[bold]Circuit Breaker Durumu[/]")
+    
+    if status['halted']:
+        console.print(f"  Durum: [bold red]DURDURULDU[/]")
+        console.print(f"  Neden: [red]{status['halt_reason']}[/]")
+    else:
+        console.print(f"  Durum: [bold green]AKTIF[/]")
+    
+    console.print(f"\n  Sayaclar:")
+    
+    params = get_trading_params()
+
+    # Fallbacks
+    fb_count = status['consecutive_fallbacks']
+    fb_max = params.system.max_consecutive_fallbacks
+    fb_pct = (fb_count / fb_max) * 100 if fb_max > 0 else 0
+    fb_color = "red" if fb_count >= fb_max - 1 else "yellow" if fb_count >= fb_max // 2 else "green"
+    fb_bar = '#' * int(fb_pct/10) + '-' * (10 - int(fb_pct/10))
+    console.print(f"    Fallbacklar:  [{fb_color}]{fb_count}/{fb_max}[/{fb_color}] [{fb_bar}]")
+
+    # LLM Errors
+    llm_count = status['consecutive_llm_errors']
+    llm_max = params.risk.max_consecutive_llm_errors
+    llm_pct = (llm_count / llm_max) * 100 if llm_max > 0 else 0
+    llm_color = "red" if llm_count >= llm_max - 2 else "yellow" if llm_count >= llm_max // 2 else "green"
+    llm_bar = '#' * int(llm_pct/10) + '-' * (10 - int(llm_pct/10))
+    console.print(f"    LLM Hatalari: [{llm_color}]{llm_count}/{llm_max}[/{llm_color}] [{llm_bar}]")
+
+    # Losses
+    loss_count = status['consecutive_losses']
+    loss_max = params.risk.max_consecutive_losses
+    loss_pct = (loss_count / loss_max) * 100 if loss_max > 0 else 0
+    loss_color = "red" if loss_count >= loss_max - 1 else "yellow" if loss_count >= loss_max // 2 else "green"
+    loss_bar = '#' * int(loss_pct/10) + '-' * (10 - int(loss_pct/10))
+    console.print(f"    Kayiplar:     [{loss_color}]{loss_count}/{loss_max}[/{loss_color}] [{loss_bar}]")
+    
+    console.print()
+    return 0
+
+
+def cmd_circuit_breaker_reset(args) -> int:
+    """Circuit breaker sayaclarini sifirla."""
+    console = Console()
+    from rich.prompt import Confirm
+    
+    if not Confirm.ask("[yellow]Tum circuit breaker sayaclari sifirlansin mi?[/]"):
+        return 0
+    
+    from risk.circuit_breaker import CircuitBreaker
+    cb = CircuitBreaker()
+    cb.reset_fallbacks()
+    cb.reset_llm_errors()
+    cb.consecutive_losses = 0
+    cb._save_state()
+    
+    console.print("[green]✓ Circuit breaker sayaclari sifirlandi[/]")
+    return 0
+
+
+def cmd_hesaplar(args) -> int:
+    """Tum hesaplarin durumunu goster."""
+    console = Console()
+    from rich.table import Table
+    
+    from config.settings import get_settings
+    from execution.account_manager import MultiAccountManager
+    
+    settings = get_settings()
+    
+    if not settings.binance_accounts:
+        console.print("[yellow]Multi-account yapilandirmasi bulunamadi[/]")
+        return 0
+    
+    try:
+        manager = MultiAccountManager(settings.binance_accounts)
+        summary = manager.get_status_summary()
+        
+        console.print(f"\n[bold cyan]Hesap Durumu[/]")
+        console.print(f"  Toplam Hesap: {summary['total_accounts']}")
+        console.print(f"  Aktif Hesap:  {summary['active_accounts']}\n")
+        
+        # Table
+        table = Table(title="Hesaplar", show_lines=True)
+        table.add_column("Ad", style="cyan", width=15)
+        table.add_column("Durum", style="magenta", width=10)
+        table.add_column("Equity", style="green", width=15)
+        table.add_column("Cash", style="blue", width=15)
+        table.add_column("Pozisyon", style="yellow", width=10)
+        table.add_column("Hata", style="red", width=20)
+        
+        for name, data in summary['accounts'].items():
+            durum = "[green]Aktif[/]" if data['is_active'] else "[red]Pasif[/]"
+            equity = f"${data['equity']:,.2f}"
+            cash = f"${data['cash']:,.2f}"
+            pozisyon = str(data['open_positions'])
+            hata = data['last_error'][:20] if data['last_error'] else "-"
+            table.add_row(name, durum, equity, cash, pozisyon, hata)
+        
+        console.print(table)
+        
+        # Combined view
+        if summary['total_accounts'] > 1:
+            total_equity = sum(acc['equity'] for acc in summary['accounts'].values())
+            total_cash = sum(acc['cash'] for acc in summary['accounts'].values())
+            total_positions = sum(acc['open_positions'] for acc in summary['accounts'].values())
+            
+            console.print(f"\n[bold]★ Kombin Gorunum (Tum Hesaplar)[/]")
+            console.print(f"  Toplam Equity:  [green]${total_equity:,.2f}[/]")
+            console.print(f"  Toplam Cash:    [blue]${total_cash:,.2f}[/]")
+            console.print(f"  Toplam Pozisyon: {total_positions}\n")
+        
+    except Exception as e:
+        console.print(f"[red]Hata: {e}[/]")
+    return 0
+
+
+def cmd_dashboard(args) -> int:
+    """Web dashboard URL'sini goster."""
+    console = Console()
+    
+    console.print(f"\n[bold cyan]Web Dashboard[/]")
+    console.print(f"  URL: [link=http://localhost:8000]http://localhost:8000[/]")
+    console.print(f"  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
+    console.print(f"\n  Baslatmak icin: [cyan]python dashboard/server.py[/]\n")
     return 0
 
 
@@ -534,23 +527,23 @@ Ornekler:
     # Fallback audit log
     fallbacklar_parser = alt_parserlar.add_parser("fallbacklar", help="Son fallback kayıtlarını göster")
     fallbacklar_parser.add_argument("--limit", "-l", type=int, default=10, help="Gösterilecek kayıt sayısı")
-    fallbacklar_parser.set_defaults(func=lambda args: cmd_fallbacklar(args.limit))
+    fallbacklar_parser.set_defaults(func=cmd_fallbacklar)
     
     # Circuit breaker durumu
     cb_parser = alt_parserlar.add_parser("circuit-breaker", help="Circuit breaker durumunu göster")
-    cb_parser.set_defaults(func=lambda args: cmd_circuit_breaker())
+    cb_parser.set_defaults(func=cmd_circuit_breaker)
     
     # Circuit breaker sıfırla
     cb_reset_parser = alt_parserlar.add_parser("circuit-breaker-sifirla", help="Circuit breaker sayaçlarını sıfırla")
-    cb_reset_parser.set_defaults(func=lambda args: cmd_circuit_breaker_reset())
+    cb_reset_parser.set_defaults(func=cmd_circuit_breaker_reset)
     
     # Hesaplar
     hesaplar_parser = alt_parserlar.add_parser("hesaplar", help="Tüm hesapların durumunu göster")
-    hesaplar_parser.set_defaults(func=lambda args: cmd_hesaplar())
+    hesaplar_parser.set_defaults(func=cmd_hesaplar)
     
     # Dashboard URL
     dashboard_parser = alt_parserlar.add_parser("dashboard", help="Web dashboard URL'sini göster")
-    dashboard_parser.set_defaults(func=lambda args: cmd_dashboard())
+    dashboard_parser.set_defaults(func=cmd_dashboard)
     
     args = parser.parse_args()
     

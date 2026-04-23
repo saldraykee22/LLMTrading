@@ -44,7 +44,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from config.settings import LLMProvider, TradingMode, get_settings, get_trading_params
+from config.settings import LLMProvider, TradingMode, get_settings, get_trading_params, LOGS_DIR
 from data.market_data import MarketDataClient
 from data.news_data import NewsClient
 from data.symbol_resolver import resolve_symbol
@@ -343,7 +343,10 @@ def run_pipeline(
             )
 
         order = parse_trade_decision(
-            trade_decision, current_price=current_price, atr_value=atr_value
+            trade_decision,
+            current_price=current_price,
+            atr_value=atr_value,
+            approved_size=risk.get("approved_size", 0.0) or 0.0,
         )
         if order:
             console.print("\n[bold red]⚡ Emir iletiliyor...[/bold red]")
@@ -356,31 +359,10 @@ def run_pipeline(
                 # Not: execute_trade zaten portföyü günceller
             else:
                 client = ExchangeClient()
+                client.set_portfolio(portfolio)
                 exec_result = client.execute_order(order, current_price=current_price)
                 console.print(f"  Sonuç: {exec_result}")
                 result["execution_result"] = exec_result
-
-                if exec_result.get("status") in ("filled", "closed", "open"):
-                    exec_price = float(exec_result.get("price") or current_price)
-                    exec_amount = float(exec_result.get("amount") or order.amount)
-
-                    existing_pos = next(
-                        (p for p in portfolio.positions if p.symbol == order.symbol), None
-                    )
-
-                    if order.action == "buy":
-                        if not existing_pos:
-                            portfolio.open_position(
-                                symbol=order.symbol,
-                                side="long",
-                                price=exec_price,
-                                amount=exec_amount,
-                                stop_loss=order.stop_loss,
-                                take_profit=order.take_profit,
-                            )
-                    elif order.action == "sell":
-                        if existing_pos:
-                            portfolio.close_position_safe(order.symbol, exec_price)
         else:
             console.print(
                 "[bold red]❌ Emir oluşturulamadı: Trade decision validasyon hatası[/bold red]"
@@ -518,8 +500,10 @@ def main() -> None:
         account_manager = MultiAccountManager(accounts)
         console.print(f"[green]✅ Multi-account mode: {len(accounts)} accounts[/green]")
 
-        for name, acc in accounts.items():
-            console.print(f"  [dim]└ {name}: {acc['api_key'][:8]}...[/dim]")
+        for acc in accounts:
+            name = acc.get("name", "Unknown")
+            api_key = acc.get("api_key", "")
+            console.print(f"  [dim]└ {name}: {api_key[:8]}...[/dim]")
 
         portfolio = None
         client = None
@@ -528,9 +512,6 @@ def main() -> None:
         if args.auto_scan and not symbols:
             console.print("[bold magenta]🔍 AUTO mode: Piyasa taraması başlatılıyor...[/bold magenta]")
             try:
-                from data.scanner import MarketScanner
-                from agents.lead_scout import LeadScout
-                
                 scanner = MarketScanner()
                 scout = LeadScout()
                 
@@ -550,7 +531,7 @@ def main() -> None:
                 console.print(f"[yellow]⚠️  AUTO scan hatası: {e}, BTC/USDT ile başlanıyor[/yellow]")
                 symbols = ["BTC/USDT"]
         # Single account mode (legacy)
-        logger.info("Single account mode")
+        logging.getLogger(__name__).info("Single account mode")
         portfolio = PortfolioState.load_from_file()
         client = ExchangeClient()
         client.set_portfolio(portfolio)
@@ -605,7 +586,6 @@ def main() -> None:
     # Paylaşılan nesneleri dışarıda başlat
     scanner = MarketScanner()
     scout = LeadScout()
-    portfolio_lock = threading.Lock()
     
     # Sync manager (her 10 cycle'da 1 çalışır)
     if account_manager:
@@ -614,6 +594,7 @@ def main() -> None:
         sync_manager = SyncManager(portfolio, client, reconcile_every_n_cycles=10)
 
     cycle = 0
+    last_rag_cleanup = time.time()
     try:
         while not stop_event.is_set():
             # SystemStatus kontrolü (event-driven)
@@ -651,7 +632,21 @@ def main() -> None:
             
             # Faz 3: Dinamik Tarayıcı (her N saatte bir)
             params = get_trading_params()
-            cash_ratio = portfolio.cash / portfolio.equity if portfolio.equity > 0 else 1.0
+            
+            if account_manager:
+                total_cash = sum(
+                    acc.get("portfolio", PortfolioState()).cash
+                    for acc in account_manager.get_all_accounts().values()
+                )
+                total_equity = sum(
+                    acc.get("portfolio", PortfolioState()).equity
+                    for acc in account_manager.get_all_accounts().values()
+                )
+                cash_ratio = total_cash / total_equity if total_equity > 0 else 1.0
+            elif portfolio and portfolio.equity > 0:
+                cash_ratio = portfolio.cash / portfolio.equity
+            else:
+                cash_ratio = 1.0
             
             if params.scanner.dynamic_scanner_enabled and scanner.should_scan(cycle, cash_ratio):
                 console.print("[bold magenta]🔍 Dinamik Tarayıcı: Hacim Spike'ı Aranıyor...[/bold magenta]")
@@ -712,32 +707,31 @@ def main() -> None:
                     return res
                 except Exception as e:
                     console.print(f"[bold red]❌ Pipeline Error ({sym}): {e}[/bold red]")
-                    # Circuit breaker'ı tetikle
-                    if circuit_breaker:
-                        circuit_breaker.record_llm_error()
+                    # Not: LLM hataları run_pipeline içinde zaten kaydediliyor.
+                    # Burada genel exception'ları LLM hatası olarak saymamak
+                    # için record_llm_error() çağrılmıyor.
                     return {"symbol": sym, "error": str(e)}
 
             if current_symbols:
                 configured_workers = max(1, get_trading_params().system.max_workers)
                 num_workers = min(len(current_symbols), configured_workers)
                 with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                    executor.map(task_wrapper, current_symbols)
+                    results = list(executor.map(task_wrapper, current_symbols))
+                    for res in results:
+                        if isinstance(res, dict) and res.get("error"):
+                            logger.error("Pipeline error for %s: %s", res.get("symbol"), res.get("error"))
 
             # Multi-account için tüm portföyleri kaydet
             if account_manager:
                 account_manager.save_all_portfolios()
             elif portfolio:
-                with portfolio_lock:
-                    portfolio.save_to_file()
+                portfolio.save_to_file()
 
             # Cycle sonu özet tablo (her cycle'da)
             from scripts.interactive_commands import cycle_end_prompt
             try:
                 # Özet tablo göster
                 if portfolio:
-                    from rich.table import Table
-                    from rich.panel import Panel
-                    
                     summary_table = Table(show_header=False, box=None, padding=(0, 2))
                     summary_table.add_column("Metrik", style="cyan", width=20)
                     summary_table.add_column("Değer", style="white")
@@ -758,7 +752,7 @@ def main() -> None:
                 if cmd_entered:
                     console.print("[dim]Cycle devam ediyor...[/dim]\n")
             except Exception as e:
-                pass  # Input hatası veya gösterim hatası, devam et
+                logging.getLogger(__name__).warning("Cycle end prompt error (non-critical): %s", e)
 
             # Exchange sync (her 10 cycle'da 1)
             if sync_manager.should_reconcile(cycle):
@@ -772,12 +766,13 @@ def main() -> None:
                 except Exception as e:
                     console.print(f"[yellow]Sync manager error: {e}[/yellow]")
 
-            # RAG hafıza temizliği (her 96 cycle'da bir)
-            if cycle % 96 == 0:
+            # RAG hafıza temizliği (her 24 saatte bir)
+            if time.time() - last_rag_cleanup >= 86400:
                 try:
                     from data.vector_store import AgentMemoryStore
-                    pruned = AgentMemoryStore().prune_entries_older_than(days=30)
+                    pruned = AgentMemoryStore.get_instance().prune_entries_older_than(days=30)
                     console.print(f"[dim]🧹 RAG Hafızası temizlendi: {pruned} eski kayıt silindi.[/dim]")
+                    last_rag_cleanup = time.time()
                 except Exception as e:
                     console.print(f"[yellow]RAG temizleme hatası: {e}[/yellow]")
 

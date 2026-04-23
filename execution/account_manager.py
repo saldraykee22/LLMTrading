@@ -312,6 +312,16 @@ class MultiAccountManager:
                             amount=exec_amount,
                             stop_loss=order.stop_loss,
                             take_profit=order.take_profit,
+                            target_size=order.target_size,
+                            target_size_usd=order.target_size * exec_price,
+                        )
+                    elif order.action == "buy" and order.is_dca_tranche:
+                        portfolio.add_dca_tranche(
+                            symbol=order.symbol,
+                            amount=exec_amount,
+                            price=exec_price,
+                            stop_loss=order.stop_loss,
+                            take_profit=order.take_profit,
                         )
                     elif order.action == "sell":
                         portfolio.close_position_safe(order.symbol, exec_price)

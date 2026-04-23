@@ -213,7 +213,7 @@ stop_loss:
   hard_stop_pct: 0.08
   trailing_enabled: true
 system:
-  circuit_breaker_state_ttl: 3600
+  circuit_breaker_state_ttl: 7200  # 2 saat (eski: 3600)
   cleanup_cycle_interval: 96
   llm_timeout_seconds: 60
   max_symbol_length: 50
@@ -225,7 +225,7 @@ system:
   # Fallback configuration
   max_consecutive_fallbacks: 5  # 5 fallback sonrası circuit breaker
   fallback_audit_enabled: true
-  fallback_audit_retention_days: 7
+  fallback_audit_retention_days: 14  # 2 hafta (eski: 7)
 watchdog:
   alert_5m_pct: 0.02
   check_interval_seconds: 15

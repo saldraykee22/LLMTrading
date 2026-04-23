@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -222,8 +222,17 @@ class FallbackStore:
                         except json.JSONDecodeError:
                             deleted_count += 1
 
-            # Atomik değiştirme
-            temp_file.replace(self._log_file)
+            # Atomic rename with retry
+            for attempt in range(3):
+                try:
+                    temp_file.replace(self._log_file)
+                    break
+                except (PermissionError, OSError) as e:
+                    if attempt == 2:
+                        logger.error("Fallback log temizleme başarısız: %s", e)
+                        return 0
+                    time.sleep(0.1 * (attempt + 1))
+            
             logger.info(
                 "Eski fallback logları temizlendi: %d silindi, %d kaydedildi",
                 deleted_count,
@@ -234,6 +243,13 @@ class FallbackStore:
         except Exception as e:
             logger.error("Fallback log temizleme hatası: %s", e)
             return 0
+        finally:
+            # Cleanup temp file if exists
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+            except Exception:
+                pass
 
 
 # Singleton instance
@@ -251,5 +267,3 @@ def get_fallback_store() -> FallbackStore:
     return _fallback_store_instance
 
 
-# Import için timedelta
-from datetime import timedelta

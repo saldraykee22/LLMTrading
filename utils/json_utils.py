@@ -48,6 +48,17 @@ def extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError as e:
             logger.debug("JSONDecodeError in brace parsing: %s", e)
 
+    # Fallback: json.JSONDecoder.raw_decode (nested JSON güvenli)
+    try:
+        decoder = json.JSONDecoder()
+        start_idx = text.find("{")
+        if start_idx != -1:
+            obj, _ = decoder.raw_decode(text, start_idx)
+            if isinstance(obj, dict):
+                return obj
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     logger.error("JSON parse FAILED — raw response (first 300 chars): %s", text[:300])
     return {"__parse_error__": True, "__raw_text__": text[:500]}
 
@@ -91,6 +102,17 @@ def extract_json_array(text: str) -> list[dict[str, Any]]:
                 return result
         except json.JSONDecodeError as e:
             logger.debug("JSONDecodeError in bracket parsing: %s", e)
+
+    # Fallback: json.JSONDecoder.raw_decode (nested JSON güvenli)
+    try:
+        decoder = json.JSONDecoder()
+        start_idx = text.find("[")
+        if start_idx != -1:
+            obj, _ = decoder.raw_decode(text, start_idx)
+            if isinstance(obj, list):
+                return obj
+    except (json.JSONDecodeError, ValueError):
+        pass
 
     logger.error("JSON array parse FAILED — raw response (first 300 chars): %s", text[:300])
     return []

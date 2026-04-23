@@ -25,8 +25,8 @@ class MarketScanner:
     # Dışlanacak semboller
     EXCLUDED_SYMBOLS = [
         "USDT", "USDC", "DAI", "BUSD", "FDUSD", "TUSD", "USDP", "WBTC", "WETH",
-        "UP/", "DOWN/", "BEAR/", "BULL/"
     ]
+    EXCLUDED_SUFFIXES = ["UP", "DOWN", "BEAR", "BULL"]
 
     def __init__(self, client: MarketDataClient = None):
         self.client = client or MarketDataClient()
@@ -117,6 +117,10 @@ class MarketScanner:
         
         current_price = df['close'].iloc[-1]
         prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price
+        
+        # Division by zero guard
+        if prev_price <= 0 or current_price <= 0:
+            return 0.0, 0.0
         
         # 24h fiyat değişimi
         price_change_pct = ((current_price - prev_price) / prev_price) * 100
@@ -215,9 +219,9 @@ class MarketScanner:
             
             # 1h momentum (basit %, ATR gerekmez kısa vadede)
             close_now = df_1h['close'].iloc[-1]
-            close_prev = df_1h['close'].iloc[-4] if len(df_1h) >= 4 else df_1h['close'].iloc[0]
+            close_prev = df_1h['close'].iloc[-2] if len(df_1h) >= 2 else df_1h['close'].iloc[0]
             change_1h = ((close_now - close_prev) / close_prev) * 100
-            
+
             momentum_1h_score = self._get_momentum_score(
                 change_1h, 
                 self.params.momentum_1h_thresholds
@@ -290,9 +294,9 @@ class MarketScanner:
                 continue
 
             base_asset = symbol.split('/')[0]
-            if any(ex in base_asset for ex in self.EXCLUDED_SYMBOLS if ex != "/"):
+            if any(ex in base_asset for ex in self.EXCLUDED_SYMBOLS):
                 continue
-            if any(ex in symbol for ex in ["UP/", "DOWN/", "BEAR/", "BULL/"]):
+            if any(base_asset.endswith(suf) for suf in self.EXCLUDED_SUFFIXES):
                 continue
 
             volume_usdt = float(data.get('quoteVolume', 0) or 0)
@@ -475,9 +479,9 @@ class MarketScanner:
                 continue
             
             base_asset = symbol.split('/')[0]
-            if any(ex in base_asset for ex in self.EXCLUDED_SYMBOLS if ex != "/"):
+            if any(ex in base_asset for ex in self.EXCLUDED_SYMBOLS):
                 continue
-            if any(ex in symbol for ex in ["UP/", "DOWN/", "BEAR/", "BULL/"]):
+            if any(base_asset.endswith(suf) for suf in self.EXCLUDED_SUFFIXES):
                 continue
             
             # 24h hacim kontrolü

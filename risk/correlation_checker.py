@@ -74,7 +74,7 @@ class CorrelationChecker:
                 corr_value = corr_matrix.loc[s1, s2]
                 if abs(corr_value) > global_max:
                     global_max = abs(corr_value)
-                if abs(corr_value) > max_correlation:
+                if corr_value > max_correlation:
                     correlated_pairs.append(
                         {
                             "symbol_1": s1,

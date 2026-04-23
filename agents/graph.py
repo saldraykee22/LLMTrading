@@ -52,17 +52,30 @@ def _should_continue_after_risk(state: TradingState) -> str:
 
     Akış mantığı:
     - Risk onaylandıysa → trader (emir oluştur)
-    - Risk reddedildiyse ama açık pozisyon varsa → monitor_positions (pozisyonları izle)
-    - Risk reddedildiyse ve açık pozisyon yoksa → direkt hold kararı ile bitir (END)
+    - Risk reddedildiyse ama bu sembolde açık pozisyon varsa → monitor_positions (pozisyonları izle)
+    - Risk reddedildiyse ve bu sembolde açık pozisyon yoksa → direkt hold kararı ile bitir (END)
     """
     risk_approved = state.get("risk_approved", False)
-    has_open_positions = state.get("portfolio_state", {}).get("open_positions", 0) > 0
+    symbol = state.get("symbol", "")
+    
+    # Yalnızca bu sembole ait pozisyon var mı kontrol et
+    portfolio_state = state.get("portfolio_state", {})
+    if isinstance(portfolio_state, dict):
+        positions = portfolio_state.get("positions", [])
+    elif portfolio_state is None:
+        positions = []
+    else:
+        positions = getattr(portfolio_state, "positions", []) or []
+    has_open_positions = any(
+        (p.get("symbol") == symbol if isinstance(p, dict) else getattr(p, "symbol", None) == symbol)
+        for p in positions
+    )
 
     if risk_approved:
         logger.info("Risk onaylandı → RL bypass edildi, doğrudan Trader'a yönlendiriliyor")
         return "trader"
     elif has_open_positions:
-        # Risk reddedildi ama açık pozisyon var → monitor mode
+        # Risk reddedildi ama bu sembolde açık pozisyon var → monitor mode
         logger.info("Risk reddedildi, açık pozisyonlar izleniyor → Monitor'a yönlendiriliyor")
         return "monitor_positions"
     else:
@@ -236,8 +249,18 @@ async def run_analysis_async(
         from data.vector_store import AgentMemoryStore
         from evaluation.drift_monitor import DriftMonitor
 
-        acc = DriftMonitor().get_agent_accuracy(symbol, agent_name="trader")
-        await asyncio.to_thread(AgentMemoryStore().store_decision, result, acc)
+        try:
+            acc = DriftMonitor().get_agent_accuracy(symbol, agent_name="trader")
+        except Exception as drift_err:
+            logger.debug("DriftMonitor error (non-critical): %s", drift_err)
+            acc = 0.0
+
+        try:
+            AgentMemoryStore().store_decision(result, acc)
+        except Exception as store_err:
+            logger.debug("AgentMemoryStore error (non-critical): %s", store_err)
+    except ImportError as import_err:
+        logger.debug("Memory/drift modules not available (non-critical): %s", import_err)
     except Exception as e:
         logger.warning("Hafıza kaydetme hatası (opsiyonel): %s", e)
 
@@ -304,8 +327,18 @@ def run_analysis(
         from data.vector_store import AgentMemoryStore
         from evaluation.drift_monitor import DriftMonitor
 
-        acc = DriftMonitor().get_agent_accuracy(symbol, agent_name="trader")
-        AgentMemoryStore().store_decision(result, accuracy_score=acc)
+        try:
+            acc = DriftMonitor().get_agent_accuracy(symbol, agent_name="trader")
+        except Exception as drift_err:
+            logger.debug("DriftMonitor error (non-critical): %s", drift_err)
+            acc = 0.0
+
+        try:
+            AgentMemoryStore().store_decision(result, accuracy_score=acc)
+        except Exception as store_err:
+            logger.debug("AgentMemoryStore error (non-critical): %s", store_err)
+    except ImportError as import_err:
+        logger.debug("Memory/drift modules not available (non-critical): %s", import_err)
     except Exception as e:
         logger.warning("Hafıza kaydetme hatası (opsiyonel): %s", e)
 

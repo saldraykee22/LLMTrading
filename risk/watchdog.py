@@ -180,7 +180,7 @@ class Watchdog:
                         current_price,
                         pos.amount,
                     )
-                    self._emergency_close(pos, current_price, "stop-loss", exchange_client, portfolio, account_name)
+                    self._emergency_close(pos, current_price, "stop-loss", exchange_client, portfolio, account_name, halt_system=False)
 
                 elif pos.should_take_profit(current_price):
                     logger.info(
@@ -191,7 +191,7 @@ class Watchdog:
                         current_price,
                         pos.amount,
                     )
-                    self._emergency_close(pos, current_price, "take-profit", exchange_client, portfolio, account_name)
+                    self._emergency_close(pos, current_price, "take-profit", exchange_client, portfolio, account_name, halt_system=False)
 
             except Exception as e:
                 logger.warning(f"{prefix}SL/TP check failed for %s: %s", pos.symbol, e)
@@ -218,6 +218,7 @@ class Watchdog:
         exchange_client=None,
         portfolio=None,
         account_name: str = "",
+        halt_system: bool = True,
     ) -> None:
         """Executes an emergency close for a position - atomic."""
         client = exchange_client or self.exchange_client
@@ -237,23 +238,29 @@ class Watchdog:
             amount=pos.amount,
         )
         try:
-            if portf.get_position_by_symbol_safe(pos.symbol) is None:
+            # Atomic check: close_position_safe None dönerse pozisyon zaten yok
+            pos_snapshot = portf.get_position_by_symbol_safe(pos.symbol)
+            if pos_snapshot is None:
                 logger.info(f"{prefix}Position already closed: %s", pos.symbol)
                 return
 
             result = client.execute_order(order, price)
             if result.get("status") in ("filled", "closed", "open"):
                 fill_price = float(result.get("price") or price)
+                # Atomic close: sadece bir thread başarılı olur
                 close_result = portf.close_position_safe(pos.symbol, fill_price)
                 if close_result is None:
-                    logger.info(f"{prefix}Position already closed: %s", pos.symbol)
+                    logger.info(f"{prefix}Position already closed (race): %s", pos.symbol)
                     return
                 logger.warning(
                     f"{prefix}Emergency sell executed for %s due to %s",
                     pos.symbol,
                     reason,
                 )
-                self._trigger_system_halt(f"Watchdog {reason}: {pos.symbol}")
+                if halt_system:
+                    self._trigger_system_halt(f"Watchdog {reason}: {pos.symbol}")
+                else:
+                    logger.info(f"{prefix}System halt bypassed for normal {reason}")
         except Exception as e:
             logger.error(f"{prefix}Emergency sell failed for %s: %s", pos.symbol, e)
 
@@ -326,13 +333,24 @@ class Watchdog:
                 result = exchange_client.execute_order(order, price)
                 if result.get("status") in ("filled", "closed", "open"):
                     fill_price = float(result.get("price") or price)
-                    # Thread-safe kapatma ve P&L kaydı
                     close_result = portfolio.close_position_safe(symbol, fill_price)
                     if close_result is None:
-                        logger.info(f"{prefix}Position already closed: %s", symbol)
+                        logger.warning(
+                            "%sPosition was closed by another thread, verifying state",
+                            prefix,
+                        )
+                        # Race-safe: re-check if position still exists locally
+                        if portfolio.get_position_by_symbol_safe(symbol) is not None:
+                            portfolio.remove_position_safe(symbol)
+                            logger.info(
+                                "%sRemoved stale position from local state: %s",
+                                prefix,
+                                symbol,
+                            )
                         return
                     logger.warning(
-                        f"{prefix}Emergency sell executed for %s due to flash crash (%.2f%% drop)",
+                        "%sEmergency sell executed for %s due to flash crash (%.2f%% drop)",
+                        prefix,
                         symbol,
                         drop_pct,
                     )
@@ -340,7 +358,7 @@ class Watchdog:
                         f"Flash crash detected for {symbol} ({drop_pct:.2f}% drop)"
                     )
             except Exception as e:
-                logger.error(f"{prefix}Emergency sell failed for %s: %s", symbol, e)
+                logger.error("%sEmergency sell failed for %s: %s", prefix, symbol, e)
 
     def get_status(self) -> dict:
         """Returns watchdog status."""

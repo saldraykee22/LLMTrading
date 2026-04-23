@@ -174,18 +174,27 @@ class SyncManager:
             return {"status": "error", "error": str(e)}
     
     def _cancel_zombie_orders_for_account(self, client, orders: list[dict]) -> int:
-        """Cancel zombie orders for single account."""
+        """Cancel zombie orders for single account - Only bot-tagged orders."""
         cleaned = 0
         for order in orders:
             order_id = order.get("id")
+            client_id = order.get("clientOrderId") or order.get("info", {}).get("clientOrderId", "")
             symbol = order.get("symbol")
-            logger.warning(f"🧟 Zombie order: {order.get('side')} {symbol} (ID: {order_id})")
-            try:
-                result = client.cancel_order(order_id, symbol)
-                if result.get("status") == "cancelled":
-                    cleaned += 1
-            except Exception as e:
-                logger.error(f"Zombie order cancellation failed: {e}")
+            
+            # Bot emirlerini ayır
+            is_bot_order = str(client_id).startswith("llm_")
+            
+            if is_bot_order:
+                logger.warning(f"🧟 Zombie Bot Order: {order.get('side')} {symbol} (ID: {order_id}, CID: {client_id})")
+                try:
+                    result = client.cancel_order(order_id, symbol)
+                    if result.get("status") == "cancelled":
+                        cleaned += 1
+                except Exception as e:
+                    logger.error(f"Zombie order cancellation failed: {e}")
+            else:
+                logger.info(f"👤 Manual Order detected (skipped): {order.get('side')} {symbol} (ID: {order_id})")
+                
         return cleaned
     
     def _maybe_sweep_dust(self, cycle: int) -> dict[str, Any]:
@@ -283,34 +292,43 @@ class SyncManager:
     
     def _cancel_zombie_orders(self, orders: list[dict]) -> int:
         """
-        Zombi emirleri iptal eder.
-        Zombi emir: Borsada açık ama bot'un bilgisi yok
-        
-        Returns:
-            İptal edilen emir sayısı
+        Zombi bot emirlerini iptal eder.
+        Manuel emirleri pas geçer.
         """
         cleaned = 0
         
         for order in orders:
             order_id = order.get("id")
+            client_id = order.get("clientOrderId") or order.get("info", {}).get("clientOrderId", "")
             symbol = order.get("symbol")
             
-            logger.warning(
-                "🧟 Zombie order detected: %s %s (ID: %s)",
-                order.get("side"),
-                symbol,
-                order_id,
-            )
+            is_bot_order = str(client_id).startswith("llm_")
             
-            try:
-                result = self.exchange_client.cancel_order(order_id, symbol)
-                if result.get("status") == "cancelled":
-                    logger.info("Zombie order cancelled: %s", order_id)
-                    cleaned += 1
-                else:
-                    logger.error("Failed to cancel zombie order: %s", order_id)
-            except Exception as e:
-                logger.error("Zombie order cancellation failed (%s): %s", order_id, e)
+            if is_bot_order:
+                logger.warning(
+                    "🧟 Zombie Bot Order detected: %s %s (ID: %s, CID: %s)",
+                    order.get("side"),
+                    symbol,
+                    order_id,
+                    client_id
+                )
+                
+                try:
+                    result = self.exchange_client.cancel_order(order_id, symbol)
+                    if result.get("status") == "cancelled":
+                        logger.info("Zombie bot order cancelled: %s", order_id)
+                        cleaned += 1
+                    else:
+                        logger.error("Failed to cancel zombie bot order: %s", order_id)
+                except Exception as e:
+                    logger.error("Zombie bot order cancellation failed (%s): %s", order_id, e)
+            else:
+                logger.info(
+                    "👤 Manual Order detected: %s %s (ID: %s) - Skipping automatic cancellation",
+                    order.get("side"),
+                    symbol,
+                    order_id
+                )
         
         return cleaned
     

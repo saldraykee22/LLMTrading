@@ -31,14 +31,19 @@ def coordinator_node(state: TradingState) -> dict[str, Any]:
     logger.info("Koordinatör başlatıldı: %s (iterasyon #%d)", symbol, iteration)
     logger.info("═" * 60)
 
-    has_market = bool(state.get("market_data"))
-    has_news = bool(state.get("news_data"))
-    has_technical = bool(state.get("technical_signals"))
+    # Veri varlığı kontrolleri (None ve boş dict/list güvenliği)
+    market_data = state.get("market_data")
+    news_data = state.get("news_data")
+    tech_signals = state.get("technical_signals")
+
+    has_market = market_data is not None and len(market_data) > 0
+    has_news = news_data is not None and len(news_data) > 0
+    has_technical = tech_signals is not None and len(tech_signals) > 0
 
     status_msg = (
         f"[Koordinatör] Analiz başlatılıyor: {symbol}\n"
         f"  Piyasa verisi: {'✓' if has_market else '✗'}\n"
-        f"  Haber verisi: {'✓' if has_news else '✗'} ({len(state.get('news_data', []))} haber)\n"
+        f"  Haber verisi: {'✓' if has_news else '✗'} ({len(news_data) if has_news else 0} haber)\n"
         f"  Teknik göstergeler: {'✓' if has_technical else '✗'}\n"
         f"  İterasyon: #{iteration}"
     )

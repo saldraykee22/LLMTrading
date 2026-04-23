@@ -74,7 +74,6 @@ class EnsembleVoter:
                 messages,
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
-                request_timeout=60,
             )
             raw_text = response.content
             result = extract_json(raw_text)
@@ -158,76 +157,88 @@ class EnsembleVoter:
         return self._aggregate_votes(successful_votes)
 
     def _aggregate_votes(self, votes: list[dict[str, Any]]) -> dict[str, Any]:
-        """Aggregates individual votes into a final decision."""
+        """Aggregates individual votes into a final decision with confidence weighting."""
         total = len(votes)
+        if total == 0:
+            return self._default_result("No votes to aggregate")
 
+        # 1. Action Voting (Confidence Weighted)
+        weighted_action_scores: dict[str, float] = {}
+        for vote in votes:
+            action = vote["action"]
+            conf = max(0.01, vote["confidence"]) # Zero confidence safety
+            weighted_action_scores[action] = weighted_action_scores.get(action, 0.0) + conf
+
+        winning_action = max(weighted_action_scores, key=weighted_action_scores.get)
+        total_weight = sum(weighted_action_scores.values())
+        weighted_consensus = weighted_action_scores[winning_action] / total_weight
+
+        # Simple majority count for legacy compatibility/logging
         action_counts: dict[str, int] = {}
+        for v in votes:
+            a = v["action"]
+            action_counts[a] = action_counts.get(a, 0) + 1
+        simple_consensus = action_counts[winning_action] / total
+
+        # 2. Numerical Aggregation (Confidence Weighted + Outlier Filter)
+        # Sadece kazanan aksiyona katılanların sayısal değerlerini baz alalım (opsiyonel ama daha tutarlı)
+        # Şimdilik tüm başarılı oyları ağırlıklı ortalama ile alıyoruz.
         weighted_amount = 0.0
         weighted_sl = 0.0
         weighted_tp = 0.0
         weighted_sentiment = 0.0
         weighted_risk = 0.0
-        total_confidence = 0.0
+        total_conf = 0.0
         all_reasoning: list[str] = []
 
         for vote in votes:
-            action = vote["action"]
-            conf = vote["confidence"]
-
-            action_counts[action] = action_counts.get(action, 0) + 1
+            conf = max(0.01, vote["confidence"])
             weighted_amount += conf * vote["amount"]
             weighted_sl += conf * vote["stop_loss"]
             weighted_tp += conf * vote["take_profit"]
             weighted_sentiment += conf * vote["sentiment_score"]
             weighted_risk += conf * vote["risk_score"]
-            total_confidence += conf
+            total_conf += conf
             if vote["reasoning"]:
                 all_reasoning.append(f"[{vote['model']}] {vote['reasoning']}")
 
-        winning_action = max(action_counts, key=action_counts.get)
-        winning_count = action_counts[winning_action]
-        consensus_score = winning_count / total
+        avg_confidence = total_conf / total
+        avg_amount = weighted_amount / total_conf if total_conf > 0 else 0.0
+        avg_sl = weighted_sl / total_conf if total_conf > 0 else 0.0
+        avg_tp = weighted_tp / total_conf if total_conf > 0 else 0.0
+        avg_sentiment = weighted_sentiment / total_conf if total_conf > 0 else 0.0
+        avg_risk = weighted_risk / total_conf if total_conf > 0 else 0.0
 
-        if consensus_score < self.min_consensus:
+        # Consensus check
+        final_consensus = max(weighted_consensus, simple_consensus)
+        if final_consensus < self.min_consensus:
             logger.warning(
-                "Low ensemble consensus (%.2f < %.2f), returning hold",
-                consensus_score,
+                "Low ensemble consensus (weighted: %.2f, simple: %.2f < %.2f), returning hold",
+                weighted_consensus,
+                simple_consensus,
                 self.min_consensus,
             )
             return self._default_result(
-                f"Low consensus ({consensus_score:.2f})",
+                f"Low consensus ({final_consensus:.2f})",
                 individual_votes=votes,
-                consensus_score=consensus_score,
+                consensus_score=final_consensus,
             )
 
-        avg_confidence = total_confidence / total if total > 0 else 0.0
-
-        if total_confidence > 0:
-            avg_amount = weighted_amount / total_confidence
-            avg_sl = weighted_sl / total_confidence
-            avg_tp = weighted_tp / total_confidence
-            avg_sentiment = weighted_sentiment / total_confidence
-            avg_risk = weighted_risk / total_confidence
-        else:
-            avg_amount = avg_sl = avg_tp = avg_sentiment = avg_risk = 0.0
-
-        combined_reasoning = (
-            "\n".join(all_reasoning) if all_reasoning else "No reasoning provided"
-        )
+        combined_reasoning = "\n".join(all_reasoning) if all_reasoning else "No reasoning provided"
 
         logger.info(
-            "Ensemble vote: %s (consensus=%.2f, confidence=%.2f, models=%d/%d)",
+            "Ensemble weighted vote: %s (weighted_cons=%.2f, simple_cons=%.2f, models=%d/%d)",
             winning_action,
-            consensus_score,
-            avg_confidence,
-            winning_count,
+            weighted_consensus,
+            simple_consensus,
+            len([v for v in votes if v["action"] == winning_action]),
             total,
         )
 
         return {
             "action": winning_action,
             "confidence": round(avg_confidence, 4),
-            "consensus_score": round(consensus_score, 4),
+            "consensus_score": round(final_consensus, 4),
             "amount": round(avg_amount, 4),
             "stop_loss": round(avg_sl, 4),
             "take_profit": round(avg_tp, 4),
@@ -237,6 +248,7 @@ class EnsembleVoter:
             "reasoning": combined_reasoning,
             "models_used": [v["model"] for v in votes],
             "total_models": total,
+            "weighted_consensus": round(weighted_consensus, 4),
         }
 
     def _default_result(

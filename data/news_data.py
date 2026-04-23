@@ -182,7 +182,12 @@ class NewsClient:
         for rss_url in rss_urls:
             try:
                 self._rate_limit()
-                feed = feedparser.parse(rss_url)
+                
+                # Fetch with timeout to prevent thread hangs
+                with httpx.Client(timeout=15.0) as client:
+                    resp = client.get(rss_url)
+                    resp.raise_for_status()
+                    feed = feedparser.parse(resp.text)
 
                 if feed.bozo:  # Parse hatası varsa atla
                     logger.warning(
@@ -320,4 +325,15 @@ class NewsClient:
 
     def close(self) -> None:
         """HTTP istemcisini kapatır."""
-        self._http.close()
+        if self._http:
+            try:
+                self._http.close()
+            except Exception:
+                pass
+            self._http = None
+
+    def __enter__(self) -> "NewsClient":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

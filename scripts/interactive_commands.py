@@ -67,9 +67,10 @@ def cmd_durum(portfolio=None, cycle=0, start_time=None, cb=None):
         uptime = f"{hours}s {minutes}dk"
     
     # Portfolio stats
+    positions = portfolio.get_positions_safe() if portfolio else []
     equity_str = f"${portfolio.equity:,.2f}" if portfolio else "N/A"
     pnl_str = f"${portfolio.total_pnl:,.2f}" if portfolio else "N/A"
-    positions_str = str(portfolio.open_position_count) if portfolio else "0"
+    positions_str = str(len(positions)) if portfolio else "0"
     
     status_table = Table(show_header=False, box=None, padding=(0, 2))
     status_table.add_column("Özellik", style="cyan", width=20)
@@ -89,7 +90,7 @@ def cmd_durum(portfolio=None, cycle=0, start_time=None, cb=None):
 
 def cmd_pozisyon(portfolio=None):
     """Açık pozisyonları göster."""
-    if not portfolio or not portfolio.positions:
+    if not portfolio or not portfolio.get_positions_safe():
         console.print(Panel("Açık pozisyon yok", title="💼 POZİSYONLAR", border_style="yellow"))
         return
     
@@ -101,7 +102,7 @@ def cmd_pozisyon(portfolio=None):
     pos_table.add_column("PnL", justify="right", style="green")
     
     total_pnl = 0
-    for pos in portfolio.positions:
+    for pos in portfolio.get_positions_safe():
         pnl = pos.unrealized_pnl
         total_pnl += pnl
         pnl_str = f"${pnl:+,.2f}"

@@ -1,267 +1,390 @@
+#!/usr/bin/env python3
 """
-LLM Trading System - Health Check Script
-==========================================
-Sistem sağlık kontrolü - Başlangıç validasyonu
-Kullanım: python scripts/health_check.py
+Health Check Script
+====================
+Comprehensive system health check for LLMTrading.
 """
 
-import io
 import sys
+import json
+import logging
 from pathlib import Path
+from datetime import datetime
+from typing import Dict, List
 
-# Windows console encoding fix
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-# Proje kökünü path'e ekle
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).parent.parent
 
 
-def check_python_version() -> dict:
-    """Python versiyonunu kontrol et."""
-    return {
-        "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "status": "OK" if sys.version_info >= (3, 10) else "FAIL",
-    }
+class HealthChecker:
+    """System health checker."""
 
+    def __init__(self):
+        self.checks = []
+        self.warnings = []
+        self.errors = []
 
-def check_dependencies() -> dict:
-    """Kritik kütüphaneleri kontrol et."""
-    results = {}
-    
-    critical_packages = {
-        "ccxt": "Borsa bağlantısı",
-        "langchain": "LLM framework",
-        "chromadb": "Vektör veritabanı",
-        "pydantic": "Config validation",
-        "pandas": "Data analysis",
-        "rich": "Console output",
-    }
-    
-    for pkg, desc in critical_packages.items():
+    def check_python_version(self) -> None:
+        """Check Python version."""
+        logger.info("Checking Python version...")
+        
+        version = sys.version_info
+        if version.major == 3 and version.minor >= 10:
+            self.checks.append({
+                'name': 'Python Version',
+                'status': 'PASS',
+                'value': f'{version.major}.{version.minor}.{version.micro}'
+            })
+        else:
+            self.errors.append({
+                'name': 'Python Version',
+                'status': 'FAIL',
+                'value': f'{version.major}.{version.minor}.{version.micro}',
+                'expected': '>= 3.10'
+            })
+
+    def check_dependencies(self) -> None:
+        """Check required dependencies."""
+        logger.info("Checking dependencies...")
+        
+        required = [
+            'ccxt',
+            'pandas',
+            'numpy',
+            'pydantic',
+            'pydantic_settings',
+            'langchain_core',
+            'yfinance',
+            'pytest',
+        ]
+        
+        missing = []
+        for package in required:
+            try:
+                __import__(package)
+            except ImportError:
+                missing.append(package)
+        
+        if missing:
+            self.errors.append({
+                'name': 'Dependencies',
+                'status': 'FAIL',
+                'missing': missing,
+                'fix': 'pip install -r requirements.txt'
+            })
+        else:
+            self.checks.append({
+                'name': 'Dependencies',
+                'status': 'PASS',
+                'value': f'{len(required)} packages checked'
+            })
+
+    def check_config_files(self) -> None:
+        """Check configuration files."""
+        logger.info("Checking configuration files...")
+        
+        required_files = [
+            '.env',
+            'config/settings.py',
+            'config/trading_params.yaml',
+        ]
+        
+        missing = []
+        for file_path in required_files:
+            full_path = PROJECT_ROOT / file_path
+            if not full_path.exists():
+                missing.append(file_path)
+        
+        if missing:
+            self.warnings.append({
+                'name': 'Config Files',
+                'status': 'WARN',
+                'missing': missing,
+                'note': 'Some files may be optional or generated'
+            })
+        else:
+            self.checks.append({
+                'name': 'Config Files',
+                'status': 'PASS',
+                'value': 'All required files present'
+            })
+
+    def check_env_variables(self) -> None:
+        """Check environment variables."""
+        logger.info("Checking environment variables...")
+        
+        import os
+        required = [
+            'OPENROUTER_API_KEY',
+        ]
+        
+        missing = []
+        for var in required:
+            if not os.getenv(var):
+                missing.append(var)
+        
+        if missing:
+            self.warnings.append({
+                'name': 'Environment Variables',
+                'status': 'WARN',
+                'missing': missing,
+                'fix': 'Set required variables in .env file'
+            })
+        else:
+            self.checks.append({
+                'name': 'Environment Variables',
+                'status': 'PASS',
+                'value': 'All required variables set'
+            })
+
+    def check_directory_structure(self) -> None:
+        """Check directory structure."""
+        logger.info("Checking directory structure...")
+        
+        required_dirs = [
+            'config',
+            'agents',
+            'data',
+            'execution',
+            'risk',
+            'models',
+            'tests',
+            'utils',
+        ]
+        
+        missing = []
+        for dir_name in required_dirs:
+            full_path = PROJECT_ROOT / dir_name
+            if not full_path.exists() or not full_path.is_dir():
+                missing.append(dir_name)
+        
+        if missing:
+            self.errors.append({
+                'name': 'Directory Structure',
+                'status': 'FAIL',
+                'missing': missing
+            })
+        else:
+            self.checks.append({
+                'name': 'Directory Structure',
+                'status': 'PASS',
+                'value': f'{len(required_dirs)} directories checked'
+            })
+
+    def check_portfolio_state(self) -> None:
+        """Check portfolio state file."""
+        logger.info("Checking portfolio state...")
+        
+        portfolio_file = PROJECT_ROOT / "data" / "portfolio_state.json"
+        
+        if not portfolio_file.exists():
+            self.checks.append({
+                'name': 'Portfolio State',
+                'status': 'PASS',
+                'value': 'No existing portfolio (will create on first run)'
+            })
+            return
+        
         try:
-            mod = __import__(pkg)
-            version = getattr(mod, "__version__", "unknown")
-            results[pkg] = f"OK {version}"
-        except ImportError:
-            results[pkg] = f"MISSING ({desc})"
-    
-    return results
+            import json
+            data = json.loads(portfolio_file.read_text())
+            
+            # Validate structure
+            required_keys = ['initial_cash', 'cash', 'positions']
+            missing_keys = [k for k in required_keys if k not in data]
+            
+            if missing_keys:
+                self.warnings.append({
+                    'name': 'Portfolio State',
+                    'status': 'WARN',
+                    'issue': f'Missing keys: {missing_keys}'
+                })
+            else:
+                self.checks.append({
+                    'name': 'Portfolio State',
+                    'status': 'PASS',
+                    'value': f"Cash: ${data['cash']:.2f}, Positions: {len(data['positions'])}"
+                })
+        except json.JSONDecodeError:
+            self.errors.append({
+                'name': 'Portfolio State',
+                'status': 'FAIL',
+                'issue': 'Corrupted JSON file'
+            })
 
-
-def check_env_file() -> dict:
-    """.env dosyasını kontrol et."""
-    env_file = PROJECT_ROOT / ".env"
-    
-    if not env_file.exists():
-        return {"status": "❌", "message": ".env dosyası bulunamadı"}
-    
-    # API anahtarlarının varlığını kontrol et
-    content = env_file.read_text(encoding="utf-8")
-    
-    checks = {
-        "OPENROUTER_API_KEY": "openrouter" in content.lower(),
-        "BINANCE_API_KEY": "binance" in content.lower(),
-    }
-    
-    results = []
-    for key, present in checks.items():
-        status = "OK" if present else "WARN"
-        results.append(f"{status} {key}")
-    
-    return {
-        "status": "OK" if all(checks.values()) else "WARN",
-        "details": results,
-    }
-
-
-def check_api_keys() -> dict:
-    """API anahtarlarını kontrol et (değerleri göstermeden)."""
-    try:
-        from config.settings import get_settings
+    def check_logs_directory(self) -> None:
+        """Check logs directory."""
+        logger.info("Checking logs directory...")
         
-        settings = get_settings()
+        logs_dir = PROJECT_ROOT / "logs"
         
-        checks = {
-            "OpenRouter": bool(settings.openrouter_api_key),
-            "Binance": bool(settings.binance_api_key and settings.binance_api_secret),
-            "DeepSeek": bool(settings.deepseek_api_key),
+        if not logs_dir.exists():
+            logs_dir.mkdir(exist_ok=True)
+            self.checks.append({
+                'name': 'Logs Directory',
+                'status': 'PASS',
+                'value': 'Created logs directory'
+            })
+        else:
+            # Check if writable
+            test_file = logs_dir / ".write_test"
+            try:
+                test_file.write_text("test")
+                test_file.unlink()
+                self.checks.append({
+                    'name': 'Logs Directory',
+                    'status': 'PASS',
+                    'value': 'Writable'
+                })
+            except Exception as e:
+                self.errors.append({
+                    'name': 'Logs Directory',
+                    'status': 'FAIL',
+                    'issue': f'Not writable: {e}'
+                })
+
+    def check_circuit_breaker_state(self) -> None:
+        """Check circuit breaker state."""
+        logger.info("Checking circuit breaker state...")
+        
+        try:
+            from risk.circuit_breaker import CircuitBreaker
+            cb = CircuitBreaker()
+            
+            # Check if circuit is open
+            is_halt, reason = cb.should_halt(equity=10000.0, daily_pnl=0.0)
+            
+            if is_halt:
+                self.warnings.append({
+                    'name': 'Circuit Breaker',
+                    'status': 'WARN',
+                    'issue': 'Circuit breaker is OPEN',
+                    'reason': reason,
+                    'fix': 'Wait for reset or manually reset'
+                })
+            else:
+                self.checks.append({
+                    'name': 'Circuit Breaker',
+                    'status': 'PASS',
+                    'value': 'Circuit CLOSED (normal operation)'
+                })
+        except Exception as e:
+            self.errors.append({
+                'name': 'Circuit Breaker',
+                'status': 'FAIL',
+                'issue': str(e)
+            })
+
+    def check_system_status(self) -> None:
+        """Check system status module."""
+        logger.info("Checking system status...")
+        
+        try:
+            from risk.system_status import SystemStatus
+            status = SystemStatus.get_instance()
+            
+            if status.is_running():
+                self.checks.append({
+                    'name': 'System Status',
+                    'status': 'PASS',
+                    'value': 'RUNNING'
+                })
+            elif status.is_halted():
+                self.warnings.append({
+                    'name': 'System Status',
+                    'status': 'WARN',
+                    'value': 'HALTED',
+                    'note': 'System was halted (emergency/cooldown)'
+                })
+            elif status.is_emergency():
+                self.errors.append({
+                    'name': 'System Status',
+                    'status': 'FAIL',
+                    'value': 'EMERGENCY',
+                    'reason': status.get_halt_reason(),
+                    'fix': 'Resolve issue and restart'
+                })
+        except Exception as e:
+            self.errors.append({
+                'name': 'System Status',
+                'status': 'FAIL',
+                'issue': str(e)
+            })
+
+    def run_health_check(self) -> Dict:
+        """Run all health checks."""
+        logger.info("=" * 60)
+        logger.info("LLMTrading Health Check")
+        logger.info(f"Timestamp: {datetime.now().isoformat()}")
+        logger.info("=" * 60)
+        
+        self.check_python_version()
+        self.check_dependencies()
+        self.check_config_files()
+        self.check_env_variables()
+        self.check_directory_structure()
+        self.check_portfolio_state()
+        self.check_logs_directory()
+        self.check_circuit_breaker_state()
+        self.check_system_status()
+        
+        # Summary
+        logger.info("\n" + "=" * 60)
+        logger.info("HEALTH CHECK SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Passed: {len(self.checks)}")
+        logger.info(f"Warnings: {len(self.warnings)}")
+        logger.info(f"Errors: {len(self.errors)}")
+        
+        if self.checks:
+            logger.info("\n✅ PASSED:")
+            for check in self.checks:
+                logger.info(f"  ✓ {check['name']}: {check['value']}")
+        
+        if self.warnings:
+            logger.info(f"\n⚠️  WARNINGS ({len(self.warnings)}):")
+            for warning in self.warnings:
+                logger.info(f"  ⚠ {warning['name']}: {warning.get('issue', warning.get('value', ''))}")
+        
+        if self.errors:
+            logger.info(f"\n🚨 ERRORS ({len(self.errors)}):")
+            for error in self.errors:
+                logger.info(f"  ✗ {error['name']}: {error.get('issue', error.get('value', ''))}")
+                if 'fix' in error:
+                    logger.info(f"    Fix: {error['fix']}")
+        
+        # Save report
+        report = {
+            'timestamp': datetime.now().isoformat(),
+            'checks': self.checks,
+            'warnings': self.warnings,
+            'errors': self.errors,
+            'summary': {
+                'passed': len(self.checks),
+                'warnings': len(self.warnings),
+                'errors': len(self.errors),
+                'healthy': len(self.errors) == 0
+            }
         }
         
-        results = {}
-        for provider, has_key in checks.items():
-            results[provider] = "✅" if has_key else "❌"
+        report_file = PROJECT_ROOT / "health_check_report.json"
+        report_file.write_text(json.dumps(report, indent=2))
+        logger.info(f"\n📄 Full report saved to: {report_file}")
         
-        return results
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def check_directories() -> dict:
-    """Gerekli klasörlerin varlığını kontrol et."""
-    from config.settings import DATA_DIR, LOGS_DIR
-    
-    dirs = {
-        "data": DATA_DIR,
-        "logs": LOGS_DIR,
-        "config": PROJECT_ROOT / "config",
-    }
-    
-    results = {}
-    for name, path in dirs.items():
-        writable = False
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            # Yazma izni testi
-            test_file = path / ".write_test"
-            test_file.touch()
-            test_file.unlink()
-            writable = True
-        except Exception:
-            writable = False
-        
-        results[name] = "✅" if writable else "❌"
-    
-    return results
-
-
-def check_exchange_connection() -> dict:
-    """Borsa bağlantısını test et (sadece ping)."""
-    try:
-        from config.settings import get_settings, get_trading_params
-        from execution.exchange_client import ExchangeClient
-        
-        settings = get_settings()
-        params = get_trading_params()
-        
-        # Paper trading modunda mı?
-        if params.execution.mode.value == "paper":
-            return {"status": "✅", "mode": "PAPER TRADING"}
-        
-        # Live mode - bağlantı testi
-        client = ExchangeClient()
-        balance = client.get_balance()
-        
-        if "error" in balance:
-            return {"status": "❌", "error": balance["error"]}
-        
-        return {"status": "✅", "mode": "LIVE TRADING"}
-    
-    except Exception as e:
-        return {"status": "❌", "error": str(e)}
-
-
-def check_chromadb() -> dict:
-    """ChromaDB bağlantısını test et."""
-    try:
-        from data.vector_store import AgentMemoryStore
-        
-        store = AgentMemoryStore()
-        collection = store.collection
-        
-        if collection is None:
-            return {"status": "❌", "error": "Collection oluşturulamadı"}
-        
-        return {"status": "✅", "collection": collection.name}
-    
-    except Exception as e:
-        return {"status": "❌", "error": str(e)}
-
-
-def main():
-    """Ana health check fonksiyonu."""
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    
-    console = Console()
-    
-    console.print(
-        Panel(
-            "[bold cyan]LLM Trading System - Health Check[/bold cyan]\n"
-            f"Path: {PROJECT_ROOT}",
-            title="[bold]Sistem Sağlık Kontrolü[/bold]",
-            border_style="cyan",
-        )
-    )
-    
-    all_passed = True
-    
-    # 1. Python Version
-    console.print("\n[bold]1. Python Version[/bold]")
-    py_result = check_python_version()
-    console.print(f"   {py_result['status']} Python {py_result['version']}")
-    if py_result['status'] == "❌":
-        all_passed = False
-    
-    # 2. Dependencies
-    console.print("\n[bold]2. Kritik Kütüphaneler[/bold]")
-    dep_results = check_dependencies()
-    for pkg, status in dep_results.items():
-        console.print(f"   {pkg:15s}: {status}")
-        if "❌" in status or "MISSING" in status:
-            all_passed = False
-    
-    # 3. Environment
-    console.print("\n[bold]3. Environment (.env)[/bold]")
-    env_result = check_env_file()
-    console.print(f"   Status: {env_result['status']}")
-    for detail in env_result.get('details', []):
-        console.print(f"   {detail}")
-    
-    # 4. API Keys
-    console.print("\n[bold]4. API Anahtarları[/bold]")
-    api_result = check_api_keys()
-    if "error" in api_result:
-        console.print(f"   ❌ Error: {api_result['error']}")
-        all_passed = False
-    else:
-        for provider, status in api_result.items():
-            console.print(f"   {provider:15s}: {status}")
-            if status == "❌":
-                all_passed = False
-    
-    # 5. Directories
-    console.print("\n[bold]5. Klasörler ve İzinler[/bold]")
-    dir_result = check_directories()
-    for name, status in dir_result.items():
-        console.print(f"   {name:15s}: {status}")
-        if status == "❌":
-            all_passed = False
-    
-    # 6. ChromaDB
-    console.print("\n[bold]6. ChromaDB (RAG Memory)[/bold]")
-    chroma_result = check_chromadb()
-    console.print(f"   Status: {chroma_result['status']}")
-    if "collection" in chroma_result:
-        console.print(f"   Collection: {chroma_result['collection']}")
-    if "error" in chroma_result:
-        console.print(f"   Error: {chroma_result['error']}")
-        all_passed = False
-    
-    # 7. Exchange Connection
-    console.print("\n[bold]7. Borsa Bağlantısı[/bold]")
-    exchange_result = check_exchange_connection()
-    console.print(f"   Status: {exchange_result['status']}")
-    if "mode" in exchange_result:
-        console.print(f"   Mode: {exchange_result['mode']}")
-    if "error" in exchange_result:
-        console.print(f"   Error: {exchange_result['error']}")
-        all_passed = False
-    
-    # Final Summary
-    console.print("\n" + "=" * 60)
-    if all_passed:
-        console.print("[bold green]✅ TÜM KONTROLLER BAŞARILI - Sistem hazır![/bold green]")
-        sys.exit(0)
-    else:
-        console.print(
-            "[bold red]❌ BAZI KONTROLLER BAŞARISIZ - Lütfen yukarıdaki hataları düzeltin.[/bold red]"
-        )
-        sys.exit(1)
+        # Exit code
+        if self.errors:
+            logger.info("\n❌ Health check FAILED")
+            sys.exit(1)
+        elif self.warnings:
+            logger.info("\n⚠️  Health check PASSED with warnings")
+            sys.exit(0)
+        else:
+            logger.info("\n✅ Health check PASSED")
+            sys.exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    checker = HealthChecker()
+    checker.run_health_check()

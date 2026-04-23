@@ -50,7 +50,7 @@ class CircuitBreaker:
         self.consecutive_rate_limits = 0
         self.consecutive_fallbacks = 0  # ✅ YENİ: Fallback sayacı
         self._notified_halt = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # Kilitlenmeyi önlemek için RLock kullanıyoruz
         if self._params.system.reset_counters_on_startup:
             logger.info("Circuit breaker counters reset on startup")
             return
@@ -136,23 +136,30 @@ class CircuitBreaker:
         SystemStatus ile entegre çalışır.
         """
         is_halt, reason = self._check_halt_conditions(equity, daily_pnl)
-        
+
         # SystemStatus ile senkronize et
         system_status = SystemStatus.get_instance()
         if is_halt and system_status.is_running():
             # Circuit breaker tetiklendi → SystemStatus'u güncelle
             system_status.emergency_stop(reason)
-        
-        if is_halt and not self._notified_halt:
+
+        # Thread-safe _notified_halt kontrolü
+        with self._lock:
+            should_notify = is_halt and not self._notified_halt
+            should_reset = not is_halt and self._notified_halt
+            if should_notify:
+                self._notified_halt = True
+            elif should_reset:
+                self._notified_halt = False
+
+        if should_notify:
             self._send_notification("CIRCUIT BREAKER DEVREDE", reason)
-            self._notified_halt = True
-        elif not is_halt and self._notified_halt:
-            self._notified_halt = False
+        elif should_reset:
             # SystemStatus'u da sıfırla
             if system_status.is_emergency():
                 system_status.resume()
             self._send_notification("SİSTEM NORMALE DÖNDÜ", "Circuit Breaker kaldırıldı.")
-            
+
         return is_halt, reason
 
     def _check_halt_conditions(self, equity: float, daily_pnl: float) -> tuple[bool, str]:
@@ -170,13 +177,14 @@ class CircuitBreaker:
                 )
 
             # 3. Günlük kayıp limiti
-            if equity > 0:
+            effective_equity = equity if equity > 0 else self._params.backtest.initial_cash
+            if effective_equity > 0:
                 daily_loss = abs(min(daily_pnl, 0))
-                daily_loss_pct = daily_loss / equity
+                daily_loss_pct = daily_loss / effective_equity
                 max_daily = self._params.risk.max_daily_loss_pct
                 if max_daily > 0 and daily_loss_pct >= max_daily:
                     return True, (
-                        f"Günlük kayıp limiti aşıldı: {daily_loss_pct:.2%} >= {max_daily:.2%}"
+                        f"Günlük kayıp limiti aşıldı: {daily_loss_pct:.2%} >= {max_daily:.2%} (equity={equity:.2f})"
                     )
 
             # 4. LLM ardışık hataları

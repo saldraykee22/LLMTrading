@@ -199,7 +199,6 @@ class LLMBacktestEngine:
         # 6. Apply decision
         decision = result.get("trade_decision", {})
         await self._apply_decision(decision, current_bar, tech_dict)
-        await self._apply_decision(decision, current_bar, tech_dict)
         
         # 7. Cache result
         if self.cache_enabled and self.cache:
@@ -562,7 +561,8 @@ class LLMBacktestEngine:
             safe_symbol = self.symbol.replace("/", "_")
             filename = f"backtest_{safe_symbol}_{ts}.json"
             
-        file_path = results_dir / filename
+        safe_filename = Path(filename).name
+        file_path = results_dir / safe_filename
         
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)

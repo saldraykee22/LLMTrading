@@ -55,7 +55,14 @@ class SentimentStore:
 
     def _file_path(self, symbol: str) -> Path:
         """Sembol için depo dosya yolu."""
-        clean = symbol.replace("/", "_").replace(".", "_").upper()
+        from data.symbol_resolver import validate_symbol
+        clean = symbol.upper()
+        if not validate_symbol(clean):
+            clean = clean.replace("/", "_").replace(".", "_").replace("\\", "_")
+            clean = clean.replace("..", "_")
+        else:
+            # Valid symbols like BTC/USDT still contain '/' which is invalid in filenames
+            clean = clean.replace("/", "_")
         return self._dir / f"{clean}_sentiment.jsonl"
 
     def _update_lru(self, symbol: str) -> None:

@@ -17,32 +17,25 @@ class AgentMemoryStore:
     _instance: "AgentMemoryStore | None" = None
     _class_lock = threading.Lock()
 
-    def __new__(cls, store_dir: Path | None = None) -> "AgentMemoryStore":
-        with cls._class_lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
-                cls._instance._lock = threading.RLock()
-            return cls._instance
-
     def __init__(self, store_dir: Path | None = None):
-        if self._initialized:
+        if getattr(self, "_initialized", False):
             return
-        with self._lock:
-            if self._initialized:
-                return
-            self._dir = store_dir or STORE_DIR
-            self._dir.mkdir(parents=True, exist_ok=True)
-            self._client = None
-            self._collection = None
-            self._init_failed = False
-            self._shutdown_registered = False
-            self._initialized = True
+        self._dir = store_dir or STORE_DIR
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._client = None
+        self._collection = None
+        self._init_failed = False
+        self._shutdown_registered = False
+        self._lock = threading.RLock()
+        self._initialized = True
 
     @classmethod
-    def get_instance(cls) -> "AgentMemoryStore":
+    def get_instance(cls, store_dir: Path | None = None) -> "AgentMemoryStore":
         """Singleton instance al."""
-        return cls()
+        with cls._class_lock:
+            if cls._instance is None:
+                cls._instance = cls(store_dir)
+            return cls._instance
 
     @classmethod
     def close_all(cls) -> None:
@@ -347,7 +340,7 @@ class AgentMemoryStore:
         if not self.collection:
             return 0
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
 
         try:
             all_entries = self.collection.get(include=["metadatas"])
@@ -356,12 +349,26 @@ class AgentMemoryStore:
 
             ids_to_delete = []
             for i, meta in enumerate(all_entries.get("metadatas", [])):
-                entry_ts = meta.get("timestamp", "")
-                if entry_ts and entry_ts < cutoff:
-                    ids_to_delete.append(all_entries["ids"][i])
+                entry_ts_str = meta.get("timestamp", "")
+                if entry_ts_str:
+                    try:
+                        # ISO string'i datetime'e çevir (güvenli karşılaştırma)
+                        entry_ts = datetime.fromisoformat(entry_ts_str)
+                        if entry_ts.tzinfo is None:
+                            entry_ts = entry_ts.replace(tzinfo=timezone.utc)
+                        if entry_ts < cutoff_dt:
+                            ids_to_delete.append(all_entries["ids"][i])
+                    except (ValueError, TypeError):
+                        # Parse edilemeyen timestamp'leri silme (güvenli taraf)
+                        continue
 
             if ids_to_delete:
-                self.collection.delete(ids=ids_to_delete)
+                # Batch delete (ChromaDB performance)
+                batch_size = 100
+                for i in range(0, len(ids_to_delete), batch_size):
+                    batch = ids_to_delete[i:i + batch_size]
+                    self.collection.delete(ids=batch)
+                
                 logger.info(
                     "Eski kayıtlar temizlendi: %d adet (%d günden eski)",
                     len(ids_to_delete),

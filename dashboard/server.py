@@ -173,6 +173,7 @@ async def get_positions():
 @app.get("/api/trades")
 async def get_trades(limit: int = 20):
     """Son işlemler."""
+    limit = min(max(limit, 1), 1000)
     if PORTFOLIO_FILE.exists():
         try:
             data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
@@ -259,6 +260,7 @@ async def metrics():
 
 @app.get("/api/drift_heatmap")
 async def get_drift_heatmap(days: int = 30):
+    days = min(max(days, 1), 365)
     api_calls_total.labels(type="drift_heatmap").inc()
     try:
         from evaluation.drift_monitor import DriftMonitor
@@ -302,6 +304,8 @@ async def get_rag_queries(limit: int = 20):
 
 @app.get("/api/monte_carlo")
 async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
+    n_simulations = min(max(n_simulations, 10), 10000)
+    days = min(max(days, 1), 365)
     api_calls_total.labels(type="monte_carlo").inc()
     import math
     import random
@@ -319,6 +323,8 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
                 ]
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Monte Carlo için portföy okunamadı: %s", e)
+    
+    # Guard: Yeterli veri yoksa varsayılan parametreler
     if len(daily_returns) >= 10:
         mean_ret = sum(daily_returns) / len(daily_returns)
         variance = sum((r - mean_ret) ** 2 for r in daily_returns) / max(
@@ -328,6 +334,7 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
     else:
         mean_ret = 0.001
         std_ret = 0.02
+    
     final_values = []
     for _ in range(n_simulations):
         equity = initial_equity
@@ -335,6 +342,11 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
             equity *= 1 + random.gauss(mean_ret, std_ret)
         final_values.append(equity)
     final_values.sort()
+    
+    # Guard: Division by zero protection
+    if n_simulations == 0:
+        n_simulations = 1
+    
     percentiles = {
         "p5": round(final_values[int(n_simulations * 0.05)], 2),
         "p25": round(final_values[int(n_simulations * 0.25)], 2),
@@ -389,6 +401,7 @@ async def get_drift_summary():
 
 @app.get("/api/retrospective")
 async def get_retrospective(limit: int = 10):
+    limit = min(max(limit, 1), 1000)
     api_calls_total.labels(type="retrospective").inc()
     try:
         from data.vector_store import AgentMemoryStore
@@ -407,7 +420,7 @@ async def get_retrospective(limit: int = 10):
                         {
                             "symbol": meta.get("symbol", "UNKNOWN"),
                             "root_cause": meta.get("root_cause_category", "unknown"),
-                            "lesson": doc[:300],
+                            "lesson": doc[:300] if doc else "",
                             "accuracy": meta.get("accuracy", 0.0),
                             "market_regime": meta.get("market_regime", "unknown"),
                             "timestamp": meta.get("timestamp", ""),
@@ -418,6 +431,7 @@ async def get_retrospective(limit: int = 10):
             return {"retrospectives": retrospectives}
         return {"retrospectives": []}
     except Exception as e:
+        logger.error("Retrospective API error: %s", e)
         return {"retrospectives": [], "error": str(e)}
 
 
@@ -536,6 +550,8 @@ async def get_config():
             return {"error": str(e)}
     return {"error": "Config file not found"}
 
+ALLOWED_CONFIG_KEYS = {"risk", "execution", "agents", "limits", "system", "data", "scanner", "backtest"}
+
 @app.post("/api/config")
 async def update_config(request: Request):
     """Trading konfigürasyonunu günceller."""
@@ -543,6 +559,12 @@ async def update_config(request: Request):
 
     try:
         new_config = await request.json()
+        unknown = set(new_config.keys()) - ALLOWED_CONFIG_KEYS
+        if unknown:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Unknown top-level keys: {list(unknown)}"}
+            )
         config_path = PROJECT_ROOT / "config" / "trading_params.yaml"
         if config_path.exists():
             with open(config_path, "w", encoding="utf-8") as f:

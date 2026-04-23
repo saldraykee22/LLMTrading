@@ -2,7 +2,7 @@
 Tests for execution/exchange_client.py
 """
 import time
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, ANY, patch
 
 import ccxt
 import pytest
@@ -54,6 +54,8 @@ class TestExchangeClient:
         with patch('execution.exchange_client.get_settings', return_value=mock_settings), \
              patch('execution.exchange_client.get_trading_params', return_value=mock_params):
             client = ExchangeClient()
+            from risk.portfolio import PortfolioState
+            client.set_portfolio(PortfolioState())
             yield client
             SystemStatus.reset_instance()
             if stop_file.exists():
@@ -66,7 +68,7 @@ class TestExchangeClient:
         """Test client initialization."""
         assert client._exchange is None
         assert client._paper_engine is None
-        assert client._portfolio_ref is None
+        assert client._portfolio_ref is not None
         assert client._last_request_time == 0
         assert client._connection_timeout == 300
         assert client._system_status.is_running()
@@ -155,6 +157,8 @@ class TestExchangeClient:
             order_type="market"
         )
 
+        client.set_portfolio(None)
+
         with patch.object(client, '_get_paper_engine') as mock_get_engine:
             mock_engine = Mock()
             mock_engine.execute_order.return_value = {"status": "filled"}
@@ -216,7 +220,8 @@ class TestExchangeClient:
             symbol="BTC/USDT",
             type="market",
             side="buy",
-            amount=0.001
+            amount=0.001,
+            params=ANY
         )
 
     @patch('ccxt.binance')
@@ -254,7 +259,8 @@ class TestExchangeClient:
             type="limit",
             side="sell",
             amount=0.001,
-            price=51000.0
+            price=51000.0,
+            params=ANY
         )
 
     @patch('ccxt.binance')

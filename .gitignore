@@ -50,6 +50,9 @@ data/drift_history.jsonl
 *.jsonl
 *.json
 data/portfolio_state.json
+data/portfolio_state.db
+*.db
+
 !data/examples/*.csv
 !data/templates/*.json
 !data/portfolio_state.json.example

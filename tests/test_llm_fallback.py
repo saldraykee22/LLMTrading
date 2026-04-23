@@ -56,11 +56,13 @@ class TestInvokeWithRetryFallback:
             fallback_value=fallback_dict,
             max_retries=1,
         )
-        
-        # Dict direkt dönmeli
-        assert isinstance(result, dict)
-        assert result["decision"] == "rejected"
-        assert result["reason"] == "API error"
+
+        # Dict fallback -> _MockResponse with .content as JSON string
+        assert hasattr(result, 'content')
+        import json
+        content = json.loads(result.content)
+        assert content["decision"] == "rejected"
+        assert content["reason"] == "API error"
 
     def test_fallback_disabled_raises_exception(self):
         """Fallback kapalıysa exception fırlatılmalı."""

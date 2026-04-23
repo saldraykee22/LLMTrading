@@ -20,6 +20,12 @@ _fallback_counter = 0
 _counter_lock = threading.Lock()
 
 
+class _MockResponse:
+    """Mock LLM response wrapper for fallback values."""
+    def __init__(self, content: str):
+        self.content = content
+
+
 def get_fallback_metrics() -> dict[str, int]:
     """Get fallback usage metrics."""
     with _counter_lock:
@@ -40,6 +46,7 @@ def invoke_with_retry(
     base_delay: float = 2.0,
     max_delay: float = 30.0,
     validate_json: bool = False,
+    response_schema: Any = None,
     request_timeout: int = 60,
     fallback_on_error: bool = False,
     fallback_value: Any = None,
@@ -55,6 +62,7 @@ def invoke_with_retry(
         base_delay: Initial delay between retries (seconds)
         max_delay: Maximum delay cap (seconds)
         validate_json: If True, retries if response is not valid JSON
+        response_schema: Optional Pydantic model or type to validate the JSON response
         request_timeout: Timeout for each LLM call in seconds (default: 60)
         fallback_on_error: If True, return fallback_value instead of raising exception on final failure
         fallback_value: Value to return on failure when fallback_on_error is True (JSON string or dict)
@@ -71,7 +79,8 @@ def invoke_with_retry(
             # Timeout'u kwargs'a ekle (sadece None değilse)
             kwargs_with_timeout = kwargs.copy()
             if request_timeout is not None:
-                # LangChain ChatOpenAI 'timeout' kullanır, 'request_timeout' değil
+                # NOT: LangChain ChatOpenAI 'timeout' parametresi kullanır
+                # 'request_timeout' değil - bu uyumluluk için dönüştürüyoruz
                 kwargs_with_timeout["timeout"] = request_timeout
             response = invoke_fn(*args, **kwargs_with_timeout)
             
@@ -86,7 +95,7 @@ def invoke_with_retry(
             if not content:
                 raise ValueError("LLM empty response")
 
-            if validate_json:
+            if validate_json or response_schema is not None:
                 # Markdown bloklarını temizle
                 clean_content = content.strip()
                 if "```json" in clean_content:
@@ -95,12 +104,27 @@ def invoke_with_retry(
                     clean_content = clean_content.split("```")[-1].split("```")[0].strip()
                 
                 try:
-                    json.loads(clean_content)
+                    parsed_json = json.loads(clean_content)
+                    
+                    # Pydantic şema doğrulaması
+                    if response_schema is not None:
+                        try:
+                            from pydantic import TypeAdapter, ValidationError
+                            adapter = TypeAdapter(response_schema)
+                            adapter.validate_python(parsed_json)
+                        except ImportError:
+                            logger.warning("Pydantic is not installed. Skipping schema validation.")
+                        except Exception as e:
+                            # Catch ValidationError
+                            raise ValueError(f"Schema validation failed: {e}")
+                            
                 except json.JSONDecodeError:
                     raise ValueError(f"Invalid JSON response: {content[:100]}...")
 
             return response
             
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
@@ -130,12 +154,13 @@ def invoke_with_retry(
         
         # Call stack'ten ajan adını bul
         import traceback
+        import os
         stack = traceback.extract_stack()
         agent_name = "unknown"
         for frame in stack[-6:-1]:  # Skip current and immediate callers
-            if "agents/" in frame.filename or "models/" in frame.filename:
-                # Dosya adından ajan adı çıkar
-                parts = frame.filename.split("\\")
+            if "agents" in frame.filename or "models" in frame.filename:
+                # Cross-platform path parsing
+                parts = frame.filename.replace("\\", "/").split("/")
                 for part in reversed(parts):
                     if part.endswith(".py"):
                         agent_name = part[:-3]  # .py uzantısını kaldır
@@ -191,10 +216,8 @@ def invoke_with_retry(
         
         # Fallback value bir string ise (JSON) mock response objesi oluştur
         if isinstance(fallback_value, str):
-            class MockResponse:
-                content = fallback_value
-            return MockResponse()
-        # Dict ise direkt döndür
-        return fallback_value
+            return _MockResponse(fallback_value)
+        # Dict ise JSON'a dönüştür ve mock response wrapper ile döndür
+        return _MockResponse(json.dumps(fallback_value))
 
     raise last_error  # type: ignore[misc]

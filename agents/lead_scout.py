@@ -24,14 +24,14 @@ class LeadScout:
         self.client = MarketDataClient()
         self.analyzer = TechnicalAnalyzer()
 
-    def select_best_candidates(self, candidates: List[Dict]) -> List[str]:
+    def select_best_candidates(self, candidates: List[Dict], limit: int = 5) -> List[str]:
         """
         Aday listesini teknik özetlerle beraber LLM'e sunar ve en iyilerini seçtirir.
         """
         if not candidates:
             return []
             
-        if len(candidates) <= self.params.max_scout_recommendations:
+        if len(candidates) <= limit:
             logger.info("Aday sayısı limit altı, doğrudan konseye iletiliyor.")
             return [c['symbol'] for c in candidates]
 
@@ -43,7 +43,7 @@ class LeadScout:
             try:
                 # 1 saatlik veri ile teknik analiz
                 df = self.client.fetch_ohlcv(cand['symbol'], timeframe="1h", days=5)
-                signals = self.analyzer.analyze(cand['symbol'], df)
+                signals = self.analyzer.analyze(df, cand['symbol'])
                 summary = signals.get_llm_summary()
                 
                 enhanced_candidates_str += f"\n{summary}\n"

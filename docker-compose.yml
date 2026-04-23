@@ -21,6 +21,8 @@ services:
     depends_on:
       - dashboard
     command: ["--symbol", "BTC/USDT"]
+    healthcheck:
+      disable: true
 
   dashboard:
     build:

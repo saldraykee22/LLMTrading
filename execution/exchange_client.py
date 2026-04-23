@@ -60,8 +60,16 @@ class ExchangeClient:
         Acil durum modundan çıkmak için yeniden bağlanma dene.
         Exponential backoff ile 5 deneme yapar.
         Başarılı olursa SystemStatus'u RUNNING yapar.
+        
+        Paper mode'da exchange None olabilir, bu durumda hemen başarılı dön.
         """
         if not self._system_status.is_emergency() and not self._system_status.is_reconnecting():
+            return True
+        
+        # Paper mode kontrolü - exchange None olabilir
+        if self._params.execution.mode == TradingMode.PAPER:
+            logger.info("📝 Paper mode: Reconnection simüle edildi")
+            self._system_status.resume()
             return True
         
         logger.info("Reconnection attempt (max %d attempts)...", max_attempts)
@@ -120,17 +128,17 @@ class ExchangeClient:
         return True
 
     def _emergency_close_all(self, portfolio: Any = None) -> None:
-        """Tüm açık pozisyonları market emriyle kapatır - thread-safe."""
-        from risk.portfolio import PortfolioState, _portfolio_lock
+        """Tüm açık pozisyonları akıllı (Smart Close) emirlerle kapatır - thread-safe."""
+        from risk.portfolio import PortfolioState
 
-        with _portfolio_lock:
-            target_portfolio = portfolio or self._portfolio_ref
-            if target_portfolio is None:
-                logger.warning(
-                    "Emergency close: no portfolio reference, loading from file"
-                )
-                target_portfolio = PortfolioState.load_from_file()
+        target_portfolio = portfolio or self._portfolio_ref
+        if target_portfolio is None:
+            logger.error(
+                "Emergency close: no portfolio reference available, aborting"
+            )
+            return
 
+        with target_portfolio._lock:
             positions_to_close = list(target_portfolio.positions)
 
             if not positions_to_close:
@@ -138,7 +146,7 @@ class ExchangeClient:
                 return
 
             logger.critical(
-                "🚨 EMERGENCY CLOSE ALL: %d pozisyon kapatılıyor!",
+                "🚨 EMERGENCY CLOSE ALL: %d pozisyon kapatılıyor! (Smart Close Devrede)",
                 len(positions_to_close),
             )
 
@@ -150,7 +158,7 @@ class ExchangeClient:
                     symbol=pos.symbol,
                     action=action,
                     amount=pos.amount,
-                    order_type="market",
+                    order_type="limit",  # Market yerine limit (Slippage koruması)
                 )
                 try:
                     if self._params.execution.mode == TradingMode.PAPER:
@@ -159,11 +167,34 @@ class ExchangeClient:
                     else:
                         with self._exchange_lock:
                             exchange = self._get_exchange()
-                            exchange.create_order(  # type: ignore
+                            
+                            # Likidite duyarlı parçalı kapatma veya korumalı limit
+                            try:
+                                ticker = exchange.fetch_ticker(order.symbol)
+                                current_price = float(ticker.get('last', pos.current_price))
+                            except Exception:
+                                current_price = float(pos.current_price)
+                            
+                            # Sonsuz kaymayı (infinite slippage) önlemek için %5 toleranslı limit emir
+                            if order.action == "sell":
+                                safe_price = current_price * 0.95
+                            else:
+                                safe_price = current_price * 1.05
+                                
+                            safe_price_str = exchange.price_to_precision(order.symbol, safe_price)
+                            exec_amount_str = exchange.amount_to_precision(order.symbol, order.amount)
+                            
+                            logger.info(
+                                "Smart Close [%s]: %s %s @ ~%s (Slippage Limit: %s)", 
+                                order.symbol, order.action.upper(), exec_amount_str, current_price, safe_price_str
+                            )
+
+                            exchange.create_order(
                                 symbol=order.symbol,
-                                type="market",
+                                type="limit",
                                 side=order.action,
-                                amount=order.amount,
+                                amount=float(exec_amount_str),
+                                price=float(safe_price_str)
                             )
                         closed_symbols.append(pos.symbol)
                 except Exception as e:
@@ -175,16 +206,131 @@ class ExchangeClient:
 
             target_portfolio.save_to_file()
             logger.info(
-                "Emergency close tamamlandı: %s pozisyon kapatıldı", len(closed_symbols)
+                "Emergency close tamamlandı: %s pozisyon korumalı limit ile kapatıldı", len(closed_symbols)
             )
 
     def _get_paper_engine(self) -> PaperTradingEngine:
-        """Paper trading engine'i lazy olarak başlatır."""
-        if self._paper_engine is None:
-            self._paper_engine = PaperTradingEngine(
-                initial_cash=self._params.backtest.initial_cash,
-            )
-        return self._paper_engine
+        """Paper trading engine'i lazy olarak başlatır (thread-safe)."""
+        with self._exchange_lock:
+            if self._paper_engine is None:
+                self._paper_engine = PaperTradingEngine(
+                    initial_cash=self._params.backtest.initial_cash,
+                )
+            return self._paper_engine
+
+    def _execute_paper_order(
+        self, order: TradeOrder, current_price: float
+    ) -> dict[str, Any]:
+        """
+        Paper emrini yürütür.
+        Eğer portfolio referansı varsa PortfolioState üzerinden çalışır,
+        böylece tek bir kaynak doğruluğu (single source of truth) sağlanır.
+        """
+        from datetime import datetime, timezone
+
+        if not self._portfolio_ref:
+            # Fallback: eski PaperTradingEngine
+            return self._get_paper_engine().execute_order(order, current_price)
+
+        portfolio = self._portfolio_ref
+
+        if order.action == "buy":
+            existing_pos = portfolio.get_position_by_symbol_safe(order.symbol)
+            if not order.is_dca_tranche:
+                if existing_pos:
+                    return {
+                        "status": "rejected",
+                        "message": f"Position already exists: {order.symbol}",
+                        "symbol": order.symbol,
+                    }
+                pos = portfolio.open_position(
+                    symbol=order.symbol,
+                    side="long",
+                    price=current_price,
+                    amount=order.amount,
+                    stop_loss=order.stop_loss,
+                    take_profit=order.take_profit,
+                    target_size=order.target_size,
+                    target_size_usd=order.target_size * current_price
+                    if order.target_size > 0
+                    else order.amount * current_price,
+                )
+                if pos:
+                    return {
+                        "status": "filled",
+                        "order_id": f"paper_{order.symbol}_{int(datetime.now(timezone.utc).timestamp())}",
+                        "symbol": order.symbol,
+                        "side": "buy",
+                        "type": order.order_type,
+                        "amount": order.amount,
+                        "price": current_price,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "mode": "paper",
+                    }
+                return {
+                    "status": "rejected",
+                    "message": "Portfolio open_position failed",
+                }
+            else:
+                # DCA kademesi
+                if not existing_pos:
+                    return {
+                        "status": "rejected",
+                        "message": f"No existing position for DCA: {order.symbol}",
+                    }
+                pos = portfolio.add_dca_tranche(
+                    symbol=order.symbol,
+                    amount=order.amount,
+                    price=current_price,
+                    stop_loss=order.stop_loss,
+                    take_profit=order.take_profit,
+                )
+                if pos:
+                    return {
+                        "status": "filled",
+                        "order_id": f"paper_dca_{order.symbol}_{int(datetime.now(timezone.utc).timestamp())}",
+                        "symbol": order.symbol,
+                        "side": "buy",
+                        "type": order.order_type,
+                        "amount": order.amount,
+                        "price": current_price,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "mode": "paper",
+                    }
+                return {
+                    "status": "rejected",
+                    "message": "Portfolio add_dca_tranche failed",
+                }
+
+        elif order.action == "sell":
+            existing_pos = portfolio.get_position_by_symbol_safe(order.symbol)
+            if not existing_pos:
+                return {
+                    "status": "rejected",
+                    "message": f"No position to sell: {order.symbol}",
+                }
+            result = portfolio.close_position_safe(order.symbol, current_price)
+            if result:
+                return {
+                    "status": "filled",
+                    "order_id": f"paper_sell_{order.symbol}_{int(datetime.now(timezone.utc).timestamp())}",
+                    "symbol": order.symbol,
+                    "side": "sell",
+                    "type": order.order_type,
+                    "amount": order.amount,
+                    "price": current_price,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "mode": "paper",
+                }
+            return {
+                "status": "rejected",
+                "message": "Portfolio close_position_safe failed",
+            }
+
+        return {
+            "status": "error",
+            "message": f"Unknown action: {order.action}",
+        }
 
     def _get_exchange(self) -> ccxt.Exchange:
         """Borsa bağlantısını başlatır (lazy)."""
@@ -200,11 +346,21 @@ class ExchangeClient:
 
             if self._settings.binance_testnet:
                 config["sandbox"] = True
-            safe_config = {
-                **config,
-                "apiKey": "***" if config.get("apiKey") else "",
-                "secret": "***" if config.get("secret") else "",
-            }
+
+            def _sanitize_config(cfg: dict) -> dict:
+                """Deep sanitize config dict for safe logging."""
+                sensitive_keys = {"apiKey", "secret", "password", "uid", "login"}
+                sanitized = {}
+                for k, v in cfg.items():
+                    if k in sensitive_keys:
+                        sanitized[k] = "***" if v else ""
+                    elif isinstance(v, dict):
+                        sanitized[k] = _sanitize_config(v)
+                    else:
+                        sanitized[k] = v
+                return sanitized
+
+            safe_config = _sanitize_config(config)
 
             exchange_class = getattr(ccxt, exchange_id, None)
             if exchange_class is None:
@@ -270,24 +426,27 @@ class ExchangeClient:
             logger.warning("CIRCUIT BREAKER ACTIVE: New orders blocked. Reason: %s", cb_reason)
             return {"status": "rejected", "message": "Circuit breaker active"}
 
-        from risk.portfolio import _portfolio_lock
-        
-        with _portfolio_lock:
-            if not self._check_connection():
-                return {"status": "error", "message": "API bağlantı kesildi"}
+        # Check connection BEFORE acquiring portfolio lock to avoid lock nesting deadlock
+        if not self._check_connection():
+            return {"status": "error", "message": "API bağlantı kesildi"}
 
-            # Paper mod — simülasyon
-            if self._params.execution.mode == TradingMode.PAPER:
-                logger.info(
-                    "📝 PAPER TRADING: %s %s %.6f %s",
-                    order.action.upper(),
-                    order.symbol,
-                    order.amount,
-                    order.order_type,
-                )
-                result = self._get_paper_engine().execute_order(order, current_price)
-                self._last_successful_call = time.time()
-                return result
+        # Paper mod — simülasyon (portfolio optional, legacy engine fallback)
+        if self._params.execution.mode == TradingMode.PAPER:
+            logger.info(
+                "📝 PAPER TRADING: %s %s %.6f %s",
+                order.action.upper(),
+                order.symbol,
+                order.amount,
+                order.order_type,
+            )
+            result = self._execute_paper_order(order, current_price)
+            self._last_successful_call = time.time()
+            return result
+
+        if portfolio is None:
+            return {"status": "error", "message": "Portfolio reference missing"}
+
+        with portfolio._lock:
 
             # Live mod — gerçek borsa
             with self._exchange_lock:
@@ -310,12 +469,44 @@ class ExchangeClient:
                 )
 
             self._rate_limit()
+            
+            import uuid
+            # Idempotent execution: generate a unique clientOrderId with 'llm_' prefix for tagging
+            client_order_id = f"llm_{str(uuid.uuid4()).replace('-', '')[:28]}"
 
             for attempt in range(self._params.execution.retry_count):
+                # Retry öncesi emir gerçekleşti mi kontrolü (Idempotency Check)
+                if attempt > 0:
+                    try:
+                        with self._exchange_lock:
+                            recent_orders = exchange.fetch_orders(order.symbol, limit=10)
+                            found_order = next((o for o in recent_orders if o.get('clientOrderId') == client_order_id or o.get('info', {}).get('clientOrderId') == client_order_id), None)
+                            
+                            if found_order:
+                                logger.info("Önceki deneme başarılı olmuş, emir tekrar edilmeyecek: %s", client_order_id)
+                                order_status = found_order.get("status", "")
+                                filled_status = "filled" if order_status == "closed" else order_status
+                                return {
+                                    "status": filled_status,
+                                    "order_id": found_order.get("id"),
+                                    "symbol": found_order.get("symbol"),
+                                    "side": found_order.get("side"),
+                                    "type": found_order.get("type"),
+                                    "amount": found_order.get("amount"),
+                                    "price": found_order.get("price") or found_order.get("average"),
+                                    "cost": found_order.get("cost"),
+                                    "fee": found_order.get("fee"),
+                                    "timestamp": found_order.get("datetime"),
+                                }
+                    except Exception as verify_exc:
+                        logger.warning("Retry öncesi emir durumu doğrulanamadı: %s", verify_exc)
+
                 try:
                     with self._exchange_lock:
                         # Miktar ve fiyatı borsa hassasiyetine göre yuvarla
                         exec_amount = exchange.amount_to_precision(order.symbol, order.amount)
+                        
+                        params = {"clientOrderId": client_order_id}
 
                         if order.order_type == "market":
                             result = exchange.create_order(
@@ -323,6 +514,7 @@ class ExchangeClient:
                                 type="market",
                                 side=order.action,
                                 amount=exec_amount,
+                                params=params
                             )
                         elif order.order_type == "limit":
                             exec_price = exchange.price_to_precision(order.symbol, order.price)
@@ -332,6 +524,7 @@ class ExchangeClient:
                                 side=order.action,
                                 amount=exec_amount,
                                 price=exec_price,
+                                params=params
                             )
                         else:
                             logger.error("Bilinmeyen emir tipi: %s", order.order_type)
@@ -356,10 +549,11 @@ class ExchangeClient:
                     }
 
                     logger.info(
-                        "Emir gönderildi: ID=%s, durum=%s, fiyat=%s",
+                        "Emir gönderildi: ID=%s, durum=%s, fiyat=%s (clientOrderId=%s)",
                         order_info["order_id"],
                         order_info["status"],
                         order_info["price"],
+                        client_order_id
                     )
                     self._last_successful_call = time.time()
                     return order_info
@@ -489,7 +683,12 @@ class ExchangeClient:
             exchange = self._get_exchange()
             
             # CCXT Binance'de dust transfer desteği kontrolü
-            if not hasattr(exchange, 'sapi_post_asset_dust'):
+            dust_method = None
+            for method_name in ('sapi_post_asset_dust', 'sapiPostAssetDust', 'sapiPostAssetDust'):
+                if hasattr(exchange, method_name):
+                    dust_method = getattr(exchange, method_name)
+                    break
+            if dust_method is None:
                 logger.warning("Borsa dust transfer'i desteklemiyor")
                 return {
                     "status": "not_supported",
@@ -501,7 +700,6 @@ class ExchangeClient:
             self._rate_limit()
             
             try:
-                # Dust bakiyeleri çek (min $1 altı)
                 dust_assets = self._get_dust_assets()
                 
                 if not dust_assets:
@@ -515,7 +713,7 @@ class ExchangeClient:
                 
                 # Binance API çağrısı
                 # CCXT formatı: {'asset': ['BTC', 'ETH'], ...}
-                result = exchange.sapi_post_asset_dust({
+                result = dust_method({
                     'asset': dust_assets
                 })
                 

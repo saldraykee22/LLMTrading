@@ -60,8 +60,9 @@ class TTLCache(InMemoryCache):
             super().update(prompt, llm_string, return_val)
 
 
-# TTL-based LLM cache (30 min TTL, max 500 entries)
-set_llm_cache(TTLCache(ttl_seconds=1800, max_size=500))
+# Note: Global LLM cache removed to avoid side effects on other agents.
+# Per-instance caching is used within SentimentAnalyzer instead.
+# set_llm_cache(TTLCache(ttl_seconds=1800, max_size=500))  # REMOVED
 
 from config.settings import (
     LLMProvider,
@@ -95,6 +96,13 @@ def create_llm(
     Belirtilen sağlayıcı için LLM nesnesi oluşturur.
     Tüm sağlayıcılar OpenAI uyumlu API kullanır.
     """
+    # String provider'ı enum'a dönüştür (graph.py'den str gelebilir)
+    if isinstance(provider, str):
+        try:
+            provider = LLMProvider(provider.lower())
+        except ValueError:
+            provider = None
+
     settings = get_settings()
     params = get_trading_params()
     prov = provider or params.sentiment.provider
@@ -185,6 +193,9 @@ class SentimentAnalyzer:
         cached = self._store.get_latest(symbol)
         if cached:
             last_time = datetime.fromisoformat(cached.timestamp)
+            # Ensure timezone-aware comparison
+            if last_time.tzinfo is None:
+                last_time = last_time.replace(tzinfo=timezone.utc)
             now = datetime.now(timezone.utc)
             min_interval = self._params.limits.sentiment_cache_minutes
             if (now - last_time).total_seconds() < min_interval * 60:

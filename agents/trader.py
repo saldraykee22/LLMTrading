@@ -86,14 +86,14 @@ def trader_node(state: TradingState) -> dict[str, Any]:
 - Trend: {research.get("trend", "neutral")}
 
 ## Tartışma Sonucu
-- Konsensüs: {debate.get("consensus_score", 0):.2f}
+- Konsensüs: {debate.get("consensus_score", 0) or 0:.2f}
 - Düzeltilmiş sinyal: {debate.get("adjusted_signal", "neutral")}
 
 ## KRITIK: Risk Yöneticisi Onayı
 RISK ONAYlandı! Aşağıdaki parametrelere göre işlem emri oluştur:
-- Onaylanan boyut: {risk.get("approved_size", 0)} USDT
-- Stop-loss seviyesi: {risk.get("stop_loss_level", 0):.2f}
-- Take-profit seviyesi: {risk.get("take_profit_level", 0):.2f}
+- Onaylanan boyut: {risk.get("approved_size", 0) or 0} USDT
+- Stop-loss seviyesi: {(risk.get("stop_loss_level", 0) or 0):.2f}
+- Take-profit seviyesi: {(risk.get("take_profit_level", 0) or 0):.2f}
 
 ## Teknik Göstergeler
 - Güncel fiyat: {tech.get("current_price", 0)}
@@ -102,9 +102,13 @@ RISK ONAYlandı! Aşağıdaki parametrelere göre işlem emri oluştur:
 - Trend: {tech.get("trend", "neutral")}
 """
     
-    # Dinamik kuralları ekle
+    # Dinamik kuralları ekle (güçlü sanitization ile)
     if dynamic_rules:
-        user_msg += f"\n{dynamic_rules}"
+        # Security: Enhanced Dynamic Rules Sanitization (shared utility)
+        from utils.dynamic_rules import sanitize_dynamic_rules
+        sanitized_rules = sanitize_dynamic_rules(dynamic_rules)
+        logger.debug("Dynamic rules sanitized: %d chars (original: %d)", len(sanitized_rules), len(dynamic_rules))
+        user_msg += f"\n{sanitized_rules}"
     
     user_msg += f"""
 
@@ -149,7 +153,10 @@ RISK ONAYlandı! Aşağıdaki parametrelere göre işlem emri oluştur:
                 "take_profit": 0,
             },
         )
-        trade_decision = extract_json(response.content)
+        if isinstance(response, dict):
+            trade_decision = response
+        else:
+            trade_decision = extract_json(response.content)
         if trade_decision.get("__parse_error__"):
             logger.warning(
                 "Trader LLM JSON parse hatası: %s",
@@ -178,7 +185,15 @@ RISK ONAYlandı! Aşağıdaki parametrelere göre işlem emri oluştur:
     trade_decision.setdefault("amount", 0)
     trade_decision.setdefault("confidence", 0)
 
-
+    # Risk onaylı boyutu aşma kontrolü
+    approved_size = float(risk.get("approved_size", 0) or 0)
+    if approved_size > 0 and trade_decision.get("amount", 0) > approved_size:
+        logger.warning(
+            "Trader amount (%.2f) exceeds approved size (%.2f) — capping to approved limit",
+            trade_decision["amount"],
+            approved_size,
+        )
+        trade_decision["amount"] = approved_size
 
     action = trade_decision.get("action", "hold")
     amount = trade_decision.get("amount", 0)
@@ -218,7 +233,8 @@ _log_lock = threading.Lock()
 
 def _log_decision_trace(state: dict, trade_decision: dict) -> None:
     try:
-        log_dir = Path("data")
+        from config.settings import DATA_DIR
+        log_dir = DATA_DIR
         log_dir.mkdir(exist_ok=True)
         log_file = log_dir / "decision_trace.jsonl"
         

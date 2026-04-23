@@ -144,7 +144,10 @@ Lütfen tüm verileri sentezleyerek kapsamlı bir araştırma raporu hazırla.""
                 "risk_factors": ["LLM hatası nedeniyle detaylı analiz yok"]
             },
         )
-        research_result = extract_json(response.content)
+        if isinstance(response, dict):
+            research_result = response
+        else:
+            research_result = extract_json(response.content)
         if research_result.get("__parse_error__"):
             logger.warning(
                 "Research LLM JSON parse hatası: %s",

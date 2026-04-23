@@ -170,9 +170,20 @@ class TechnicalAnalyzer:
                             elif prev_macd >= prev_signal and macd_line < signal_line:
                                 signals.macd_signal = "bearish_cross"
             else:
-                macd_line = macd_df.iloc[-1, 0]
-                signal_line = macd_df.iloc[-1, 2]
-                hist = macd_df.iloc[-1, 1]
+                # Fallback: positional index (güvenli bounds check)
+                num_cols = len(macd_df.columns)
+                if num_cols >= 3:
+                    macd_line = macd_df.iloc[-1, 0]
+                    signal_line = macd_df.iloc[-1, 2]
+                    hist = macd_df.iloc[-1, 1]
+                elif num_cols >= 2:
+                    macd_line = macd_df.iloc[-1, 0]
+                    signal_line = macd_df.iloc[-1, 1]
+                    hist = macd_line - signal_line
+                else:
+                    macd_line = macd_df.iloc[-1, 0]
+                    signal_line = 0.0
+                    hist = 0.0
                 signals.macd_histogram = float(hist) if not np.isnan(hist) else 0.0
                 if not np.isnan(macd_line) and not np.isnan(signal_line):
                     signals.macd_trend = (
@@ -180,7 +191,7 @@ class TechnicalAnalyzer:
                     )
                     if len(macd_df) >= 2:
                         prev_macd = macd_df.iloc[-2, 0]
-                        prev_signal = macd_df.iloc[-2, 2]
+                        prev_signal = macd_df.iloc[-2, 1] if num_cols >= 2 else 0.0
                         if not np.isnan(prev_macd) and not np.isnan(prev_signal):
                             if prev_macd <= prev_signal and macd_line > signal_line:
                                 signals.macd_signal = "bullish_cross"
@@ -197,8 +208,16 @@ class TechnicalAnalyzer:
                 upper = bbands[upper_col].iloc[-1]
                 lower = bbands[lower_col].iloc[-1]
             else:
-                upper = bbands.iloc[-1, 0]
-                lower = bbands.iloc[-1, 2]
+                num_cols = len(bbands.columns)
+                if num_cols >= 3:
+                    upper = bbands.iloc[-1, 0]
+                    lower = bbands.iloc[-1, 2]
+                elif num_cols >= 2:
+                    upper = bbands.iloc[-1, 0]
+                    lower = bbands.iloc[-1, 1]
+                else:
+                    upper = bbands.iloc[-1, 0]
+                    lower = 0.0
 
             if not np.isnan(upper) and not np.isnan(lower):
                 price = signals.current_price
@@ -242,24 +261,39 @@ class TechnicalAnalyzer:
         # ── ADX (14) ──────────────────────────────────────
         adx = ta.adx(df["high"], df["low"], df["close"], length=14)
         if adx is not None and not adx.empty:
-            signals.adx_14 = float(adx["ADX_14"].iloc[-1]) if not np.isnan(adx["ADX_14"].iloc[-1]) else 0.0
+            adx_col = next((c for c in adx.columns if c.startswith("ADX")), None)
+            if adx_col:
+                signals.adx_14 = float(adx[adx_col].iloc[-1]) if not np.isnan(adx[adx_col].iloc[-1]) else 0.0
+            elif len(adx.columns) >= 1:
+                signals.adx_14 = float(adx.iloc[-1, 0]) if not np.isnan(adx.iloc[-1, 0]) else 0.0
 
         # ── SuperTrend (7, 3) ─────────────────────────────
         st = ta.supertrend(df["high"], df["low"], df["close"], length=7, multiplier=3.0)
         if st is not None and not st.empty:
-            # Sütun isimleri: SUPERT_7_3.0, SUPERTd_7_3.0 vb.
-            direction_col = "SUPERTd_7_3.0"
-            if direction_col in st.columns:
-                signals.supertrend = "bullish" if st[direction_col].iloc[-1] == 1 else "bearish"
+            # Dinamik sütun ismi çözümleme (versiyon farklılıklarına karşı)
+            direction_col = next((c for c in st.columns if "SUPERTd" in c), None)
+            if direction_col:
+                val = st[direction_col].iloc[-1]
+                signals.supertrend = "bullish" if (val == 1 or str(val).lower() == "true") else "bearish"
+            elif len(st.columns) >= 2:
+                # Fallback: 2. sütun direction olabilir
+                val = st.iloc[-1, 1]
+                if not np.isnan(val):
+                    signals.supertrend = "bullish" if (val == 1 or str(val).lower() == "true") else "bearish"
 
         # ── StochRSI (14, 3, 3) ────────────────────────────
         stoch_rsi = ta.stochrsi(df["close"], length=14, k=3, d=3)
         if stoch_rsi is not None and not stoch_rsi.empty:
-            k_col = "STOCHRSIk_14_14_3_3"
-            d_col = "STOCHRSId_14_14_3_3"
-            if k_col in stoch_rsi.columns:
-                signals.stoch_rsi_k = float(stoch_rsi[k_col].iloc[-1])
-                signals.stoch_rsi_d = float(stoch_rsi[d_col].iloc[-1])
+            k_col = next((c for c in stoch_rsi.columns if "STOCHRSIk" in c), None)
+            d_col = next((c for c in stoch_rsi.columns if "STOCHRSId" in c), None)
+            if k_col:
+                signals.stoch_rsi_k = float(stoch_rsi[k_col].iloc[-1]) if not np.isnan(stoch_rsi[k_col].iloc[-1]) else 50.0
+            if d_col:
+                signals.stoch_rsi_d = float(stoch_rsi[d_col].iloc[-1]) if not np.isnan(stoch_rsi[d_col].iloc[-1]) else 50.0
+            elif len(stoch_rsi.columns) >= 2:
+                # Fallback: positional index
+                signals.stoch_rsi_k = float(stoch_rsi.iloc[-1, 0]) if not np.isnan(stoch_rsi.iloc[-1, 0]) else 50.0
+                signals.stoch_rsi_d = float(stoch_rsi.iloc[-1, 1]) if not np.isnan(stoch_rsi.iloc[-1, 1]) else 50.0
 
         # ── Destek / Direnç ───────────────────────────────
         signals.support_levels, signals.resistance_levels = self._find_levels(df)

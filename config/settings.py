@@ -235,7 +235,7 @@ class AgentParams(BaseModel):
     trader_model: str = "qwen/qwen3.5-flash-02-23"
     ensemble_enabled: bool = True
     ensemble_models: list[str] = Field(
-        default_factory=lambda: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b", "openrouter/openai/gpt-4o-mini"]
+        default_factory=lambda: ["deepseek/deepseek-chat-v3-0324", "ollama/llama3:8b", "openai/gpt-4o-mini"]
     )
     ensemble_min_consensus: float = 0.5
 
@@ -457,6 +457,68 @@ def get_trading_params() -> TradingParams:
     return _trading_params
 
 
+def reload_settings() -> Settings:
+    """Settings singleton'ı yeniden yükler (hot-reload için)."""
+    global _settings
+    with _settings_lock:
+        _settings = Settings()
+    logger.info("Settings reloaded (hot-reload)")
+    return _settings
+
+
+def reload_trading_params() -> TradingParams:
+    """TradingParams singleton'ı yeniden yükler (hot-reload için)."""
+    global _trading_params
+    with _params_lock:
+        _trading_params = load_trading_params()
+    logger.info("TradingParams reloaded (hot-reload)")
+    return _trading_params
+
+
+def validate_api_keys(mode: TradingMode | None = None) -> list[str]:
+    """
+    API anahtarlarını doğrula. Eksik/boş anahtarlar için uyarı döndür.
+
+    Args:
+        mode: Trading modu (None ise settings'ten okunur)
+
+    Returns:
+        Uyarı mesajları listesi (boş ise her şey yolunda)
+    """
+    settings = get_settings()
+    params = get_trading_params()
+    current_mode = mode or params.execution.mode
+    warnings: list[str] = []
+
+    # LLM provider anahtarları
+    if current_mode == TradingMode.LIVE or current_mode == TradingMode.PAPER:
+        if not settings.openrouter_api_key:
+            warnings.append("OPENROUTER_API_KEY boş — LLM analizleri çalışmayabilir")
+        if not settings.deepseek_api_key:
+            warnings.append("DEEPSEEK_API_KEY boş — fallback provider çalışmayabilir")
+
+    # Live trading için Binance anahtarları zorunlu
+    if current_mode == TradingMode.LIVE:
+        if not settings.binance_api_key:
+            warnings.append("BINANCE_API_KEY boş — LIVE trading için zorunlu")
+        if not settings.binance_api_secret:
+            warnings.append("BINANCE_API_SECRET boş — LIVE trading için zorunlu")
+        if not settings.confirm_live_trade:
+            warnings.append("CONFIRM_LIVE_TRADE=false — güvenlik kilidi devre dışı")
+
+    # News API
+    if not settings.finnhub_api_key:
+        warnings.append("FINNHUB_API_KEY boş — haber verisi RSS fallback ile çalışacak")
+
+    if warnings:
+        for w in warnings:
+            logger.warning("API Key Validation: %s", w)
+    else:
+        logger.info("API key validation passed")
+
+    return warnings
+
+
 def get_fallback_config(agent_name: str) -> dict[str, Any] | None:
     """
     Ajan bazlı fallback config döndürür.
@@ -468,8 +530,17 @@ def get_fallback_config(agent_name: str) -> dict[str, Any] | None:
     Returns:
         Fallback config dict veya None
     """
-    params = get_trading_params()
-    fallbacks = params.llm.fallbacks
+    try:
+        params = get_trading_params()
+        # None safety: fallbacks None veya dict değilse güvenli fallback
+        fallbacks = params.llm.fallbacks or {}
+        
+        if not isinstance(fallbacks, dict):
+            logger.warning("fallbacks is not a dict, using empty dict")
+            fallbacks = {}
+    except Exception as e:
+        logger.error("get_fallback_config params load error: %s", e)
+        fallbacks = {}
     
     # Agent name mapping
     agent_map = {

@@ -119,6 +119,15 @@ class TestParseTradeDecision:
 
 
 class TestCircuitBreaker:
+    def setup_method(self):
+        from config.settings import DATA_DIR
+        from risk.system_status import SystemStatus
+
+        stop_file = DATA_DIR / "STOP"
+        if stop_file.exists():
+            stop_file.unlink()
+        SystemStatus.reset_instance()
+
     def test_initial_state_not_halted(self):
         cb = CircuitBreaker()
         halted, _ = cb.should_halt(equity=10000, daily_pnl=0)

@@ -62,14 +62,15 @@ class DriftMonitor:
 
     def _load_history(self) -> None:
         if DRIFT_HISTORY_FILE.exists():
-            with open(DRIFT_HISTORY_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            self._history.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
+            with _drift_lock:
+                with open(DRIFT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                self._history.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
         logger.info("Drift history loaded: %d records", len(self._history))
 
     def _append_history(self, record: dict[str, Any]) -> None:

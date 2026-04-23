@@ -9,9 +9,12 @@ Farklı piyasalar için sembol formatlarını otomatik çözümler:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class AssetClass(str, Enum):
@@ -282,7 +285,5 @@ def refresh_crypto_bases(exchange_name: str = "binance") -> set[str]:
         logger.info("Crypto bases refreshed: %d bases found", len(bases))
         return bases
     except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("Failed to refresh crypto bases: %s", e)
+        logger.warning("Failed to refresh crypto bases: %s", e)
         return CRYPTO_BASES
