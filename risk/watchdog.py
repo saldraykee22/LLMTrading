@@ -8,6 +8,7 @@ or close positions when extreme price movements are detected.
 from __future__ import annotations
 
 import logging
+import concurrent.futures
 import threading
 import time
 from datetime import datetime, timezone
@@ -105,34 +106,42 @@ class Watchdog:
         
         return True
 
+    def _check_single_symbol(self, symbol: str) -> None:
+        """Helper to check a single symbol for flash crash."""
+        try:
+            df = self._market_client.fetch_ohlcv(symbol, days=1)
+            if df.empty or len(df) < 2:
+                return
+
+            current_price = float(df["close"].iloc[-1])
+            prev_price = float(df["close"].iloc[-2])
+
+            if prev_price <= 0:
+                return
+
+            drop_pct = (prev_price - current_price) / prev_price * 100
+
+            if drop_pct >= self.crash_threshold_pct:
+                logger.critical(
+                    "FLASH CRASH DETECTED: %s dropped %.2f%% (%.4f -> %.4f)",
+                    symbol,
+                    drop_pct,
+                    prev_price,
+                    current_price,
+                )
+                self._handle_crash(symbol, current_price, drop_pct)
+
+        except Exception as e:
+            logger.warning("Watchdog check failed for %s: %s", symbol, e)
+
     def _check_symbols(self) -> None:
         """Checks all symbols for flash crash conditions."""
-        for symbol in self.symbols:
-            try:
-                df = self._market_client.fetch_ohlcv(symbol, days=1)
-                if df.empty or len(df) < 2:
-                    continue
+        if not self.symbols:
+            return
 
-                current_price = float(df["close"].iloc[-1])
-                prev_price = float(df["close"].iloc[-2])
-
-                if prev_price <= 0:
-                    continue
-
-                drop_pct = (prev_price - current_price) / prev_price * 100
-
-                if drop_pct >= self.crash_threshold_pct:
-                    logger.critical(
-                        "FLASH CRASH DETECTED: %s dropped %.2f%% (%.4f -> %.4f)",
-                        symbol,
-                        drop_pct,
-                        prev_price,
-                        current_price,
-                    )
-                    self._handle_crash(symbol, current_price, drop_pct)
-
-            except Exception as e:
-                logger.warning("Watchdog check failed for %s: %s", symbol, e)
+        workers = min(len(self.symbols), 10)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            executor.map(self._check_single_symbol, self.symbols)
 
     def _check_position_sl_tp(self) -> None:
         """Checks all open positions for stop-loss and take-profit triggers - thread-safe."""
