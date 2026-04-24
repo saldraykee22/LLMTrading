@@ -385,6 +385,12 @@ class HealthChecker:
             sys.exit(0)
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """Entry point for CLI usage."""
     checker = HealthChecker()
     checker.run_health_check()
+    return 0
+
+
+if __name__ == "__main__":
+    main()

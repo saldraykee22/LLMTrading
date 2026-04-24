@@ -65,3 +65,6 @@ git_diff*.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Cloud Sync Temp
+.tmp.driveupload/
