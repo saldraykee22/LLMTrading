@@ -309,6 +309,7 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
     api_calls_total.labels(type="monte_carlo").inc()
     import math
     import random
+    import numpy as np
 
     initial_equity = 10000.0
     daily_returns = []
@@ -335,12 +336,8 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
         mean_ret = 0.001
         std_ret = 0.02
     
-    final_values = []
-    for _ in range(n_simulations):
-        equity = initial_equity
-        for _ in range(days):
-            equity *= 1 + random.gauss(mean_ret, std_ret)
-        final_values.append(equity)
+    random_returns = np.random.normal(mean_ret, std_ret, (n_simulations, days))
+    final_values = (initial_equity * np.prod(1 + random_returns, axis=1)).tolist()
     final_values.sort()
     
     # Guard: Division by zero protection
