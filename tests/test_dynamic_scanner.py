@@ -17,6 +17,10 @@ class TestDynamicScanner:
         mock_client = Mock()
         scanner = MarketScanner(client=mock_client)
         
+        scanner.params_dict["scan_interval_hours"] = 6
+        scanner.params_dict["scan_interval_hours_high_cash"] = 3
+        scanner.params_dict["min_cash_ratio_for_frequent_scan"] = 0.50
+
         # Test 1: Normal nakit (%30), 6 saatte bir
         scanner.last_scan_cycle = 0
         assert scanner.should_scan(cycle=3, cash_ratio=0.30) is False  # Henüz erken
