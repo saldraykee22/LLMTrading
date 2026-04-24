@@ -31,11 +31,8 @@ class MarketDataClient:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._params = get_trading_params()
-        self._exchange_private: ccxt.Exchange | None = None
-        self._exchange_public: ccxt.Exchange | None = None
-        # Thread-safety için lock'lar
-        self._exchange_private_lock = threading.RLock()
-        self._exchange_public_lock = threading.RLock()
+        # Thread-local storage for CCXT exchange instances
+        self._local = threading.local()
         # Ticker cache
         self._tickers_cache: dict | None = None
         self._tickers_cache_time: float = 0.0
@@ -43,50 +40,50 @@ class MarketDataClient:
 
     # ── Binance CCXT Bağlantısı ────────────────────────────
     def _get_private_exchange(self) -> ccxt.Exchange:
-        """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar). Thread-safe."""
-        with self._exchange_private_lock:
-            if self._exchange_private is None:
-                config: dict = {
-                    "apiKey": self._settings.binance_api_key,
-                    "secret": self._settings.binance_api_secret,
-                    "enableRateLimit": True,
-                    "options": {"defaultType": "spot"},
-                }
-                if self._settings.binance_testnet:
-                    config["sandbox"] = True
-                safe_config = {
-                    **config,
-                    "apiKey": "***" if config.get("apiKey") else "",
-                    "secret": "***" if config.get("secret") else "",
-                }
+        """Binance private exchange (Emirler/Bakiye - Testnet'e saygı duyar). Thread-safe with thread local."""
+        if getattr(self._local, "exchange_private", None) is None:
+            config: dict = {
+                "apiKey": self._settings.binance_api_key,
+                "secret": self._settings.binance_api_secret,
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            }
+            if self._settings.binance_testnet:
+                config["sandbox"] = True
+            safe_config = {
+                **config,
+                "apiKey": "***" if config.get("apiKey") else "",
+                "secret": "***" if config.get("secret") else "",
+            }
 
-                try:
-                    self._exchange_private = ccxt.binance(config)
-                except Exception as e:
-                    logger.error(
-                        "Binance private connection failed: %s (config=%s)",
-                        str(e),
-                        safe_config,
-                    )
-                    raise
-                logger.info(
-                    "Binance private connection established (testnet=%s)",
-                    self._settings.binance_testnet,
+            try:
+                exchange = ccxt.binance(config)
+            except Exception as e:
+                logger.error(
+                    "Binance private connection failed: %s (config=%s)",
+                    str(e),
+                    safe_config,
                 )
-            return self._exchange_private
+                raise
+            logger.info(
+                "Binance private connection established (testnet=%s)",
+                self._settings.binance_testnet,
+            )
+            self._local.exchange_private = exchange
+        return self._local.exchange_private
 
     def _get_public_exchange(self) -> ccxt.Exchange:
-        """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet). Thread-safe."""
-        with self._exchange_public_lock:
-            if self._exchange_public is None:
-                config: dict = {
-                    "enableRateLimit": True,
-                    "options": {"defaultType": "spot"},
-                }
-                # Public data için API key gerekmez, sandbox zorunluluğu yok
-                self._exchange_public = ccxt.binance(config)
-                logger.info("Binance public connection established (Mainnet)")
-            return self._exchange_public
+        """Binance public exchange (Piyasa Verisi - HER ZAMAN Mainnet). Thread-safe with thread local."""
+        if getattr(self._local, "exchange_public", None) is None:
+            config: dict = {
+                "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
+            }
+            # Public data için API key gerekmez, sandbox zorunluluğu yok
+            exchange = ccxt.binance(config)
+            logger.info("Binance public connection established (Mainnet)")
+            self._local.exchange_public = exchange
+        return self._local.exchange_public
 
     # ── Kripto OHLCV ───────────────────────────────────────
     def fetch_crypto_ohlcv(

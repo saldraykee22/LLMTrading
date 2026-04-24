@@ -52,7 +52,8 @@ class TestExchangeClient:
                 
         SystemStatus.reset_instance()
         with patch('execution.exchange_client.get_settings', return_value=mock_settings), \
-             patch('execution.exchange_client.get_trading_params', return_value=mock_params):
+             patch('execution.exchange_client.get_trading_params', return_value=mock_params), \
+             patch('ccxt.binance', return_value=MagicMock()):
             client = ExchangeClient()
             from risk.portfolio import PortfolioState
             client.set_portfolio(PortfolioState())

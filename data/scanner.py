@@ -13,6 +13,7 @@ Strateji:
 import logging
 import pandas as pd
 from typing import List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from data.market_data import MarketDataClient
 from config.settings import get_trading_params, MomentumThreshold
 
@@ -336,7 +337,8 @@ class MarketScanner:
 
         # ── AŞAMA 2: 1h Veri ile Kalite Skoru ────────────────
         final_candidates = []
-        for cand in top_candidates:
+
+        def process_candidate(cand):
             try:
                 df_1h = self.client.fetch_ohlcv(
                     cand['symbol'], 
@@ -345,7 +347,7 @@ class MarketScanner:
                 )
                 
                 if df_1h.empty or len(df_1h) < 12:
-                    continue
+                    return None
 
                 # Kalite skoru hesapla (ATR-normalized)
                 score, breakdown = self._calculate_quality_score(
@@ -369,11 +371,18 @@ class MarketScanner:
                     ),
                 })
                 
-                # Puanı hesaplananları önce havuza ekle
-                final_candidates.append(cand)
+                return cand
                     
             except Exception as e:
                 logger.warning("Aday analizi hatası (%s): %s", cand['symbol'], e)
+                return None
+
+        with ThreadPoolExecutor(max_workers=min(len(top_candidates), 10) if top_candidates else 1) as executor:
+            future_to_cand = {executor.submit(process_candidate, cand): cand for cand in top_candidates}
+            for future in as_completed(future_to_cand):
+                result = future.result()
+                if result:
+                    final_candidates.append(result)
 
         # Skora göre sırala
         all_scored = sorted(
