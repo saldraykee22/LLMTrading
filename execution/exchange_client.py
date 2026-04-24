@@ -158,7 +158,7 @@ class ExchangeClient:
                     symbol=pos.symbol,
                     action=action,
                     amount=pos.amount,
-                    order_type="limit",  # Market yerine limit (Slippage koruması)
+                    order_type="market",  # Market emir + slippage toleranslı fallback
                 )
                 try:
                     if self._params.execution.mode == TradingMode.PAPER:
@@ -168,34 +168,45 @@ class ExchangeClient:
                         with self._exchange_lock:
                             exchange = self._get_exchange()
                             
-                            # Likidite duyarlı parçalı kapatma veya korumalı limit
+                            # Önce market emir dene, başarısız olursa slippage toleranslı limit fallback
                             try:
                                 ticker = exchange.fetch_ticker(order.symbol)
                                 current_price = float(ticker.get('last', pos.current_price))
                             except Exception:
                                 current_price = float(pos.current_price)
-                            
-                            # Sonsuz kaymayı (infinite slippage) önlemek için %5 toleranslı limit emir
-                            if order.action == "sell":
-                                safe_price = current_price * 0.95
-                            else:
-                                safe_price = current_price * 1.05
-                                
-                            safe_price_str = exchange.price_to_precision(order.symbol, safe_price)
+
                             exec_amount_str = exchange.amount_to_precision(order.symbol, order.amount)
-                            
+
                             logger.info(
-                                "Smart Close [%s]: %s %s @ ~%s (Slippage Limit: %s)", 
-                                order.symbol, order.action.upper(), exec_amount_str, current_price, safe_price_str
+                                "Emergency Close [%s]: %s %s @ market (~%s)", 
+                                order.symbol, order.action.upper(), exec_amount_str, current_price
                             )
 
-                            exchange.create_order(
-                                symbol=order.symbol,
-                                type="limit",
-                                side=order.action,
-                                amount=float(exec_amount_str),
-                                price=float(safe_price_str)
-                            )
+                            try:
+                                exchange.create_order(
+                                    symbol=order.symbol,
+                                    type="market",
+                                    side=order.action,
+                                    amount=float(exec_amount_str),
+                                )
+                            except Exception as market_err:
+                                logger.warning(
+                                    "Market emir başarısız (%s), slippage toleranslı limit deneniyor: %s",
+                                    order.symbol, market_err
+                                )
+                                # Fallback: %5 slippage toleranslı limit emir
+                                if order.action == "sell":
+                                    safe_price = current_price * 0.95
+                                else:
+                                    safe_price = current_price * 1.05
+                                safe_price_str = exchange.price_to_precision(order.symbol, safe_price)
+                                exchange.create_order(
+                                    symbol=order.symbol,
+                                    type="limit",
+                                    side=order.action,
+                                    amount=float(exec_amount_str),
+                                    price=float(safe_price_str)
+                                )
                         closed_symbols.append(pos.symbol)
                 except Exception as e:
                     logger.error("Emergency close hatası (%s): %s", pos.symbol, e)
@@ -206,7 +217,7 @@ class ExchangeClient:
 
             target_portfolio.save_to_file()
             logger.info(
-                "Emergency close tamamlandı: %s pozisyon korumalı limit ile kapatıldı", len(closed_symbols)
+                "Emergency close tamamlandı: %s pozisyon kapatıldı (market emir + limit fallback)", len(closed_symbols)
             )
 
     def _get_paper_engine(self) -> PaperTradingEngine:
@@ -684,7 +695,7 @@ class ExchangeClient:
             
             # CCXT Binance'de dust transfer desteği kontrolü
             dust_method = None
-            for method_name in ('sapi_post_asset_dust', 'sapiPostAssetDust', 'sapiPostAssetDust'):
+            for method_name in ('sapi_post_asset_dust', 'sapiPostAssetDust'):
                 if hasattr(exchange, method_name):
                     dust_method = getattr(exchange, method_name)
                     break

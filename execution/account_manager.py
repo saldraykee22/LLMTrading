@@ -247,8 +247,10 @@ class MultiAccountManager:
             logger.warning("Aktif hesap yok")
             return {"status": "error", "reason": "No active accounts"}
         
-        # Kullanılacak risk yüzdesi (order'dan veya default)
-        risk_pct = order.execution_size_pct if order.execution_size_pct > 0 else 1.0
+        # Kullanılacak pozisyon büyüklüğü oranı (order'dan veya default)
+        size_pct = order.execution_size_pct if order.execution_size_pct > 0 else 1.0
+        # NOT: execution_size_pct burada pozisyon boyutlandırma oranı olarak kullanılır.
+        # Bu alan ileride risk_pct (risk bazlı) ve position_size_pct (sabit oran) olarak ayrılabilir.
         
         for name, data in active_accounts.items():
             # Rate limit delay

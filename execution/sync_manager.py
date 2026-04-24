@@ -134,10 +134,17 @@ class SyncManager:
             remote_balance = client.get_balance()
             local_usdt = portfolio.cash
             remote_usdt = remote_balance.get("USDT", 0.0)
-            
+
             tolerance = 0.05
+
+            if local_usdt == 0 and remote_usdt > 0:
+                logger.warning(
+                    f"⚠️  Balance discrepancy: local=0 (empty portfolio), remote={remote_usdt} — possible out-of-sync reset"
+                )
+                return {"status": "discrepancy", "local": 0.0, "remote": remote_usdt, "diff_pct": 1.0}
+
             diff_pct = abs(remote_usdt - local_usdt) / local_usdt if local_usdt > 0 else 0
-            
+
             if diff_pct > tolerance:
                 logger.warning(
                     f"⚠️  Balance discrepancy: local={local_usdt}, remote={remote_usdt} ({diff_pct*100:.2f}%)"
