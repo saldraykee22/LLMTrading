@@ -33,9 +33,27 @@ venv/
 .ruff_cache/
 htmlcov/
 pytest_out.txt
+pytest_output.txt
+pytest_results.txt
+pytest_core.txt
+pytest_core_err.txt
+pytest_live.txt
+pytest_live_err.txt
 nosetests.xml
 coverage.xml
 *.cover
+
+# Temp output files
+t[0-9].txt
+t[0-9][0-9].txt
+tests_collected.txt
+test_run_output.txt
+paper_test_output.txt
+
+# Root-level smoke/paper test scripts (not part of test suite)
+test_live_smoke.py
+test_paper_comprehensive.py
+PAPER_MODE_TEST_REPORT.md
 
 # Data & State
 data/cache/

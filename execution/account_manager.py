@@ -270,7 +270,7 @@ class MultiAccountManager:
                 
                 # Pozisyon boyutunu hesapla (hesabın bakiyesine göre)
                 size = self._calculate_position_size_for_account(
-                    portfolio, client, price, risk_pct
+                    portfolio, client, price, None
                 )
                 
                 if size <= 0:
