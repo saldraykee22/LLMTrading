@@ -5,7 +5,6 @@ Faz 1 uygulamasının birim testleri.
 """
 
 import pytest
-from pathlib import Path
 from risk.portfolio import PortfolioState, Position
 
 
@@ -115,7 +114,7 @@ class TestPortfolioDCA:
         portfolio = PortfolioState(initial_cash=10000.0)
         
         # İlk pozisyon
-        pos1 = portfolio.open_position(
+        portfolio.open_position(
             symbol="BTC/USDT",
             side="long",
             price=50000.0,

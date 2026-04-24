@@ -202,7 +202,7 @@ class TestBase64Payload:
         """Long base64 string engelleme."""
         # 200+ karakter base64 string
         malicious = "a" * 250  # Simple pattern, not real base64
-        sanitized = sanitize_dynamic_rules(malicious)
+        sanitize_dynamic_rules(malicious)
         
         # Very long strings should be flagged
         # (Bu test heuristic, gerçek base64 detection daha kompleks)
@@ -331,7 +331,7 @@ class TestLogging:
         malicious += "normal text" * 10  # Sadece %10 normal
         
         with caplog.at_level(logging.WARNING):
-            sanitized = sanitize_dynamic_rules(malicious)
+            sanitize_dynamic_rules(malicious)
         
         # Warning log'lanmış olmalı
         assert any("heavy sanitization" in record.message.lower() 

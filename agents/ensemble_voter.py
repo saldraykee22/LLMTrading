@@ -7,7 +7,6 @@ via majority vote (categorical) and weighted average (numerical).
 
 from __future__ import annotations
 
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any

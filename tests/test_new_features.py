@@ -7,9 +7,8 @@
 - TechnicalAnalyzer + OrderBookAnalyzer integration
 """
 
-import threading
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -881,7 +880,7 @@ class TestRetrospectiveAgent:
             "exit_time": "2024-01-02T00:00:00+00:00",
         }
 
-        result = agent.analyze_losing_trade(trade, "ETH/USDT")
+        agent.analyze_losing_trade(trade, "ETH/USDT")
 
         call_kwargs = agent._memory_store.collection.add.call_args
         assert call_kwargs is not None

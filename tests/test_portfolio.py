@@ -1,8 +1,7 @@
 """Unit tests for Portfolio Management."""
 
-import pytest
 
-from risk.portfolio import PortfolioState, Position
+from risk.portfolio import PortfolioState
 
 
 class TestPortfolioState:
@@ -106,7 +105,6 @@ class TestPortfolioState:
     def test_daily_pnl_reset(self):
         p = PortfolioState()
         p.daily_pnl = 100.0
-        old_date = p.daily_pnl_date
         p.daily_pnl_date = "2000-01-01"
         changed = p.reset_daily_pnl_if_needed()
         assert changed is True

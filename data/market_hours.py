@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from data.symbol_resolver import (
@@ -9,7 +8,6 @@ from data.symbol_resolver import (
     CRYPTO_BASES,
     CRYPTO_PAIR_RE,
     AssetClass,
-    resolve_symbol,
 )
 
 CRYPTO_QUOTE_SUFFIXES = {"USDT", "BTC", "ETH", "BUSD", "USDC", "USD", "TRY"}

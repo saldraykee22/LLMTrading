@@ -57,7 +57,7 @@ def risk_manager_node(state: TradingState) -> dict[str, Any]:
     critical_failed: list[str] = []
 
     sentiment_conf = sentiment.get("confidence", 0)
-    debate_conf = debate.get("consensus_score", 0)
+    debate.get("consensus_score", 0)
     if sentiment_conf < params.sentiment.min_confidence:
         checks_failed.append(
             f"Duyarlılık güveni çok düşük: {sentiment_conf:.2f} < {params.sentiment.min_confidence}"

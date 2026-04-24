@@ -178,7 +178,7 @@ class TestAgentFallbacks:
             result = risk_manager_node(state)
             
             # Fallback: reject (güvenlik)
-            assert result["risk_approved"] == False
+            assert not result["risk_approved"]
             assert result["risk_assessment"]["decision"] == "rejected"
             assert result["risk_assessment"]["approved_size"] == 0
 

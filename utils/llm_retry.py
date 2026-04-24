@@ -154,7 +154,6 @@ def invoke_with_retry(
         
         # Call stack'ten ajan adını bul
         import traceback
-        import os
         stack = traceback.extract_stack()
         agent_name = "unknown"
         for frame in stack[-6:-1]:  # Skip current and immediate callers

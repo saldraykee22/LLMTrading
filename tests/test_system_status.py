@@ -7,7 +7,6 @@ Tests for the centralized system status manager.
 import pytest
 import threading
 import time
-from pathlib import Path
 
 from risk.system_status import (
     SystemStatus,

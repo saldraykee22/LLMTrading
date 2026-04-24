@@ -33,7 +33,6 @@ import threading
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Callable
 
 from config.settings import DATA_DIR

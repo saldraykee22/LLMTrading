@@ -375,8 +375,6 @@ def run_rebalance(
         console.print(
             "\n[bold cyan]DRY-RUN modu — İşlemler simüle ediliyor...[/bold cyan]"
         )
-        simulated_cash = portfolio.cash
-        simulated_equity = portfolio.equity
 
         sim_table = Table(show_header=True, border_style="cyan")
         sim_table.add_column("#", style="dim")

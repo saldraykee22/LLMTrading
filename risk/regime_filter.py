@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-import numpy as np
 import pandas as pd
 
-from config.settings import RegimeState, get_trading_params
+from config.settings import get_trading_params
 
 logger = logging.getLogger(__name__)
 

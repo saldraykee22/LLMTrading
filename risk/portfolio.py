@@ -21,7 +21,6 @@ from typing import Any
 
 import pandas as pd
 
-from config.constants import LOCK_TIMEOUT_SECONDS, LOCK_WARNING_THRESHOLD
 from config.settings import DATA_DIR, get_trading_params
 
 logger = logging.getLogger(__name__)
@@ -293,13 +292,11 @@ class PortfolioState:
             
             try:
                 tmp_path.write_text(json_data, encoding="utf-8")
-                last_error: Exception | None = None
                 for attempt in range(5):
                     try:
                         os.replace(tmp_path, filepath)
                         break
-                    except (PermissionError, FileNotFoundError, OSError) as exc:
-                        last_error = exc
+                    except (PermissionError, FileNotFoundError, OSError):
                         if attempt == 4:
                             filepath.write_text(json_data, encoding="utf-8")
                             break
@@ -645,7 +642,6 @@ class PortfolioState:
 
             # Korelasyon kontrolü - Lock içinde verileri hazırla, 
             # kontrolü lock DIŞINDA yap (deadlock önleme)
-            correlation_check_result = None
             market_data_copy = None
             positions_symbols = None
             positions_for_check = None

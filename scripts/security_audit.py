@@ -5,13 +5,12 @@ Security Audit Script
 Comprehensive security check for LLMTrading system.
 """
 
-import os
 import re
 import sys
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -105,7 +104,7 @@ class SecurityAuditor:
                         # Check if it's in a safe context
                         for match in matches:
                             line_no = content[:match.start()].count('\n') + 1
-                            line_content = content.split('\n')[line_no - 1]
+                            content.split('\n')[line_no - 1]
                             
                             # Allow in tests or if properly sanitized
                             if 'test' not in str(py_file).lower():

@@ -15,10 +15,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import io
-import json
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Windows console encoding fix
@@ -484,7 +482,7 @@ def main() -> None:
 
     if args.mode == "llm":
         # LLM backtest with full pipeline
-        from backtest.llm_backtest import LLMBacktestEngine, run_llm_backtest
+        from backtest.llm_backtest import LLMBacktestEngine
         
         console.print(
             Panel(

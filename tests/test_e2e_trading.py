@@ -6,17 +6,12 @@ Tests for complete trading workflow from coordinator to execution.
 
 import pytest
 import threading
-import time
-from unittest.mock import Mock, MagicMock, patch
-from datetime import datetime, timezone
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.state import TradingState
 from risk.portfolio import PortfolioState
-from config.settings import get_trading_params
 
 
 class TestE2ETradingFlow:
@@ -125,7 +120,7 @@ class TestE2ETradingFlow:
         assert coord_result["phase"] == "research"
         
         # Risk manager (default state ile reddedilmeli - nötr sinyaller)
-        risk_result = risk_manager_node(mock_state)
+        risk_manager_node(mock_state)
         
         # Trader (risk onayı yoksa hold)
         trader_result = trader_node(mock_state)
@@ -217,7 +212,7 @@ class TestEmergencyScenarios:
         from execution.paper_engine import PaperTradingEngine
         
         portfolio = PortfolioState(initial_cash=100000.0)
-        paper_engine = PaperTradingEngine(initial_cash=100000.0)
+        PaperTradingEngine(initial_cash=100000.0)
         
         # Multiple pozisyon aç
         symbols = ["BTC/USDT", "ETH/USDT", "BNB/USDT"]

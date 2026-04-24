@@ -181,20 +181,19 @@ class TestMemoryLeaks:
     def test_file_handle_leak(self, tmp_path):
         """File handle leak testi."""
         import os
-        import warnings
         
         portfolio_file = tmp_path / "test_portfolio.json"
         
         # Get initial file handle count
         if hasattr(os, 'get_handle_inheritable'):
             # Windows
-            initial_handles = len(os.listdir('C:\\'))  # Approximate
+            len(os.listdir('C:\\'))  # Approximate
         else:
             # Unix
             import subprocess
             result = subprocess.run(['lsof', '-p', str(os.getpid())], 
                                   capture_output=True, text=True)
-            initial_handles = len(result.stdout.split('\n'))
+            len(result.stdout.split('\n'))
         
         # Multiple save/load cycles
         from risk.portfolio import PortfolioState
@@ -237,7 +236,6 @@ class TestResourceCleanup:
         """Portfolio cleanup on error testi."""
         portfolio = PortfolioState(initial_cash=100000.0)
         
-        initial_cash = portfolio.cash
         
         def failed_operation():
             with _portfolio_lock:

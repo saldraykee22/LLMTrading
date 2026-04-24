@@ -300,10 +300,10 @@ def cmd_fallbacks(args) -> int:
         return 0
     
     # Summary
-    console.print(f"\n[bold cyan]Fallback Summary (Last 24h)[/]")
+    console.print("\n[bold cyan]Fallback Summary (Last 24h)[/]")
     console.print(f"  Total: {summary['total_fallbacks']}")
     if summary.get('by_agent'):
-        console.print(f"  By Agent:")
+        console.print("  By Agent:")
         for agent, count in summary['by_agent'].items():
             console.print(f"    - {agent}: {count}")
     
@@ -333,15 +333,15 @@ def cmd_circuit_breaker_status(args) -> int:
     cb = CircuitBreaker()
     status = cb.get_status()
     
-    console.print(f"\n[bold]Circuit Breaker Status[/]")
+    console.print("\n[bold]Circuit Breaker Status[/]")
     
     if status['halted']:
-        console.print(f"  State: [bold red]HALTED[/]")
+        console.print("  State: [bold red]HALTED[/]")
         console.print(f"  Reason: [red]{status['halt_reason']}[/]")
     else:
-        console.print(f"  State: [bold green]ACTIVE[/]")
+        console.print("  State: [bold green]ACTIVE[/]")
     
-    console.print(f"\n  Counters:")
+    console.print("\n  Counters:")
     
     from config.trading_params import get_trading_params
     params = get_trading_params()
@@ -411,7 +411,7 @@ def cmd_accounts(args) -> int:
         manager = MultiAccountManager(settings.binance_accounts)
         summary = manager.get_status_summary()
         
-        console.print(f"\n[bold cyan]Account Status[/]")
+        console.print("\n[bold cyan]Account Status[/]")
         console.print(f"  Total Accounts:  {summary['total_accounts']}")
         console.print(f"  Active Accounts: {summary['active_accounts']}\n")
         
@@ -440,7 +440,7 @@ def cmd_accounts(args) -> int:
             total_cash = sum(acc['cash'] for acc in summary['accounts'].values())
             total_positions = sum(acc['open_positions'] for acc in summary['accounts'].values())
             
-            console.print(f"\n[bold]★ Consolidated View (All Accounts)[/]")
+            console.print("\n[bold]★ Consolidated View (All Accounts)[/]")
             console.print(f"  Total Equity:    [green]${total_equity:,.2f}[/]")
             console.print(f"  Total Cash:      [blue]${total_cash:,.2f}[/]")
             console.print(f"  Total Positions: {total_positions}\n")
@@ -454,10 +454,10 @@ def cmd_dashboard(args) -> int:
     """Show web dashboard URL."""
     console = Console()
     
-    console.print(f"\n[bold cyan]Web Dashboard[/]")
-    console.print(f"  URL: [link=http://localhost:8000]http://localhost:8000[/]")
-    console.print(f"  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
-    console.print(f"\n  To start: [cyan]python dashboard/server.py[/]\n")
+    console.print("\n[bold cyan]Web Dashboard[/]")
+    console.print("  URL: [link=http://localhost:8000]http://localhost:8000[/]")
+    console.print("  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
+    console.print("\n  To start: [cyan]python dashboard/server.py[/]\n")
     return 0
 
 

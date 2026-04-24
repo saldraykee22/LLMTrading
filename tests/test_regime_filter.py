@@ -119,7 +119,7 @@ class TestRegimeFilter:
         filter = RegimeFilter()
         
         vix_data = pd.DataFrame({"close": [30.0, 31.0, 32.0]})
-        result = filter.update(vix_data, fear_greed_index=45)
+        filter.update(vix_data, fear_greed_index=45)
         
         status = filter.get_status()
         

@@ -1,6 +1,5 @@
 import pytest
 import pandas as pd
-import numpy as np
 
 from risk.portfolio import PortfolioState, Position
 from risk.stop_loss import DynamicStopLoss

@@ -203,7 +203,7 @@ class PaperTradingEngine:
         net_revenue = revenue - commission
 
         # P&L hesapla
-        avg_cost = pos.entry_price * sell_amount
+        pos.entry_price * sell_amount
         pnl = (exec_price - pos.entry_price) * sell_amount - commission
 
         # Pozisyon güncelle

@@ -13,9 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -34,7 +33,7 @@ from rich.table import Table
 
 from config.settings import get_trading_params
 from data.market_data import MarketDataClient
-from data.news_data import NewsClient, NewsItem
+from data.news_data import NewsClient
 from data.symbol_resolver import resolve_symbol
 from models.technical_analyzer import TechnicalAnalyzer
 from agents.graph import run_analysis
@@ -91,7 +90,7 @@ def run_llm_backtest(
     df = market.fetch_ohlcv(symbol, timeframe=timeframe, days=days + 30) # extra buffer for technicals
     
     if df.empty or len(df) < 50:
-        console.print(f"[red]Insufficient market data - aborted[/red]")
+        console.print("[red]Insufficient market data - aborted[/red]")
         return calculate_metrics([], params.backtest.initial_cash)
 
     # Convert to datetime if not already and set as index for easier slicing

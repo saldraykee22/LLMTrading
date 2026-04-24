@@ -7,8 +7,6 @@ Tüm ajanlar bu durumu okur ve günceller.
 
 from __future__ import annotations
 
-import operator
-from dataclasses import dataclass, field
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from config.settings import get_trading_params

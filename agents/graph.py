@@ -25,9 +25,8 @@ from agents.coordinator import coordinator_node
 from agents.debate import debate_node
 from agents.research_analyst import research_analyst_node
 from agents.risk_manager import risk_manager_node
-from agents.state import TradingState, trim_messages
+from agents.state import TradingState
 from agents.trader import trader_node
-from config.settings import get_trading_params
 
 logger = logging.getLogger(__name__)
 

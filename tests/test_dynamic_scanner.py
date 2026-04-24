@@ -5,7 +5,7 @@ Hacim spike'ı ve dinamik keşif testleri.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from data.scanner import MarketScanner
 
 

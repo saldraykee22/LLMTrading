@@ -10,15 +10,14 @@ from __future__ import annotations
 import logging
 import time
 import threading
-from typing import Any, cast
+from typing import Any
 
 import ccxt
-from ccxt.base.types import OrderSide
 
 from config.settings import TradingMode, get_settings, get_trading_params
 from execution.order_manager import TradeOrder
 from execution.paper_engine import PaperTradingEngine
-from risk.system_status import SystemStatus, Status
+from risk.system_status import SystemStatus
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +128,6 @@ class ExchangeClient:
 
     def _emergency_close_all(self, portfolio: Any = None) -> None:
         """Tüm açık pozisyonları akıllı (Smart Close) emirlerle kapatır - thread-safe."""
-        from risk.portfolio import PortfolioState
 
         target_portfolio = portfolio or self._portfolio_ref
         if target_portfolio is None:
@@ -607,7 +605,7 @@ class ExchangeClient:
             exchange = self._get_exchange()
             self._rate_limit()
             try:
-                result = exchange.cancel_order(order_id, symbol)
+                exchange.cancel_order(order_id, symbol)
                 logger.info("Emir iptal edildi: %s", order_id)
                 self._last_successful_call = time.time()
                 return {"status": "cancelled", "order_id": order_id}

@@ -34,7 +34,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from config.settings import DATA_DIR, get_settings, get_trading_params
@@ -248,7 +247,6 @@ class MultiAccountManager:
             return {"status": "error", "reason": "No active accounts"}
         
         # Kullanılacak pozisyon büyüklüğü oranı (order'dan veya default)
-        size_pct = order.execution_size_pct if order.execution_size_pct > 0 else 1.0
         # NOT: execution_size_pct burada pozisyon boyutlandırma oranı olarak kullanılır.
         # Bu alan ileride risk_pct (risk bazlı) ve position_size_pct (sabit oran) olarak ayrılabilir.
         
@@ -427,6 +425,5 @@ class MultiAccountManager:
 
 def create_account_manager() -> MultiAccountManager:
     """MultiAccountManager factory function."""
-    from config.settings import get_settings
     settings = get_settings()
     return MultiAccountManager(settings.binance_accounts)

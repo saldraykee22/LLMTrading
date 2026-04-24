@@ -130,7 +130,7 @@ class TestExchangeClient:
         mock_exchange = Mock()
         mock_exchange_class.return_value = mock_exchange
 
-        exchange = client._get_exchange()
+        client._get_exchange()
 
         call_args = mock_exchange_class.call_args[0][0]
         assert 'sandbox' not in call_args

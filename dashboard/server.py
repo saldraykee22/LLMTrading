@@ -30,7 +30,6 @@ from prometheus_client import (
 
 # Proje kökünü path'e ekle
 import sys
-from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -308,7 +307,6 @@ async def get_monte_carlo(n_simulations: int = 1000, days: int = 30):
     days = min(max(days, 1), 365)
     api_calls_total.labels(type="monte_carlo").inc()
     import math
-    import random
     import numpy as np
 
     initial_equity = 10000.0

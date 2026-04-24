@@ -103,7 +103,6 @@ class TestCircuitBreakerPersistence:
     def test_state_save_load(self):
         """State save/load testi."""
         from risk.circuit_breaker import CircuitBreaker, STATE_FILE
-        import time
         
         # Eski state varsa temizle
         if STATE_FILE.exists():
@@ -391,7 +390,7 @@ class TestUXImprovements:
             portfolio = PortfolioState(initial_cash=10000)
             
             # Pozisyon aç - küçük miktar (nakit sorunu olmasın)
-            pos = portfolio.open_position(
+            portfolio.open_position(
                 symbol="BTC/USDT",
                 side="long",
                 price=50000,
@@ -400,7 +399,7 @@ class TestUXImprovements:
             )
             
             # DCA ekle - kalan tahsis 0.05, ama 0.08 dene
-            result = portfolio.add_dca_tranche(
+            portfolio.add_dca_tranche(
                 symbol="BTC/USDT",
                 amount=0.08,  # Kalan tahsis 0.05'ten fazla
                 price=50000,

@@ -14,7 +14,6 @@ Akış:
 
 from __future__ import annotations
 
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -24,10 +23,9 @@ from typing import Any
 import pandas as pd
 
 from agents.graph import run_analysis
-from config.settings import get_settings, get_trading_params
+from config.settings import get_trading_params
 from data.market_data import MarketDataClient
 from risk.cvar_optimizer import optimize_portfolio_cvar
-from utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
