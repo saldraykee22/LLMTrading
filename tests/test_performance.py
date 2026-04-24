@@ -181,7 +181,6 @@ class TestMemoryLeaks:
     def test_file_handle_leak(self, tmp_path):
         """File handle leak testi."""
         import os
-        import warnings
         
         portfolio_file = tmp_path / "test_portfolio.json"
         

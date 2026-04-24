@@ -21,7 +21,6 @@ from typing import Any
 
 import pandas as pd
 
-from config.constants import LOCK_TIMEOUT_SECONDS, LOCK_WARNING_THRESHOLD
 from config.settings import DATA_DIR, get_trading_params
 
 logger = logging.getLogger(__name__)

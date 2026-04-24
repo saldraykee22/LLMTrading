@@ -5,13 +5,12 @@ Security Audit Script
 Comprehensive security check for LLMTrading system.
 """
 
-import os
 import re
 import sys
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)

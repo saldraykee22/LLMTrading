@@ -5,7 +5,7 @@ Küçük bakiye temizleme ve Binance API entegrasyonu testleri.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 from risk.portfolio import PortfolioState
 from config.settings import TradingMode
 

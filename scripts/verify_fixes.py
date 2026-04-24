@@ -8,7 +8,6 @@ Bu betik, son yapılan düzeltmelerin doğruluğunu kontrol eder:
 4. Debate parallelization
 """
 
-import os
 import sys
 import threading
 from pathlib import Path

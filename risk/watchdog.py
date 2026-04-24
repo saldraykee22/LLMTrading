@@ -10,11 +10,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 
-from pathlib import Path
 
-from config.settings import DATA_DIR, get_trading_params
+from config.settings import DATA_DIR
 from data.market_data import MarketDataClient
 from risk.portfolio import PortfolioState
 from risk.system_status import SystemStatus

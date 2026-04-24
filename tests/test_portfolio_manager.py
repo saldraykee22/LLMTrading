@@ -1,6 +1,5 @@
 """Unit tests for Portfolio Manager."""
 
-import pytest
 
 from agents.portfolio_manager import SymbolAnalysis
 

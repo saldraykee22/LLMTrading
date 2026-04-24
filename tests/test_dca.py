@@ -5,7 +5,6 @@ Faz 1 uygulamasının birim testleri.
 """
 
 import pytest
-from pathlib import Path
 from risk.portfolio import PortfolioState, Position
 
 

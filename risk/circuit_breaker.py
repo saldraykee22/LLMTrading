@@ -14,7 +14,6 @@ import json
 import logging
 import threading
 import time
-from pathlib import Path
 
 from config.settings import DATA_DIR, get_settings, get_trading_params
 from risk.system_status import SystemStatus

@@ -10,14 +10,10 @@ Comprehensive tests for Faz 7 modules:
 """
 
 import json
-import os
-import tempfile
-import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 
@@ -1134,7 +1130,6 @@ class TestPromptEvolver:
 class TestIntegrationDriftRisk:
 
     def test_drift_risk_manager_integration(self, tmp_path):
-        from evaluation.drift_monitor import DriftMonitor
 
         now = datetime.now(timezone.utc)
         records = []
@@ -1205,7 +1200,7 @@ class TestIntegrationDriftRisk:
         if not self._dashboard_import_available():
             pytest.skip("prometheus_client not installed")
         from fastapi.testclient import TestClient
-        from dashboard.server import app, PORTFOLIO_FILE
+        from dashboard.server import app
 
         portfolio_data = {
             "cash": 9500.0,
@@ -1276,7 +1271,6 @@ class TestIntegrationDriftRisk:
             pytest.skip("prometheus_client not installed")
         from fastapi.testclient import TestClient
         from dashboard.server import app
-        from evaluation.drift_monitor import DRIFT_HISTORY_FILE
 
         history_file = tmp_path / "drift_history.jsonl"
         now = datetime.now(timezone.utc)

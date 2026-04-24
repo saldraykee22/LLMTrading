@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from config.settings import get_settings, get_trading_params
+from config.settings import get_trading_params
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,6 @@ def parse_trade_decision(
     Returns:
         TradeOrder veya None (hold kararı ise)
     """
-    from config.settings import get_trading_params
 
     action = decision.get("action", "hold")
     if action == "hold":

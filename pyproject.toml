@@ -3,7 +3,7 @@ name = "llmtrading"
 version = "1.0.0"
 description = "Aegis Intelligence Terminal: A Multi-Agent Autonomous Trading System"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Aegis Team", email = "info@aegis.ai"}
@@ -66,3 +66,6 @@ target-version = "py310"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "logs*", "data*", "docs*"]

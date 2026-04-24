@@ -5,7 +5,7 @@ Hacim spike'ı ve dinamik keşif testleri.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from data.scanner import MarketScanner
 
 
@@ -16,6 +16,9 @@ class TestDynamicScanner:
         """Akıllı zamanlama: Nakit oranına göre tarama sıklığı."""
         mock_client = Mock()
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         # Test 1: Normal nakit (%30), 6 saatte bir
         scanner.last_scan_cycle = 0
@@ -33,6 +36,9 @@ class TestDynamicScanner:
         """Tarama tamamlandı işaretleme."""
         mock_client = Mock()
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         scanner.last_scan_cycle = 0
         scanner.mark_scan_complete(cycle=10)
@@ -43,6 +49,9 @@ class TestDynamicScanner:
         """Dinamik tarayıcı kapalıysa tarama yapma."""
         mock_client = Mock()
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         scanner.params_dict['dynamic_scanner_enabled'] = False
         
         assert scanner.should_scan(cycle=100, cash_ratio=0.90) is False
@@ -84,6 +93,9 @@ class TestDynamicScanner:
         mock_client.fetch_tickers.return_value = mock_tickers
         
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         results = scanner.get_top_gainers_and_volume_spikes(limit=3)
         
@@ -115,6 +127,9 @@ class TestDynamicScanner:
         
         mock_client.fetch_tickers.return_value = mock_tickers
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         results = scanner.get_top_gainers_and_volume_spikes(limit=5)
         
@@ -152,6 +167,9 @@ class TestDynamicScanner:
         
         mock_client.fetch_tickers.return_value = mock_tickers
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         results = scanner.get_top_gainers_and_volume_spikes(limit=10)
         
@@ -182,6 +200,9 @@ class TestDynamicScanner:
         
         mock_client.fetch_tickers.return_value = mock_tickers
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         results = scanner.get_top_gainers_and_volume_spikes(limit=5)
         
@@ -216,6 +237,9 @@ class TestDynamicScanner:
         
         mock_client.fetch_tickers.return_value = mock_tickers
         scanner = MarketScanner(client=mock_client)
+        scanner.params_dict['scan_interval_hours'] = 6
+        scanner.params_dict['scan_interval_hours_high_cash'] = 3
+        scanner.params_dict['min_cash_ratio_for_frequent_scan'] = 0.50
         
         results = scanner.get_top_gainers_and_volume_spikes(limit=10)
         

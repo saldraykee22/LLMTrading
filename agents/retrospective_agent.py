@@ -23,7 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import LLMProvider, get_trading_params
 from data.market_data import MarketDataClient
-from data.news_data import NewsClient, NewsItem
+from data.news_data import NewsClient
 from data.vector_store import AgentMemoryStore
 from models.sentiment_analyzer import create_llm
 from utils.json_utils import extract_json
@@ -357,7 +357,6 @@ Analyze this losing trade and return your findings as STRICT JSON."""
         ]
 
         from utils.llm_retry import invoke_with_retry
-        from utils.json_utils import extract_json
 
         # Maksimum 3 deneme (JSON hatası dahil)
         for attempt in range(3):
@@ -520,7 +519,6 @@ Analyze this losing trade and return your findings as STRICT JSON."""
         )
         
         from langchain_core.messages import HumanMessage, SystemMessage
-        from utils.json_utils import extract_json
         from utils.llm_retry import invoke_with_retry
         
         messages = [
@@ -606,9 +604,7 @@ Analyze this losing trade and return your findings as STRICT JSON."""
     
     def _save_dynamic_rules(self, rules: dict) -> None:
         """Dinamik kuralları JSON'a kaydet."""
-        from pathlib import Path
         from config.settings import DATA_DIR
-        import json
         
         rules_file = DATA_DIR / "dynamic_rules.json"
         
@@ -632,9 +628,7 @@ Analyze this losing trade and return your findings as STRICT JSON."""
     @staticmethod
     def load_dynamic_rules() -> dict | None:
         """Dinamik kuralları yükle."""
-        from pathlib import Path
         from config.settings import DATA_DIR
-        import json
         
         rules_file = DATA_DIR / "dynamic_rules.json"
         

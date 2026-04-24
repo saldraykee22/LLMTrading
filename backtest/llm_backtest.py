@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +21,13 @@ from rich.table import Table
 
 from backtest.backtest_cache import BacktestCache, BacktestCacheEntry
 from backtest.historical_news import HistoricalNewsManager
-from backtest.walk_forward import BacktestResult, calculate_metrics, chronological_split
+from backtest.walk_forward import calculate_metrics, chronological_split
 from agents.graph import run_analysis
-from agents.state import create_initial_state
-from config.settings import get_trading_params
 from data.market_data import MarketDataClient
 from data.symbol_resolver import resolve_symbol
 from execution.order_manager import parse_trade_decision
 from models.technical_analyzer import TechnicalAnalyzer
-from risk.portfolio import PortfolioState, Position
+from risk.portfolio import PortfolioState
 from risk.stop_loss import DynamicStopLoss
 
 console = Console()
@@ -340,7 +338,7 @@ class LLMBacktestEngine:
         Returns:
             Backtest results dict
         """
-        console.print(f"\n[bold cyan]LLM Backtest Engine[/bold cyan]")
+        console.print("\n[bold cyan]LLM Backtest Engine[/bold cyan]")
         console.print(f"Symbol: [bold]{self.symbol}[/bold]")
         console.print(f"Timeframe: {self.timeframe}")
         console.print(f"Days: {days}")
@@ -356,7 +354,7 @@ class LLMBacktestEngine:
             split_idx = int(len(df) * 0.8)
             train_df = df.iloc[:split_idx]
             test_df = df.iloc[split_idx:]
-            console.print(f"  Using simple split (80/20) for small dataset")
+            console.print("  Using simple split (80/20) for small dataset")
             console.print(f"  Train: {len(train_df)} bars")
             console.print(f"  Test: {len(test_df)} bars")
         else:

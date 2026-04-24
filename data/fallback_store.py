@@ -11,7 +11,6 @@ import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from config.settings import DATA_DIR

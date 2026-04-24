@@ -5,7 +5,6 @@ Dinamik kural üretimi ve prompt enjeksiyonu testleri.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
 
@@ -88,9 +87,7 @@ class TestRetrospectiveAgent:
     def test_save_and_load_dynamic_rules(self):
         """Dinamik kuralları kaydet ve yükle."""
         from agents.retrospective_agent import RetrospectiveAgent
-        from pathlib import Path
         from config.settings import DATA_DIR
-        import json
         
         agent = RetrospectiveAgent()
         
@@ -125,7 +122,6 @@ class TestDynamicRulesInjection:
         from utils.dynamic_rules import get_dynamic_rules_context
         from agents.retrospective_agent import RetrospectiveAgent
         from config.settings import DATA_DIR
-        import json
         
         # Test kuralları kaydet
         test_rules = {
