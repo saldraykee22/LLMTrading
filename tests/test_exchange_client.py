@@ -169,8 +169,14 @@ class TestExchangeClient:
             assert result["status"] == "filled"
             mock_engine.execute_order.assert_called_once_with(order, 50000.0)
 
-    def test_execute_order_live_rejected_without_confirmation(self, client, mock_params):
+    @patch("ccxt.binance")
+    def test_execute_order_live_rejected_without_confirmation(self, mock_ccxt, client, mock_params):
         """Test live order rejection without confirmation."""
+        # Setup mock ccxt
+        mock_instance = MagicMock()
+        mock_ccxt.return_value = mock_instance
+        client._exchange = mock_instance
+
         mock_params.execution.mode = TradingMode.LIVE
         order = TradeOrder(
             symbol="BTC/USDT",
