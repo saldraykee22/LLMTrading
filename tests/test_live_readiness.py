@@ -1,9 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from risk.portfolio import PortfolioState, Position
-from risk.circuit_breaker import CircuitBreaker
-from scripts.run_live import run_pipeline
-from config.settings import TradingMode
 
 @pytest.fixture
 def mock_portfolio():

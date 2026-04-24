@@ -34,7 +34,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from config.settings import DATA_DIR, get_settings, get_trading_params
@@ -427,6 +426,5 @@ class MultiAccountManager:
 
 def create_account_manager() -> MultiAccountManager:
     """MultiAccountManager factory function."""
-    from config.settings import get_settings
     settings = get_settings()
     return MultiAccountManager(settings.binance_accounts)

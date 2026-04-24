@@ -103,7 +103,6 @@ class TestCircuitBreakerPersistence:
     def test_state_save_load(self):
         """State save/load testi."""
         from risk.circuit_breaker import CircuitBreaker, STATE_FILE
-        import time
         
         # Eski state varsa temizle
         if STATE_FILE.exists():

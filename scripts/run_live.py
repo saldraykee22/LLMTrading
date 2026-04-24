@@ -17,14 +17,12 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import logging
 import signal
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,18 +40,16 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
-from config.settings import LLMProvider, TradingMode, get_settings, get_trading_params, LOGS_DIR
+from config.settings import TradingMode, get_settings, get_trading_params, LOGS_DIR
 from data.market_data import MarketDataClient
 from data.news_data import NewsClient
 from data.symbol_resolver import resolve_symbol
 from models.technical_analyzer import TechnicalAnalyzer
 from agents.graph import run_analysis
-from execution.order_manager import parse_trade_decision, TradeOrder
+from execution.order_manager import parse_trade_decision
 from execution.exchange_client import ExchangeClient
 from execution.sync_manager import SyncManager
-from execution.account_manager import MultiAccountManager
 from risk.regime_filter import RegimeFilter
 from risk.portfolio import PortfolioState
 from risk.circuit_breaker import CircuitBreaker
@@ -763,7 +759,7 @@ def main() -> None:
                         cleaned = sync_result.get("zombie_orders_cleaned", 0)
                         console.print(f"[dim]🔄 Exchange sync: {cleaned} zombie orders cleaned[/dim]")
                     elif sync_result.get("status") == "discrepancy":
-                        console.print(f"[yellow]⚠️  Balance discrepancy detected![/yellow]")
+                        console.print("[yellow]⚠️  Balance discrepancy detected![/yellow]")
                 except Exception as e:
                     console.print(f"[yellow]Sync manager error: {e}[/yellow]")
 

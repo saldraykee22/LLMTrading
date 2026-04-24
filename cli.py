@@ -15,7 +15,6 @@ import json
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -364,10 +363,10 @@ def cmd_fallbacklar(
         console.print("[yellow]Fallback kaydı bulunamadı.[/yellow]")
         return
     
-    console.print(f"\n[bold cyan]Fallback Özeti (Son 24s)[/]")
+    console.print("\n[bold cyan]Fallback Özeti (Son 24s)[/]")
     console.print(f"  Toplam: {summary['total_fallbacks']}")
     if summary.get('by_agent'):
-        console.print(f"  Ajanlara göre:")
+        console.print("  Ajanlara göre:")
         for agent, count in summary['by_agent'].items():
             console.print(f"    - {agent}: {count}")
     
@@ -397,15 +396,15 @@ def cmd_circuit_breaker():
     status = cb.get_status()
     params = get_trading_params()
     
-    console.print(f"\n[bold]Circuit Breaker Durumu[/]")
+    console.print("\n[bold]Circuit Breaker Durumu[/]")
     
     if status['halted']:
-        console.print(f"  Durum: [bold red]DURDURULDU[/]")
+        console.print("  Durum: [bold red]DURDURULDU[/]")
         console.print(f"  Neden: [red]{status['halt_reason']}[/]")
     else:
-        console.print(f"  Durum: [bold green]AKTİF[/]")
+        console.print("  Durum: [bold green]AKTİF[/]")
     
-    console.print(f"\n  Sayaçlar:")
+    console.print("\n  Sayaçlar:")
 
     # Fallbacks
     fb_count = status['consecutive_fallbacks']
@@ -461,7 +460,7 @@ def cmd_hesaplar():
         manager = MultiAccountManager(settings.binance_accounts)
         summary = manager.get_status_summary()
         
-        console.print(f"\n[bold cyan]Hesap Durumu[/]")
+        console.print("\n[bold cyan]Hesap Durumu[/]")
         console.print(f"  Toplam Hesap: {summary['total_accounts']}")
         console.print(f"  Aktif Hesap:  {summary['active_accounts']}\n")
         
@@ -488,7 +487,7 @@ def cmd_hesaplar():
             total_cash = sum(acc['cash'] for acc in summary['accounts'].values())
             total_positions = sum(acc['open_positions'] for acc in summary['accounts'].values())
             
-            console.print(f"\n[bold]★ Kombin Görünüm (Tüm Hesaplar)[/]")
+            console.print("\n[bold]★ Kombin Görünüm (Tüm Hesaplar)[/]")
             console.print(f"  Toplam Özvarlık:  [green]${total_equity:,.2f}[/]")
             console.print(f"  Toplam Nakit:    [blue]${total_cash:,.2f}[/]")
             console.print(f"  Toplam Pozisyon: {total_positions}\n")
@@ -500,10 +499,10 @@ def cmd_hesaplar():
 @app.command("dashboard")
 def cmd_dashboard():
     """Web dashboard URL'sini gösterir."""
-    console.print(f"\n[bold cyan]Web Dashboard[/]")
-    console.print(f"  URL: [link=http://localhost:8000]http://localhost:8000[/]")
-    console.print(f"  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
-    console.print(f"\n  Başlatmak için: [bold cyan]python dashboard/server.py[/bold cyan]\n")
+    console.print("\n[bold cyan]Web Dashboard[/]")
+    console.print("  URL: [link=http://localhost:8000]http://localhost:8000[/]")
+    console.print("  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
+    console.print("\n  Başlatmak için: [bold cyan]python dashboard/server.py[/bold cyan]\n")
 
 
 if __name__ == "__main__":

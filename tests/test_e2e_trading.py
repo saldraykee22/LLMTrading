@@ -6,17 +6,12 @@ Tests for complete trading workflow from coordinator to execution.
 
 import pytest
 import threading
-import time
-from unittest.mock import Mock, MagicMock, patch
-from datetime import datetime, timezone
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.state import TradingState
 from risk.portfolio import PortfolioState
-from config.settings import get_trading_params
 
 
 class TestE2ETradingFlow:

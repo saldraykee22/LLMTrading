@@ -242,13 +242,13 @@ def get_dynamic_rules_context() -> str:
     if "avoid_downtrend_entries" in rules and rules["avoid_downtrend_entries"]:
         lines.append(
             "- Düşüş trendinde yeni alış işlemi açma "
-            f"(trend tersine dönene kadar bekle)"
+            "(trend tersine dönene kadar bekle)"
         )
     
     if "require_volume_confirmation" in rules and rules["require_volume_confirmation"]:
         lines.append(
             "- Hacim artışı olmadan işlem açma "
-            f"(sessiz birikim bekleniyor)"
+            "(sessiz birikim bekleniyor)"
         )
     
     if "notes" in rules:

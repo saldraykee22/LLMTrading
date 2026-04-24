@@ -8,7 +8,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from config.settings import get_settings, TradingMode
 from execution.exchange_client import ExchangeClient
-from risk.portfolio import PortfolioState
 from data.market_data import MarketDataClient
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

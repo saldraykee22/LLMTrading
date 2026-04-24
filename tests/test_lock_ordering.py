@@ -8,14 +8,13 @@ import pytest
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from unittest.mock import Mock, MagicMock, patch
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from risk.portfolio import PortfolioState, _portfolio_lock, _acquire_portfolio_lock, _release_portfolio_lock
-from config.constants import LOCK_TIMEOUT_SECONDS, LOCK_WARNING_THRESHOLD
+from config.constants import LOCK_WARNING_THRESHOLD
 
 
 class TestLockOrdering:

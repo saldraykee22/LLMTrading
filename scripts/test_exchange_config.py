@@ -16,7 +16,7 @@ def test_connectivity():
     settings = get_settings()
     params = get_trading_params()
     
-    logger.info(f"--- Exchange Connectivity Test ---")
+    logger.info("--- Exchange Connectivity Test ---")
     logger.info(f"Exchange ID: {params.execution.exchange}")
     logger.info(f"Trading Mode: {params.execution.mode.value}")
     

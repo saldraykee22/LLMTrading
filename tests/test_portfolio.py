@@ -1,8 +1,7 @@
 """Unit tests for Portfolio Management."""
 
-import pytest
 
-from risk.portfolio import PortfolioState, Position
+from risk.portfolio import PortfolioState
 
 
 class TestPortfolioState:

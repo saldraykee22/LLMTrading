@@ -8,7 +8,6 @@ Tüm yapılandırma merkezi olarak buradan yönetilir.
 from __future__ import annotations
 
 import logging
-import os
 from enum import Enum
 from pathlib import Path
 from typing import Any

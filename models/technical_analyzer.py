@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 
-from models.orderbook_analyzer import OrderBookAnalyzer, SlippageResult
+from models.orderbook_analyzer import OrderBookAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +201,8 @@ class TechnicalAnalyzer:
         # ── Bollinger Bands ───────────────────────────────
         bbands = ta.bbands(df["close"], length=20, std=2.0)
         if bbands is not None and not bbands.empty:
-            upper_col = f"BBU_20_2.0"
-            lower_col = f"BBL_20_2.0"
+            upper_col = "BBU_20_2.0"
+            lower_col = "BBL_20_2.0"
 
             if upper_col in bbands.columns and lower_col in bbands.columns:
                 upper = bbands[upper_col].iloc[-1]

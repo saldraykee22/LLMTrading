@@ -2,7 +2,7 @@
 Tests for execution/exchange_client.py
 """
 import time
-from unittest.mock import MagicMock, Mock, ANY, patch
+from unittest.mock import Mock, ANY, patch
 
 import ccxt
 import pytest

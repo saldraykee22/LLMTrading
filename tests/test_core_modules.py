@@ -1,6 +1,5 @@
 """Unit tests for Stop-Loss, Order Manager, Circuit Breaker, and JSON Utils."""
 
-import pytest
 
 from risk.stop_loss import DynamicStopLoss
 from execution.order_manager import TradeOrder, parse_trade_decision

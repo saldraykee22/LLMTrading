@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from risk.portfolio import Position, PortfolioState
 from execution.order_manager import TradeOrder, parse_trade_decision
-from config.constants import MIN_PRICE, MIN_AMOUNT, MAX_PRICE, MAX_AMOUNT
+from config.constants import MIN_PRICE, MAX_PRICE
 
 
 class TestPositionValidation:
