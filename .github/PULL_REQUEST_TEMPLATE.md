@@ -1,16 +1,16 @@
-## Açıklama
-Bu PR neyi değiştiriyor? Lütfen kısa bir özet ekleyin.
+## Description
+What does this PR change? Please add a brief summary.
 
-## Değişiklik Tipi
-- [ ] 🐛 Hata Düzeltme (Bug Fix)
-- [ ] ✨ Yeni Özellik (New Feature)
-- [ ] 📝 Dokümantasyon Güncellemesi
-- [ ] ⚡ Performans İyileştirmesi
+## Type of Change
+- [ ] 🐛 Bug Fix
+- [ ] ✨ New Feature
+- [ ] 📝 Documentation Update
+- [ ] ⚡ Performance Improvement
 
-## Nasıl Test Edildi?
-Lütfen yaptığınız değişiklikleri nasıl test ettiğinizi açıklayın.
-- [ ] Birim Testleri (Unit Tests)
-- [ ] Manuel Test (Paper Trading)
+## How Was This Tested?
+Please explain how you tested your changes.
+- [ ] Unit Tests
+- [ ] Manual Test (Paper Trading)
 
-## İlgili Issue
-Fixes # (varsa)
+## Related Issue
+Fixes # (if applicable)

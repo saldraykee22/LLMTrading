@@ -1,22 +1,22 @@
-# Değişim Günlüğü (Changelog)
+# Changelog
 
-Aegis Terminal projesindeki tüm önemli değişiklikler bu dosyada tutulacaktır.
+All notable changes to the Aegis Terminal project will be documented in this file.
 
 ## [1.0.0] - 2026-04-24
-### Eklendi
-- **Aegis Intelligence Terminal v1.0.0 Resmi Sürümü.**
-- LangGraph tabanlı çoklu ajan mimarisi (Coordinator, Research, Debate, Risk, Trader).
-- MarketScanner: Erken momentum ve hacim bazlı tarama sistemi.
-- Watchdog: Gerçek zamanlı portföy koruma ve acil durum durdurma.
-- Dashboard: FastAPI tabanlı P&L ve portföy izleme arayüzü.
-- Modern paketleme yapısı (`pyproject.toml`).
-- GitHub CI/CD iş akışları ve topluluk şablonları.
-- Docker desteği ve `start_live.bat` hızlı başlatma scripti.
+### Added
+- **Official Release of Aegis Intelligence Terminal v1.0.0.**
+- LangGraph-based Multi-Agent architecture (Coordinator, Research, Debate, Risk, Trader).
+- MarketScanner: Early momentum and volume-based scanning system.
+- Watchdog: Real-time portfolio protection and emergency halt.
+- Dashboard: FastAPI-based P&L and portfolio monitoring interface.
+- Modern packaging structure (`pyproject.toml`).
+- GitHub CI/CD workflows and community templates.
+- Docker support and `start_live.bat` quick start script.
 
-### Değişti
-- Tarama aralığı 1 saate düşürüldü.
-- Varsayılan mod `live` olarak güncellendi.
-- Loglama sistemi daha detaylı aday analizi sunacak şekilde geliştirildi.
+### Changed
+- Scan interval reduced to 1 hour.
+- Default mode updated to `live`.
+- Logging system enhanced to provide more detailed candidate analysis.
 
 ---
-*Gelecek sürümler için bu formatı takip etmeye devam edin.*
+*Follow this format for future releases.*

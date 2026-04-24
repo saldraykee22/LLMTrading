@@ -1,36 +1,36 @@
-name: 🐛 Hata Raporu (Bug Report)
-description: Sistemsel bir hata veya beklenmedik davranış bildirin.
+name: 🐛 Bug Report
+description: Report a system error or unexpected behavior.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Aegis Terminal'i geliştirmemize yardımcı olduğunuz için teşekkürler!
+        Thanks for helping us improve Aegis Terminal!
   - type: textarea
     id: what-happened
     attributes:
-      label: Ne oldu?
-      description: Karşılaştığınız sorunu detaylıca açıklayın.
-      placeholder: Örneğin; Bot BTC/USDT paritesinde emir gönderemedi...
+      label: What happened?
+      description: Explain the problem you encountered in detail.
+      placeholder: e.g., The bot failed to send an order for BTC/USDT...
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: Nasıl tekrar edilebilir?
-      description: Bu hatayı nasıl alabiliriz? Adım adım yazın.
+      label: How to reproduce?
+      description: How can we get this error? Write step by step.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Log Kayıtları
-      description: Lütfen `logs/trading.log` dosyasındaki ilgili kısmı buraya yapıştırın.
+      label: Log Records
+      description: Please paste the relevant part of the `logs/trading.log` file here.
       render: shell
   - type: input
     id: version
     attributes:
-      label: Versiyon
-      description: Kullandığınız bot versiyonu (örneğin v1.0.0).
+      label: Version
+      description: The bot version you are using (e.g., v1.0.0).
     validations:
       required: true

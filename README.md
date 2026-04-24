@@ -4,84 +4,84 @@
 
 # Aegis Intelligence Terminal (v1.0.0)
 
-![Versiyon](https://img.shields.io/badge/Versiyon-1.0.0-gold.svg)
-![Lisans](https://img.shields.io/badge/Lisans-MIT-blue.svg)
-![Python Versiyonu](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Durum](https://img.shields.io/badge/Aşama-Üretim_Hazır-brightgreen.svg)
-![Trading](https://img.shields.io/badge/Canlı_İşlem-Aktif-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.0.0-gold.svg)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
+![Status](https://img.shields.io/badge/Stage-Production_Ready-brightgreen.svg)
+![Trading](https://img.shields.io/badge/Live_Trading-Active-blue.svg)
 ![CI](https://github.com/saldraykee22/LLMTrading/actions/workflows/ci.yml/badge.svg)
 
-Aegis Terminal, finansal piyasalarda (Kripto, BIST, ABD Hisse Senetleri) bağımsız kararlar alabilen, **LangGraph tabanlı çoklu ajan (Multi-Agent) mimarisine** sahip yeni nesil bir yapay zeka alım-satım platformudur.
+Aegis Terminal is a next-generation AI trading platform with a **LangGraph-based Multi-Agent architecture**, capable of making autonomous decisions in financial markets (Crypto, Stocks, Forex).
 
-[**Değişim Günlüğü**](CHANGELOG.md) | [**Katkıda Bulunma**](CONTRIBUTING.md) | [**Kurallar**](CODE_OF_CONDUCT.md)
-
----
-
-## 🚀 Proje Genel Bakış
-
-Bu sistem, geleneksel teknik analizi (MACD, RSI, Bollinger) modern yapay zeka (LLM) yetenekleriyle birleştirir. Sadece rakamlara değil, piyasa haberlerine ve sosyal duyarlılığa da (sentiment) bakarak karar verir. "Halüsinasyon" riskini yönetmek için **Bull vs Bear Tartışma Paneli** ve bağımsız bir **Risk Yönetimi** katmanı kullanır.
-
-### Temel Özellikler
-- **Çoklu Ajan İş Akışı:** Coordinator, Research, Debate, Risk ve Trader ajanları arasındaki hiyerarşik iletişim.
-- **Duyarlılık Analizi (Sentiment):** Haberler ve sosyal verilerin LLM ile duygu analizi.
-- **Paper Trading Modu:** Gerçek para riske atmadan gerçek zamanlı strateji testi.
-- **Portföy Optimizasyonu:** Birden fazla varlık arasında dinamik nakit dağılımı (CVaR).
-- **Akıllı Koruma (Watchdog):** Ani fiyat düşüşlerinde (Flash Crash) saniyeler içinde acil satış.
-- **Maliyet Verimliliği:** Prompt sıkıştırma ve önbellekleme ile %80'e varan API tasarrufu.
+[**Changelog**](CHANGELOG.md) | [**Contributing**](CONTRIBUTING.md) | [**Documentation**](docs/INDEX.md) | [**Türkçe README**](docs/TR/README_TR.md)
 
 ---
 
-## 📁 Proje Yapısı
+## 🚀 Project Overview
 
-| Klasör / Dosya | Açıklama |
-|----------------|----------|
-| `agents/` | Tüm AI ajanlarının mantığı (Debate, Risk, Trader vb.) |
-| `config/` | Strateji ve borsa yapılandırma dosyaları |
-| `dashboard/` | Web tabanlı izleme paneli (P&L ve Portföy görünümü) |
-| `data/` | Pazar verileri, bakiye durumları ve geçici önbellekler |
-| `docs/` | Kapsamlı dökümantasyon ve platform rehberleri |
-| `execution/` | Borsa bağlantısı ve emir iletim sistemleri |
-| `scripts/` | Botu çalıştırmak ve test etmek için kullanılan scriptler |
-| `tests/` | Entegrasyon ve birim testleri |
+This system combines traditional technical analysis (MACD, RSI, Bollinger) with modern Large Language Model (LLM) capabilities. It analyzes not just numbers, but also market news and social sentiment. To manage "hallucination" risks, it employs a **Bull vs Bear Debate Panel** and an independent **Risk Management** layer.
+
+### Key Features
+- **Multi-Agent Workflow:** Hierarchical communication between Coordinator, Research, Debate, Risk, and Trader agents.
+- **Sentiment Analysis:** LLM-driven sentiment scoring of news and social data.
+- **Paper Trading Mode:** Real-time strategy testing without financial risk.
+- **Portfolio Optimization:** Dynamic cash allocation across multiple assets (CVaR).
+- **Smart Protection (Watchdog):** Emergency liquidation in seconds during flash crashes.
+- **Cost Efficiency:** Up to 80% API savings through prompt compression and caching.
 
 ---
 
-## 🛠️ Kurulum ve Kullanım
+## 📁 Project Structure
 
-Kısa yoldan başlamak için aşağıdaki komutları izleyin:
+| Folder / File | Description |
+|----------------|-------------|
+| `agents/` | Logic for all AI agents (Debate, Risk, Trader, etc.) |
+| `config/` | Strategy and exchange configuration files |
+| `dashboard/` | Web-based monitoring panel (P&L and Portfolio view) |
+| `data/` | Market data, balances, and temporary caches |
+| `docs/` | Comprehensive documentation and platform guides |
+| `execution/` | Exchange connectivity and order transmission systems |
+| `scripts/` | Scripts to run and test the bot |
+| `tests/` | Integration and unit tests |
+
+---
+
+## 🛠️ Installation & Usage
+
+Follow these steps to get started quickly:
 
 ```bash
-# Sanal ortam oluştur ve aktifleştir
+# Create and activate virtual environment
 python -m venv venv
-venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Bağımlılıkları yükle
-pip install -r requirements.txt
+# Install dependencies
+pip install -e .
 
-# Çevre değişkenlerini ayarla
-cp .env.example .env  # API anahtarlarınızı bu dosyaya ekleyin
+# Configure environment variables
+cp .env.example .env  # Add your API keys to this file
 ```
 
-### Hızlı Çalıştırma
-Sistemi en kolay şekilde başlatmak için `scripts/baslat.bat` dosyasını kullanabilir veya doğrudan CLI üzerinden ilerleyebilirsiniz:
+### Quick Start
+Use the CLI to launch the system:
 
 ```bash
-# BTC/USDT için 1 saatlik mumlarla paper trading başlat
-python cli.py run --symbol BTC/USDT --interval 1h --watchdog
+# Start paper trading for BTC/USDT with 1h intervals
+aegis run --symbol BTC/USDT --interval 1h --watchdog
 ```
 
-Daha detaylı bilgi için:
-- 📖 [**Hızlı Başlangıç Rehberi**](docs/TR/HIZLI_BASLANGIC.md)
-- ⚙️ [**Canlı İşlem Kurulumu**](docs/setup/LIVE_TRADING.md)
-- 📜 [**CLI Komut Listesi**](docs/TR/CLI_KOMUTLARI.md)
+For more details:
+- 📖 [**Quick Start Guide**](docs/setup/QUICK_START.md)
+- ⚙️ [**Live Trading Setup**](docs/setup/LIVE_TRADING.md)
+- 📜 [**CLI Command Reference**](docs/TR/CLI_KOMUTLARI.md)
 
 ---
 
-## 🛡️ Güvenlik ve Risk Uyarısı
+## 🛡️ Security & Risk Warning
 
-Bu yazılım otonom bir sistemdir. Canlı işlem yapmadan önce **Paper Trading** modunda en az 48 saat test yapılması ve belirlenen risk limitlerinin (`config/trading_params.yaml`) dikkatle incelenmesi şiddetle önerilir.
+This software is an autonomous system. It is strongly recommended to test in **Paper Trading** mode for at least 48 hours before live trading and to carefully review risk limits in `config/trading_params.yaml`.
 
 ---
 
-## 📄 Lisans
-Bu proje [MIT Lisansı](LICENSE) altında korunmaktadır.
+## 📄 License
+This project is licensed under the [MIT License](LICENSE).

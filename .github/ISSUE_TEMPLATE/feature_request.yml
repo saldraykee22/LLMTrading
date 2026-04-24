@@ -1,21 +1,21 @@
-name: ✨ Özellik Talebi (Feature Request)
-description: Yeni bir fikir veya geliştirme önerin.
+name: ✨ Feature Request
+description: Suggest a new idea or improvement.
 labels: ["enhancement"]
 body:
   - type: textarea
     id: idea
     attributes:
-      label: Fikriniz nedir?
-      description: Eklenmesini istediğiniz özelliği açıklayın.
+      label: What is your idea?
+      description: Explain the feature you want added.
     validations:
       required: true
   - type: textarea
     id: problem
     attributes:
-      label: Bu özellik hangi sorunu çözüyor?
-      description: Bu özelliğin neden gerekli olduğunu belirtin.
+      label: What problem does this feature solve?
+      description: State why this feature is necessary.
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatif Çözümler
-      description: Düşündüğünüz başka yollar var mı?
+      label: Alternative Solutions
+      description: Are there other ways you have considered?

@@ -1,20 +1,20 @@
-# Aegis Terminal'e Katkıda Bulunma Rehberi
+# Contributing to Aegis Terminal
 
-Aegis Terminal'e katkıda bulunmak istediğiniz için teşekkürler! Bu proje, topluluk desteğiyle gelişen otonom bir ticaret platformudur.
+Thank you for your interest in contributing to Aegis Terminal! This project is an autonomous trading platform that grows with community support.
 
-## Katılım Süreci
+## Contribution Process
 
-1.  **Issue Oluşturun:** Bir hata bulduysanız veya yeni bir özellik öneriniz varsa önce bir Issue açın.
-2.  **Fork Yapın:** Projeyi kendi hesabınıza fork'layın.
-3.  **Branch Oluşturun:** Anlamlı bir branch ismi seçin (`feat/yeni-ozellik` veya `fix/hata-adi`).
-4.  **Test Edin:** Yaptığınız değişikliklerin mevcut testleri bozmadığından emin olun.
-5.  **Pull Request Gönderin:** Değişikliklerinizi açıklayan bir PR oluşturun.
+1.  **Open an Issue:** If you found a bug or have a new feature suggestion, please open an issue first.
+2.  **Fork the Repo:** Fork the project to your own account.
+3.  **Create a Branch:** Use a descriptive branch name (`feat/new-feature` or `fix/bug-name`).
+4.  **Test Your Changes:** Ensure your changes don't break existing tests.
+5.  **Submit a Pull Request:** Create a PR explaining your changes.
 
-## Kod Standartları
-- Python 3.10+ uyumluluğuna dikkat edin.
-- Tip ipuçlarını (Type hints) kullanmaya özen gösterin.
-- Yeni eklediğiniz fonksiyonlar için docstring ekleyin.
-- Proje standartları için `ruff` ve `black` kullanıyoruz.
+## Coding Standards
+- Maintain compatibility with Python 3.10+.
+- Use Type hints wherever possible.
+- Include docstrings for any new functions.
+- We use `ruff` and `black` for project standards.
 
-## Sorularınız mı var?
-Herhangi bir sorunuz varsa Issue panelinden bizimle iletişime geçebilirsiniz.
+## Questions?
+If you have any questions, feel free to contact us via the Issues panel.
