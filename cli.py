@@ -1,150 +1,217 @@
 """
-Aegis Intelligence Terminal - Command Line Interface (CLI)
-=========================================================
-Global standard command line interface for Aegis Terminal.
+LLM Trading System - Komut Satırı Arayüzü (CLI)
+================================================
+Türkçe kullanıcı dostu, Typer tabanlı komut satırı arayüzü.
 
-Usage:
-    aegis --help
-    aegis health
-    aegis run --symbol BTC/USDT
-    aegis backtest --symbol BTC/USDT --days 90
+Kullanım:
+    python cli.py --help
+    python cli.py saglik
+    python cli.py calistir --sembol BTC/USDT
+    python cli.py geriye-donuk-test --sembol BTC/USDT --gun 90
 """
 
-import argparse
 import sys
+import json
+import subprocess
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
+import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.prompt import Confirm
 
-# Add project root to path
+# Proje kökünü path'e ekle
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+app = typer.Typer(
+    help="LLM Trading System - Türkçe Komut Satırı Arayüzü",
+    add_completion=False,
+    rich_markup_mode="rich",
+)
 
-def print_header(header: str) -> None:
-    """Print header."""
-    width = 70
-    print("\n" + "=" * width)
-    print(f"  {header}".center(width))
-    print("=" * width + "\n")
-
-
-def print_section(section_name: str) -> None:
-    """Print section header."""
-    print(f"\n> {section_name}")
-    print("-" * 50)
+console = Console()
 
 
-def cmd_health(args) -> int:
-    """System health check."""
-    from scripts.health_check import main as health_main
-    return health_main()
+def print_baslik(baslik: str) -> None:
+    """Başlık yazdır."""
+    console.print(f"\n[bold cyan]{'=' * 70}[/]")
+    console.print(f"[bold cyan]  {baslik.center(66)}[/]")
+    console.print(f"[bold cyan]{'=' * 70}[/]\n")
 
 
-def cmd_run(args) -> int:
-    """Run trading bot."""
-    import subprocess
-    
+def print_bolum(bolum_adi: str) -> None:
+    """Bölüm başlığı yazdır."""
+    console.print(f"\n[bold magenta]> {bolum_adi}[/]")
+    console.print(f"[magenta]{'-' * 50}[/]")
+
+
+@app.command("saglik")
+def cmd_saglik():
+    """Sistem sağlık kontrolü yapar."""
+    from scripts.health_check import main as saglik_ana
+    sys.exit(saglik_ana())
+
+
+@app.command("calistir")
+def cmd_calistir(
+    sembol: str = typer.Option("AUTO", "--sembol", "-s", help="Sembol veya AUTO (otomatik tarama)"),
+    aralik: str = typer.Option("1h", "--aralik", "-a", help="Aralık (5m, 15m, 30m, 1h, 4h)"),
+    bekci: bool = typer.Option(False, "--bekci", "-b", help="Flash crash koruması"),
+    yurut: bool = typer.Option(False, "--yurut", "-y", help="Canlı işlem (DİKKAT!)"),
+    oto_tarama: bool = typer.Option(False, "--oto-tarama", help="Otomatik piyasa taraması"),
+    maks_dongu: int = typer.Option(0, "--maks-dongu", help="Maksimum döngü sayısı (0=sınırsız)"),
+    model: str = typer.Option("qwen/qwen3.5-flash-02-23", "--model", "-m", help="LLM modeli"),
+    arka_plan: bool = typer.Option(False, "--arka-plan", help="Arka planda (daemon) çalıştır (konsolu bloklamaz)"),
+):
+    """Trading bot'u çalıştırır."""
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_live.py"),
-        "--symbol", args.symbol,
-        "--interval", args.interval,
+        "--symbol", sembol,
+        "--interval", aralik,
     ]
     
-    if args.watchdog:
+    if bekci:
         cmd.append("--watchdog")
-    
-    if args.execute:
+    if yurut:
         cmd.append("--execute")
-    
-    if args.auto_scan:
+    if oto_tarama:
         cmd.append("--auto-scan")
-    
-    if args.max_cycles:
-        cmd.extend(["--max-cycles", str(args.max_cycles)])
-    
-    if args.model:
-        cmd.extend(["--model", args.model])
+    if maks_dongu:
+        cmd.extend(["--max-cycles", str(maks_dongu)])
+    if model:
+        cmd.extend(["--model", model])
+
+    console.print(Panel.fit(
+        f"[bold]Sembol:[/] {sembol}\n"
+        f"[bold]Aralık:[/] {aralik}\n"
+        f"[bold]Mod:[/] {'[red]CANLI İŞLEM[/red]' if yurut else '[green]PAPER TRADING[/green]'}\n"
+        f"[bold]Arka Plan:[/] {'[green]Evet[/green]' if arka_plan else '[yellow]Hayır[/yellow]'}",
+        title="Bot Başlatılıyor", border_style="cyan"
+    ))
     
     try:
-        subprocess.run(cmd, check=True)
-        return 0
+        if arka_plan:
+            # Arka planda çalıştır (detach process)
+            if sys.platform == "win32":
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                log_file = open(PROJECT_ROOT / "logs" / "daemon_trading.log", "a")
+                subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+            console.print("[green]✓ Bot arka planda başlatıldı![/green]")
+            console.print("Logları izlemek için: [bold cyan]python cli.py kayitlar[/bold cyan]")
+        else:
+            subprocess.run(cmd, check=True)
     except KeyboardInterrupt:
-        print("\n\n[INFO] Stopped by user.")
-        return 0
+        console.print("\n\n[bold yellow][BİLGİ] Kullanıcı tarafından durduruldu.[/bold yellow]")
     except subprocess.CalledProcessError as e:
-        print(f"\n[ERROR] Bot error: {e}")
-        return 1
+        console.print(f"\n[bold red][HATA] Bot hatası: {e}[/bold red]")
+        sys.exit(1)
 
 
-def cmd_backtest(args) -> int:
-    """Run backtest."""
-    import subprocess
-    
+@app.command("geriye-donuk-test")
+def cmd_geriye_donuk_test(
+    sembol: str = typer.Option(..., "--sembol", "-s", help="Sembol (örn. BTC/USDT)"),
+    gun: int = typer.Option(90, "--gun", "-g", help="Geçmiş gün sayısı"),
+    arka_plan: bool = typer.Option(False, "--arka-plan", help="Arka planda (daemon) çalıştır"),
+):
+    """Geriye dönük test (backtest) çalıştırır."""
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_backtest.py"),
-        "--symbol", args.symbol,
-        "--days", str(args.days),
+        "--symbol", sembol,
+        "--days", str(gun),
     ]
     
+    console.print(f"[bold cyan]Geriye Dönük Test Başlatılıyor: {sembol} (Son {gun} gün)[/bold cyan]")
+
     try:
-        subprocess.run(cmd, check=True)
-        return 0
+        if arka_plan:
+            if sys.platform == "win32":
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                log_file = open(PROJECT_ROOT / "logs" / "daemon_backtest.log", "a")
+                subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+            console.print("[green]✓ Backtest arka planda başlatıldı![/green]")
+        else:
+            subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"\n[ERROR] Backtest error: {e}")
-        return 1
+        console.print(f"\n[bold red][HATA] Backtest hatası: {e}[/bold red]")
+        sys.exit(1)
 
 
-def cmd_portfolio(args) -> int:
-    """Portfolio status."""
-    import json
+@app.command("portfoy")
+def cmd_portfoy():
+    """Portföy durumunu gösterir."""
+    print_baslik("PORTFÖY DURUMU")
     
-    print_header("PORTFOLIO STATUS")
+    portfoy_dosya = PROJECT_ROOT / "data" / "portfolio_state.json"
     
-    portfolio_file = PROJECT_ROOT / "data" / "portfolio_state.json"
-    
-    if not portfolio_file.exists():
-        print("[INFO] No open positions yet.")
-        return 0
+    if not portfoy_dosya.exists():
+        console.print("[yellow][BİLGİ] Henüz açık pozisyon yok.[/yellow]")
+        return
     
     try:
-        with open(portfolio_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(portfoy_dosya, "r", encoding="utf-8") as f:
+            veri = json.load(f)
         
-        print(f"Initial Cash:    ${data.get('initial_cash', 0):,.2f}")
-        print(f"Current Cash:    ${data.get('cash', 0):,.2f}")
-        print(f"Total Equity:    ${data.get('equity', 0):,.2f}")
-        print(f"Total P&L:       ${data.get('total_pnl', 0):,.2f}")
-        print(f"Daily P&L:       ${data.get('daily_pnl', 0):,.2f}")
-        print(f"Max Drawdown:    {data.get('current_drawdown', 0):.2%}")
+        ozet_tablo = Table(show_header=False, box=None)
+        ozet_tablo.add_row("Başlangıç Nakit:", f"[blue]${veri.get('initial_cash', 0):,.2f}[/]")
+        ozet_tablo.add_row("Şu Anki Nakit:", f"[green]${veri.get('cash', 0):,.2f}[/]")
+        ozet_tablo.add_row("Toplam Özvarlık:", f"[bold cyan]${veri.get('equity', 0):,.2f}[/]")
+
+        toplam_pnl = veri.get('total_pnl', 0)
+        pnl_renk = "green" if toplam_pnl >= 0 else "red"
+        ozet_tablo.add_row("Toplam K/Z:", f"[{pnl_renk}]${toplam_pnl:+,.2f}[/]")
+
+        gunluk_pnl = veri.get('daily_pnl', 0)
+        gpnl_renk = "green" if gunluk_pnl >= 0 else "red"
+        ozet_tablo.add_row("Günlük K/Z:", f"[{gpnl_renk}]${gunluk_pnl:+,.2f}[/]")
+        ozet_tablo.add_row("Maksimum Erime:", f"[red]{veri.get('current_drawdown', 0):.2%}[/]")
+
+        console.print(ozet_tablo)
         
-        positions = data.get("positions", [])
-        if positions:
-            print_section(f"OPEN POSITIONS ({len(positions)})")
-            for pos in positions:
-                print(f"\n  {pos.get('symbol')}")
-                print(f"    Side:        {pos.get('side', 'long').upper()}")
-                print(f"    Entry:       ${pos.get('entry_price', 0):,.2f}")
-                print(f"    Amount:      {pos.get('amount', 0):.6f}")
-                print(f"    Unrealized:  ${pos.get('unrealized_pnl', 0):,.2f}")
+        pozisyonlar = veri.get("positions", [])
+        if pozisyonlar:
+            print_bolum(f"AÇIK POZİSYONLAR ({len(pozisyonlar)})")
+
+            poz_tablo = Table(show_header=True, header_style="bold cyan")
+            poz_tablo.add_column("Sembol")
+            poz_tablo.add_column("Taraf")
+            poz_tablo.add_column("Giriş", justify="right")
+            poz_tablo.add_column("Miktar", justify="right")
+            poz_tablo.add_column("K/Z", justify="right")
+
+            for poz in pozisyonlar:
+                taraf = poz.get('side', 'long').upper()
+                taraf_renk = "green" if taraf == "LONG" else "red"
+                kz = poz.get('unrealized_pnl', 0)
+                kz_renk = "green" if kz >= 0 else "red"
+
+                poz_tablo.add_row(
+                    poz.get('symbol'),
+                    f"[{taraf_renk}]{taraf}[/]",
+                    f"${poz.get('entry_price', 0):,.2f}",
+                    f"{poz.get('amount', 0):.6f}",
+                    f"[{kz_renk}]${kz:+,.2f}[/]"
+                )
+            console.print(poz_tablo)
         
-        print()
-        return 0
     except Exception as e:
-        print(f"[ERROR] Could not read portfolio: {e}")
-        return 1
+        console.print(f"[bold red][HATA] Portföy okunamadı: {e}[/bold red]")
+        sys.exit(1)
 
 
-def cmd_test(args) -> int:
-    """Run test suite."""
-    import subprocess
-    
-    print_header("TEST SUITE")
+@app.command("testler")
+def cmd_testler(
+    ayrintili: bool = typer.Option(False, "--ayrintili", "-a", help="Detaylı çıktı gösterir")
+):
+    """Test paketini çalıştırır."""
+    print_baslik("TEST PAKETİ")
     
     cmd = [
         sys.executable,
@@ -154,197 +221,191 @@ def cmd_test(args) -> int:
         "--tb=short",
     ]
     
-    if args.verbose:
+    if ayrintili:
         cmd.append("-s")
     
     try:
         subprocess.run(cmd, check=True)
-        return 0
     except subprocess.CalledProcessError as e:
-        print(f"\n[ERROR] Tests failed: {e}")
-        return 1
+        console.print(f"\n[bold red][HATA] Testler başarısız: {e}[/bold red]")
+        sys.exit(1)
 
 
-def cmd_logs(args) -> int:
-    """Show logs."""
-    print_header("LATEST LOG LINES")
+@app.command("kayitlar")
+def cmd_kayitlar(
+    satir: int = typer.Option(50, "--satir", "-n", help="Gösterilecek satır sayısı")
+):
+    """Kayıtları (log) gösterir."""
+    print_baslik(f"SON {satir} KAYIT SATIRI")
     
-    log_file = PROJECT_ROOT / "logs" / "trading.log"
+    kayit_dosya = PROJECT_ROOT / "logs" / "trading.log"
     
-    if not log_file.exists():
-        print("[INFO] No log file created yet.")
-        return 0
+    if not kayit_dosya.exists():
+        console.print("[yellow][BİLGİ] Henüz kayıt dosyası oluşturulmadı.[/yellow]")
+        return
     
     try:
-        with open(log_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        with open(kayit_dosya, "r", encoding="utf-8") as f:
+            satirlar = f.readlines()
         
-        n = args.lines or 50
-        for line in lines[-n:]:
-            print(line.strip())
-        
-        return 0
+        for s in satirlar[-satir:]:
+            if "ERROR" in s or "CRITICAL" in s:
+                console.print(f"[red]{s.strip()}[/]")
+            elif "WARNING" in s:
+                console.print(f"[yellow]{s.strip()}[/]")
+            else:
+                console.print(s.strip())
+
     except Exception as e:
-        print(f"[ERROR] Could not read logs: {e}")
-        return 1
+        console.print(f"[bold red][HATA] Kayıt okunamadı: {e}[/bold red]")
+        sys.exit(1)
 
 
-def cmd_scan(args) -> int:
-    """Market scan."""
+@app.command("tarama")
+def cmd_tarama():
+    """Piyasa taraması yapar."""
     from data.scanner import MarketScanner
-    from rich.console import Console
-    from rich.table import Table
     
-    console = Console()
+    print_baslik("PİYASA TARAMASI")
     
-    print_header("MARKET SCAN")
+    tarayici = MarketScanner()
     
-    scanner = MarketScanner()
+    with console.status("[bold green]Adaylar Taranıyor...[/bold green]"):
+        try:
+            adaylar = tarayici.get_candidates()
+        except Exception as e:
+            console.print(f"[bold red]❌ Tarama hatası: {e}[/bold red]")
+            sys.exit(1)
     
-    print_section("Scanning Candidates...")
-    try:
-        candidates = scanner.get_candidates()
-    except Exception as e:
-        console.print(f"[red]X Scan error: {e}[/red]")
-        return 1
+    if not adaylar:
+        console.print("[yellow]Kriterlere uygun aday bulunamadı.[/yellow]")
+        return
     
-    if not candidates:
-        console.print("[yellow]No candidates found matching criteria.[/yellow]")
-        return 0
+    console.print(f"[green]✓ {len(adaylar)} aday bulundu.[/green]\n")
     
-    console.print(f"[green]V {len(candidates)} candidates found.[/green]")
+    tablo = Table(title="Önerilen Varlıklar (İlk 10)", show_header=True, header_style="bold cyan")
+    tablo.add_column("Sembol", style="bold")
+    tablo.add_column("Fiyat", justify="right")
+    tablo.add_column("24s Hacim", justify="right")
+    tablo.add_column("24s Değişim", justify="right")
+    tablo.add_column("Kalite Skoru", justify="right")
     
-    print_section("Top Candidates")
-    
-    table = Table(title="Recommended Assets", show_header=True, header_style="bold cyan")
-    table.add_column("Symbol", style="bold")
-    table.add_column("Price", justify="right")
-    table.add_column("24h Volume", justify="right")
-    table.add_column("24h Change", justify="right")
-    table.add_column("Quality Score", justify="right")
-    
-    for cand in candidates[:10]:
-        if isinstance(cand, dict):
-            symbol = cand.get("symbol", "N/A")
-            price = cand.get("price", 0)
-            volume = cand.get("volume_24h", 0)
-            change = cand.get("change_24h", 0)
-            score = cand.get("quality_score", 0)
+    for aday in adaylar[:10]:
+        if isinstance(aday, dict):
+            sembol = aday.get("symbol", "N/A")
+            fiyat = aday.get("price", 0)
+            hacim = aday.get("volume_24h", 0)
+            degisim = aday.get("change_24h", 0)
+            skor = aday.get("quality_score", 0)
             
-            table.add_row(
-                symbol,
-                f"${price:,.4f}",
-                f"${volume:,.0f}",
-                f"{change:+.2f}%",
-                f"{score:.1f}",
+            renk = "green" if degisim >= 0 else "red"
+
+            tablo.add_row(
+                sembol,
+                f"${fiyat:,.4f}",
+                f"${hacim:,.0f}",
+                f"[{renk}]{degisim:+.2f}%[/]",
+                f"{skor:.1f}",
             )
     
-    console.print(table)
-    print()
-    
-    return 0
+    console.print(tablo)
 
 
-def cmd_status(args) -> int:
-    """System status."""
-    console = Console()
+@app.command("durum")
+def cmd_durum():
+    """Sistem ve portföy durumunu gösterir."""
+    print_baslik("SİSTEM DURUMU")
     
-    print_header("SYSTEM STATUS")
-    
-    # Circuit Breaker
+    # Circuit Breaker Durumu
     from risk.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker()
-    cb_status = cb.get_status()
+    cb_durum = cb.get_status()
     
-    panel_data = []
-    panel_data.append(f"Circuit Breaker: {'[red]HALTED[/red]' if cb_status.get('halted') else '[green]ACTIVE[/green]'}")
-    if cb_status.get('halt_reason'):
-        panel_data.append(f"  Reason: {cb_status['halt_reason']}")
-    panel_data.append(f"Consecutive Losses: {cb_status.get('consecutive_losses', 0)}")
-    panel_data.append(f"Consecutive LLM Errors: {cb_status.get('consecutive_llm_errors', 0)}")
+    cb_renk = "red" if cb_durum.get('halted') else "green"
+    cb_metin = "AKTİF (DURDURULDU)" if cb_durum.get('halted') else "PASİF (ÇALIŞIYOR)"
     
-    console.print(Panel("\n".join(panel_data), title="Circuit Breaker", border_style="red" if cb_status.get('halted') else "green"))
+    panel_veri = f"[bold]Circuit Breaker:[/] [{cb_renk}]{cb_metin}[/{cb_renk}]\n"
+    if cb_durum.get('halt_reason'):
+        panel_veri += f"[bold]Sebep:[/] {cb_durum['halt_reason']}\n"
+    panel_veri += f"[bold]Art Arda Kayıp:[/] {cb_durum.get('consecutive_losses', 0)}\n"
+    panel_veri += f"[bold]Art Arda LLM Hatası:[/] {cb_durum.get('consecutive_llm_errors', 0)}"
     
-    # Portfolio
-    from risk.portfolio import PortfolioState
-    portfolio = PortfolioState.load_from_file()
+    console.print(Panel(panel_veri, title="Circuit Breaker", border_style=cb_renk))
     
-    port_table = Table(title="Portfolio Summary", show_header=False)
-    port_table.add_column("Metric", style="bold")
-    port_table.add_column("Value")
-    
-    port_table.add_row("Equity", f"${portfolio.equity:,.2f}")
-    port_table.add_row("Cash", f"${portfolio.cash:,.2f}")
-    port_table.add_row("Open Positions", str(portfolio.open_position_count))
-    port_table.add_row("Total P&L", f"${portfolio.total_pnl:,.2f}")
-    port_table.add_row("Daily P&L", f"${portfolio.daily_pnl:,.2f}")
-    port_table.add_row("Drawdown", f"{portfolio.current_drawdown:.2%}")
-    
-    console.print(port_table)
-    print()
-    
-    return 0
+    # Portföy Durumu
+    try:
+        from risk.portfolio import PortfolioState
+        portfoy = PortfolioState.load_from_file()
+
+        portfoy_tablo = Table(title="Portföy Özeti", show_header=False, box=None)
+        portfoy_tablo.add_row("[bold]Özvarlık[/]", f"[cyan]${portfoy.equity:,.2f}[/cyan]")
+        portfoy_tablo.add_row("[bold]Nakit[/]", f"${portfoy.cash:,.2f}")
+        portfoy_tablo.add_row("[bold]Açık Pozisyon[/]", str(portfoy.open_position_count))
+        portfoy_tablo.add_row("[bold]Toplam K/Z[/]", f"${portfoy.total_pnl:,.2f}")
+        portfoy_tablo.add_row("[bold]Günlük K/Z[/]", f"${portfoy.daily_pnl:,.2f}")
+        portfoy_tablo.add_row("[bold]Erime (Drawdown)[/]", f"[red]{portfoy.current_drawdown:.2%}[/red]")
+
+        console.print(portfoy_tablo)
+    except Exception as e:
+        console.print(f"[yellow]Portföy bilgisi alınamadı: {e}[/yellow]")
 
 
-def cmd_fallbacks(args) -> int:
-    """Show latest fallback logs."""
-    console = Console()
-    
+@app.command("fallbacklar")
+def cmd_fallbacklar(
+    limit: int = typer.Option(10, "--limit", "-l", help="Gösterilecek kayıt sayısı")
+):
+    """Son fallback kayıtlarını gösterir."""
     from data.fallback_store import get_fallback_store
     store = get_fallback_store()
-    fallbacks = store.get_fallbacks(limit=args.limit)
+    fallbacks = store.get_fallbacks(limit=limit)
     summary = store.get_fallback_summary(hours=24)
     
     if not fallbacks:
-        console.print("[yellow]No fallback records found[/]")
-        return 0
+        console.print("[yellow]Fallback kaydı bulunamadı.[/yellow]")
+        return
     
-    # Summary
-    console.print(f"\n[bold cyan]Fallback Summary (Last 24h)[/]")
-    console.print(f"  Total: {summary['total_fallbacks']}")
+    console.print(f"\n[bold cyan]Fallback Özeti (Son 24s)[/]")
+    console.print(f"  Toplam: {summary['total_fallbacks']}")
     if summary.get('by_agent'):
-        console.print(f"  By Agent:")
+        console.print(f"  Ajanlara göre:")
         for agent, count in summary['by_agent'].items():
             console.print(f"    - {agent}: {count}")
     
-    # Table
     table = Table(title="Fallback Audit Log", show_lines=True)
-    table.add_column("Time", style="cyan", width=10)
-    table.add_column("Agent", style="magenta", width=15)
-    table.add_column("Reason", style="yellow", width=40)
-    table.add_column("Symbol", style="green", width=12)
+    table.add_column("Zaman", style="cyan", width=10)
+    table.add_column("Ajan", style="magenta", width=15)
+    table.add_column("Neden", style="yellow", width=40)
+    table.add_column("Sembol", style="green", width=12)
     
     for fb in fallbacks:
-        time = datetime.fromisoformat(fb['timestamp']).strftime('%H:%M:%S')
-        agent = fb['agent']
-        reason = fb['reason'][:40]
-        symbol = fb.get('symbol', '-')
-        table.add_row(time, agent, reason, symbol)
+        zaman = datetime.fromisoformat(fb['timestamp']).strftime('%H:%M:%S')
+        ajan = fb['agent']
+        neden = fb['reason'][:40]
+        sembol = fb.get('symbol', '-')
+        table.add_row(zaman, ajan, neden, sembol)
     
     console.print(table)
-    return 0
 
 
-def cmd_circuit_breaker_status(args) -> int:
-    """Show circuit breaker detailed status."""
-    console = Console()
-    
+@app.command("circuit-breaker")
+def cmd_circuit_breaker():
+    """Circuit breaker detaylı durumunu gösterir."""
     from risk.circuit_breaker import CircuitBreaker
+    from config.settings import get_trading_params
+
     cb = CircuitBreaker()
     status = cb.get_status()
+    params = get_trading_params()
     
-    console.print(f"\n[bold]Circuit Breaker Status[/]")
+    console.print(f"\n[bold]Circuit Breaker Durumu[/]")
     
     if status['halted']:
-        console.print(f"  State: [bold red]HALTED[/]")
-        console.print(f"  Reason: [red]{status['halt_reason']}[/]")
+        console.print(f"  Durum: [bold red]DURDURULDU[/]")
+        console.print(f"  Neden: [red]{status['halt_reason']}[/]")
     else:
-        console.print(f"  State: [bold green]ACTIVE[/]")
+        console.print(f"  Durum: [bold green]AKTİF[/]")
     
-    console.print(f"\n  Counters:")
-    
-    from config.trading_params import get_trading_params
-    params = get_trading_params()
+    console.print(f"\n  Sayaçlar:")
 
     # Fallbacks
     fb_count = status['consecutive_fallbacks']
@@ -352,7 +413,7 @@ def cmd_circuit_breaker_status(args) -> int:
     fb_pct = (fb_count / fb_max) * 100 if fb_max > 0 else 0
     fb_color = "red" if fb_count >= fb_max - 1 else "yellow" if fb_count >= fb_max // 2 else "green"
     fb_bar = '#' * int(fb_pct/10) + '-' * (10 - int(fb_pct/10))
-    console.print(f"    Fallbacks:    [{fb_color}]{fb_count}/{fb_max}[/{fb_color}] [{fb_bar}]")
+    console.print(f"    Fallbacklar:  [{fb_color}]{fb_count}/{fb_max}[/{fb_color}] [{fb_bar}]")
 
     # LLM Errors
     llm_count = status['consecutive_llm_errors']
@@ -360,7 +421,7 @@ def cmd_circuit_breaker_status(args) -> int:
     llm_pct = (llm_count / llm_max) * 100 if llm_max > 0 else 0
     llm_color = "red" if llm_count >= llm_max - 2 else "yellow" if llm_count >= llm_max // 2 else "green"
     llm_bar = '#' * int(llm_pct/10) + '-' * (10 - int(llm_pct/10))
-    console.print(f"    LLM Errors:   [{llm_color}]{llm_count}/{llm_max}[/{llm_color}] [{llm_bar}]")
+    console.print(f"    LLM Hataları: [{llm_color}]{llm_count}/{llm_max}[/{llm_color}] [{llm_bar}]")
 
     # Losses
     loss_count = status['consecutive_losses']
@@ -368,199 +429,82 @@ def cmd_circuit_breaker_status(args) -> int:
     loss_pct = (loss_count / loss_max) * 100 if loss_max > 0 else 0
     loss_color = "red" if loss_count >= loss_max - 1 else "yellow" if loss_count >= loss_max // 2 else "green"
     loss_bar = '#' * int(loss_pct/10) + '-' * (10 - int(loss_pct/10))
-    console.print(f"    Losses:       [{loss_color}]{loss_count}/{loss_max}[/{loss_color}] [{loss_bar}]")
-    
-    console.print()
-    return 0
+    console.print(f"    Kayıplar:     [{loss_color}]{loss_count}/{loss_max}[/{loss_color}] [{loss_bar}]")
 
 
-def cmd_circuit_breaker_reset(args) -> int:
-    """Reset circuit breaker counters."""
-    console = Console()
-    from rich.prompt import Confirm
-    
-    if not Confirm.ask("[yellow]Reset all circuit breaker counters?[/]"):
-        return 0
-    
-    from risk.circuit_breaker import CircuitBreaker
-    cb = CircuitBreaker()
-    cb.reset_fallbacks()
-    cb.reset_llm_errors()
-    cb.consecutive_losses = 0
-    cb._save_state()
-    
-    console.print("[green]✓ Circuit breaker counters reset[/]")
-    return 0
+@app.command("circuit-breaker-sifirla")
+def cmd_circuit_breaker_sifirla():
+    """Circuit breaker sayaçlarını sıfırlar."""
+    if Confirm.ask("[yellow]Tüm circuit breaker sayaçları sıfırlansın mı?[/]"):
+        from risk.circuit_breaker import CircuitBreaker
+        cb = CircuitBreaker()
+        cb.reset_fallbacks()
+        cb.reset_llm_errors()
+        cb.consecutive_losses = 0
+        cb._save_state()
+        console.print("[bold green]✓ Circuit breaker sayaçları sıfırlandı.[/bold green]")
 
 
-def cmd_accounts(args) -> int:
-    """Show status of all accounts."""
-    console = Console()
-    from rich.table import Table
-    
+@app.command("hesaplar")
+def cmd_hesaplar():
+    """Tüm hesapların durumunu gösterir."""
     from config.settings import get_settings
     from execution.account_manager import MultiAccountManager
     
     settings = get_settings()
     
     if not settings.binance_accounts:
-        console.print("[yellow]Multi-account configuration not found[/yellow]")
-        return 0
+        console.print("[yellow]Multi-account (Çoklu hesap) yapılandırması bulunamadı.[/yellow]")
+        return
     
     try:
         manager = MultiAccountManager(settings.binance_accounts)
         summary = manager.get_status_summary()
         
-        console.print(f"\n[bold cyan]Account Status[/]")
-        console.print(f"  Total Accounts:  {summary['total_accounts']}")
-        console.print(f"  Active Accounts: {summary['active_accounts']}\n")
+        console.print(f"\n[bold cyan]Hesap Durumu[/]")
+        console.print(f"  Toplam Hesap: {summary['total_accounts']}")
+        console.print(f"  Aktif Hesap:  {summary['active_accounts']}\n")
         
-        # Table
-        table = Table(title="Accounts", show_lines=True)
-        table.add_column("Name", style="cyan", width=15)
-        table.add_column("Status", style="magenta", width=10)
-        table.add_column("Equity", style="green", width=15)
-        table.add_column("Cash", style="blue", width=15)
-        table.add_column("Positions", style="yellow", width=10)
-        table.add_column("Error", style="red", width=20)
+        table = Table(title="Hesaplar", show_lines=True)
+        table.add_column("Ad", style="cyan", width=15)
+        table.add_column("Durum", style="magenta", width=10)
+        table.add_column("Özvarlık", style="green", width=15)
+        table.add_column("Nakit", style="blue", width=15)
+        table.add_column("Pozisyon", style="yellow", width=10)
+        table.add_column("Hata", style="red", width=20)
         
         for name, data in summary['accounts'].items():
-            status = "[green]Active[/]" if data['is_active'] else "[red]Inactive[/]"
+            durum = "[green]Aktif[/]" if data['is_active'] else "[red]Pasif[/]"
             equity = f"${data['equity']:,.2f}"
             cash = f"${data['cash']:,.2f}"
-            pos = str(data['open_positions'])
-            err = data['last_error'][:20] if data['last_error'] else "-"
-            table.add_row(name, status, equity, cash, pos, err)
+            pozisyon = str(data['open_positions'])
+            hata = data['last_error'][:20] if data['last_error'] else "-"
+            table.add_row(name, durum, equity, cash, pozisyon, hata)
         
         console.print(table)
         
-        # Combined view
         if summary['total_accounts'] > 1:
             total_equity = sum(acc['equity'] for acc in summary['accounts'].values())
             total_cash = sum(acc['cash'] for acc in summary['accounts'].values())
             total_positions = sum(acc['open_positions'] for acc in summary['accounts'].values())
             
-            console.print(f"\n[bold]★ Consolidated View (All Accounts)[/]")
-            console.print(f"  Total Equity:    [green]${total_equity:,.2f}[/]")
-            console.print(f"  Total Cash:      [blue]${total_cash:,.2f}[/]")
-            console.print(f"  Total Positions: {total_positions}\n")
-        
+            console.print(f"\n[bold]★ Kombin Görünüm (Tüm Hesaplar)[/]")
+            console.print(f"  Toplam Özvarlık:  [green]${total_equity:,.2f}[/]")
+            console.print(f"  Toplam Nakit:    [blue]${total_cash:,.2f}[/]")
+            console.print(f"  Toplam Pozisyon: {total_positions}\n")
+
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-    return 0
+        console.print(f"[bold red]Hata: {e}[/bold red]")
 
 
-def cmd_dashboard(args) -> int:
-    """Show web dashboard URL."""
-    console = Console()
-    
+@app.command("dashboard")
+def cmd_dashboard():
+    """Web dashboard URL'sini gösterir."""
     console.print(f"\n[bold cyan]Web Dashboard[/]")
     console.print(f"  URL: [link=http://localhost:8000]http://localhost:8000[/]")
     console.print(f"  API: [link=http://localhost:8000/docs]http://localhost:8000/docs[/]")
-    console.print(f"\n  To start: [cyan]python dashboard/server.py[/]\n")
-    return 0
-
-
-def ana() -> int:
-    """Main CLI function."""
-    parser = argparse.ArgumentParser(
-        description="Aegis Intelligence Terminal - Autonomous Trading Platform",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  aegis health                    # Health check
-  aegis run --symbol BTC/USDT     # Start paper trading
-  aegis run --symbol BTC/USDT --execute  # Live trading (CAUTION!)
-  aegis backtest --symbol BTC/USDT --days 90
-  aegis portfolio                 # Portfolio status
-  aegis scan                      # Market scan
-  aegis status                    # System status
-  aegis logs                      # Show logs
-  aegis test                      # Run test suite
-        """,
-    )
-    
-    parser.add_argument("--version", "-v", action="version", version="Aegis Terminal v1.0.0")
-    
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-    
-    # Health check
-    health_parser = subparsers.add_parser("health", help="System health check")
-    health_parser.set_defaults(func=cmd_health)
-    
-    # Run bot
-    run_parser = subparsers.add_parser("run", help="Run trading bot")
-    run_parser.add_argument("--symbol", "-s", default="AUTO", help="Symbol or AUTO (auto-scan)")
-    run_parser.add_argument("--interval", "-i", default="1h", help="Interval (5m, 15m, 30m, 1h, 4h)")
-    run_parser.add_argument("--watchdog", "-w", action="store_true", help="Flash crash protection")
-    run_parser.add_argument("--execute", "-e", action="store_true", help="Live trading (CAUTION!)")
-    run_parser.add_argument("--auto-scan", action="store_true", help="Automatic market scanning")
-    run_parser.add_argument("--max-cycles", type=int, default=0, help="Max cycles (0=infinite)")
-    run_parser.add_argument("--model", "-m", default="qwen/qwen3.5-flash-02-23", help="LLM model")
-    run_parser.set_defaults(func=cmd_run)
-    
-    # Backtest
-    backtest_parser = subparsers.add_parser("backtest", help="Run backtest")
-    backtest_parser.add_argument("--symbol", "-s", required=True, help="Symbol")
-    backtest_parser.add_argument("--days", "-d", type=int, default=90, help="Days of history")
-    backtest_parser.set_defaults(func=cmd_backtest)
-    
-    # Portfolio
-    portfolio_parser = subparsers.add_parser("portfolio", help="Portfolio status")
-    portfolio_parser.set_defaults(func=cmd_portfolio)
-    
-    # Test
-    test_parser = subparsers.add_parser("test", help="Run test suite")
-    test_parser.add_argument("--verbose", "-V", action="store_true", help="Verbose output")
-    test_parser.set_defaults(func=cmd_test)
-    
-    # Logs
-    logs_parser = subparsers.add_parser("logs", help="Show logs")
-    logs_parser.add_argument("--lines", "-n", type=int, default=50, help="Number of lines")
-    logs_parser.set_defaults(func=cmd_logs)
-    
-    # Scan
-    scan_parser = subparsers.add_parser("scan", help="Market scan")
-    scan_parser.set_defaults(func=cmd_scan)
-    
-    # Status
-    status_parser = subparsers.add_parser("status", help="System status")
-    status_parser.set_defaults(func=cmd_status)
-    
-    # Fallback audit log
-    fallbacks_parser = subparsers.add_parser("fallbacks", help="Show latest fallback logs")
-    fallbacks_parser.add_argument("--limit", "-l", type=int, default=10, help="Number of records to show")
-    fallbacks_parser.set_defaults(func=cmd_fallbacks)
-    
-    # Circuit breaker status
-    cb_parser = subparsers.add_parser("circuit-breaker", help="Show circuit breaker status")
-    cb_parser.set_defaults(func=cmd_circuit_breaker_status)
-    
-    # Circuit breaker reset
-    cb_reset_parser = subparsers.add_parser("circuit-breaker-reset", help="Reset circuit breaker counters")
-    cb_reset_parser.set_defaults(func=cmd_circuit_breaker_reset)
-    
-    # Accounts
-    accounts_parser = subparsers.add_parser("accounts", help="Show status of all accounts")
-    accounts_parser.set_defaults(func=cmd_accounts)
-    
-    # Dashboard URL
-    dashboard_parser = subparsers.add_parser("dashboard", help="Show web dashboard URL")
-    dashboard_parser.set_defaults(func=cmd_dashboard)
-    
-    args = parser.parse_args()
-    
-    if not args.command:
-        parser.print_help()
-        return 0
-    
-    return args.func(args)
-
-
-def main():
-    """Entry point for console script."""
-    sys.exit(ana())
+    console.print(f"\n  Başlatmak için: [bold cyan]python dashboard/server.py[/bold cyan]\n")
 
 
 if __name__ == "__main__":
-    main()
+    app()

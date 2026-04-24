@@ -259,7 +259,7 @@ Adım adım düşünerek (Chain-of-Thought) analizini açıkla."""
 
         # ── Record oluştur ─────────────────────────────────
         current_price = 0.0
-        if technical_data and "current_price" in technical_data:
+        if technical_data and "current_price" in technical_data and technical_data["current_price"] is not None:
             current_price = float(technical_data["current_price"])
 
         record = SentimentRecord(
