@@ -258,12 +258,10 @@ class MarketScanner:
         breakdown['silent_bonus'] = silent_bonus
         
         # ── 4. TOPLAM SKOR (Ağırlıklı) ───────────────────────
-        weights = self.params.scoring_weights
-        
         total_score = (
-            vol_score * weights.volume_weight +
-            momentum_1h_score * weights.momentum_1h_weight +
-            momentum_24h_score * weights.momentum_24h_weight +
+            vol_score +
+            momentum_1h_score +
+            momentum_24h_score +
             silent_bonus
         )
         
@@ -371,31 +369,26 @@ class MarketScanner:
                     ),
                 })
                 
-                # Skor alt sınırı kontrolü
-                if score >= self.params.min_quality_score_threshold:
-                    final_candidates.append(cand)
+                # Puanı hesaplananları önce havuza ekle
+                final_candidates.append(cand)
                     
             except Exception as e:
                 logger.warning("Aday analizi hatası (%s): %s", cand['symbol'], e)
 
         # Skora göre sırala
-        final_candidates = sorted(
+        all_scored = sorted(
             final_candidates, 
             key=lambda x: x['quality_score'], 
             reverse=True
         )
-        results = final_candidates[:self.params.max_scout_recommendations]
         
-        logger.info(
-            "Tarama tamamlandı: %d nihai aday (min skor: %.1f)",
-            len(results),
-            self.params.min_quality_score_threshold
-        )
-        
-        # Log sonuçları
-        for c in results:
+        # Tüm tarananları logla (top 10), kullanıcının görebilmesi için
+        logger.info("=== Erken Momentum Skorları (Top 10 - Baraj: %.1f) ===", self.params.min_quality_score_threshold)
+        for c in all_scored[:10]:
+            status = "UYGUN" if c['quality_score'] >= self.params.min_quality_score_threshold else "RED"
             logger.info(
-                "✓ %s: Skor=%.1f (Vol=%.1f, Mom1h=%.1f, Mom24h=%.1f, Silent=%s)",
+                "[%s] %s: Skor=%.1f (Vol=%.1f, Mom1h=%.1f, Mom24h=%.1f, Silent=%s)",
+                status,
                 c['symbol'],
                 c['quality_score'],
                 c['quality_breakdown'].get('volume_score', 0),
@@ -403,6 +396,12 @@ class MarketScanner:
                 c['quality_breakdown'].get('momentum_24h_score', 0),
                 "EVET" if c['silent_accumulation'] else "HAYIR"
             )
+        
+        # Barajı geçenleri filtrele ve sonuç listesini oluştur
+        passed_candidates = [c for c in all_scored if c['quality_score'] >= self.params.min_quality_score_threshold]
+        results = passed_candidates[:self.params.max_scout_recommendations]
+        
+        logger.info("Tarama tamamlandı: %d nihai aday.", len(results))
         
         return results
     

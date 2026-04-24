@@ -37,7 +37,7 @@ execution:
   exchange: binance
   max_dca_tranches: 4
   min_dca_tranche_pct: 0.25
-  mode: paper
+  mode: live
   rate_limit_ms: 1200
   retry_count: 3
   retry_delay_ms: 2000
@@ -183,8 +183,8 @@ scanner:
     score: 0
   prefer_early_momentum: true
   quote_asset: USDT
-  scan_interval_hours: 6
-  scan_interval_hours_high_cash: 3
+  scan_interval_hours: 1
+  scan_interval_hours_high_cash: 1
   scoring_weights:
     momentum_1h_weight: 0.3
     momentum_24h_weight: 0.3
