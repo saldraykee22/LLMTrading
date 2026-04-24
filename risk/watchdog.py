@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 
 from pathlib import Path
 
+import concurrent.futures
+
 from config.settings import DATA_DIR, get_trading_params
 from data.market_data import MarketDataClient
 from risk.portfolio import PortfolioState
@@ -107,17 +109,18 @@ class Watchdog:
 
     def _check_symbols(self) -> None:
         """Checks all symbols for flash crash conditions."""
-        for symbol in self.symbols:
+
+        def _check_symbol(symbol: str) -> None:
             try:
                 df = self._market_client.fetch_ohlcv(symbol, days=1)
                 if df.empty or len(df) < 2:
-                    continue
+                    return
 
                 current_price = float(df["close"].iloc[-1])
                 prev_price = float(df["close"].iloc[-2])
 
                 if prev_price <= 0:
-                    continue
+                    return
 
                 drop_pct = (prev_price - current_price) / prev_price * 100
 
@@ -133,6 +136,9 @@ class Watchdog:
 
             except Exception as e:
                 logger.warning("Watchdog check failed for %s: %s", symbol, e)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            executor.map(_check_symbol, self.symbols)
 
     def _check_position_sl_tp(self) -> None:
         """Checks all open positions for stop-loss and take-profit triggers - thread-safe."""
