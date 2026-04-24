@@ -1,88 +1,32 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: llm-trading-bot
-    env_file:
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    ports:
-      - "9090:9090"
-    networks:
-      - trading-net
+  aegis-bot:
+    build: .
+    container_name: aegis_trading_bot
     restart: unless-stopped
-    depends_on:
-      - dashboard
-    command: ["--symbol", "BTC/USDT"]
-    healthcheck:
-      disable: true
-
-  dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: llm-trading-dashboard
-    env_file:
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
     volumes:
+      - .:/app
       - ./data:/app/data
       - ./logs:/app/logs
+    env_file:
+      - .env
+    command: python cli.py run --symbol BTC/USDT --interval 1h --watchdog
+
+  aegis-dashboard:
+    build: .
+    container_name: aegis_dashboard
+    restart: unless-stopped
     ports:
       - "8000:8000"
-    networks:
-      - trading-net
-    restart: unless-stopped
-    entrypoint: ["python", "dashboard/server.py"]
-    command: []
+    env_file:
+      - .env
+    command: python -m uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: llm-prometheus
+    container_name: aegis_prometheus
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus-data:/prometheus
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9091:9090"
-    networks:
-      - trading-net
-    restart: unless-stopped
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: llm-grafana
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/dashboard.json
-    networks:
-      - trading-net
-    restart: unless-stopped
-    depends_on:
-      - prometheus
-
-networks:
-  trading-net:
-    driver: bridge
-
-volumes:
-  prometheus-data:
-  grafana-data:
+      - "9090:9090"

@@ -1,12 +1,19 @@
-# LLM Otonom Trading Sistemi (Aegis Terminal)
+<p align="center">
+  <img src="assets/logo.png" width="200" alt="Aegis Intelligence Terminal Logo">
+</p>
+
+# Aegis Intelligence Terminal (v1.0.0)
 
 ![Versiyon](https://img.shields.io/badge/Versiyon-1.0.0-gold.svg)
 ![Lisans](https://img.shields.io/badge/Lisans-MIT-blue.svg)
 ![Python Versiyonu](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![Durum](https://img.shields.io/badge/Aşama-Üretim_Hazır-brightgreen.svg)
 ![Trading](https://img.shields.io/badge/Canlı_İşlem-Aktif-blue.svg)
+![CI](https://github.com/saldraykee22/LLMTrading/actions/workflows/ci.yml/badge.svg)
 
 Aegis Terminal, finansal piyasalarda (Kripto, BIST, ABD Hisse Senetleri) bağımsız kararlar alabilen, **LangGraph tabanlı çoklu ajan (Multi-Agent) mimarisine** sahip yeni nesil bir yapay zeka alım-satım platformudur.
+
+[**Değişim Günlüğü**](CHANGELOG.md) | [**Katkıda Bulunma**](CONTRIBUTING.md) | [**Kurallar**](CODE_OF_CONDUCT.md)
 
 ---
 

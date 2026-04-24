@@ -1,0 +1,36 @@
+name: 🐛 Hata Raporu (Bug Report)
+description: Sistemsel bir hata veya beklenmedik davranış bildirin.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Aegis Terminal'i geliştirmemize yardımcı olduğunuz için teşekkürler!
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Ne oldu?
+      description: Karşılaştığınız sorunu detaylıca açıklayın.
+      placeholder: Örneğin; Bot BTC/USDT paritesinde emir gönderemedi...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Nasıl tekrar edilebilir?
+      description: Bu hatayı nasıl alabiliriz? Adım adım yazın.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log Kayıtları
+      description: Lütfen `logs/trading.log` dosyasındaki ilgili kısmı buraya yapıştırın.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Versiyon
+      description: Kullandığınız bot versiyonu (örneğin v1.0.0).
+    validations:
+      required: true

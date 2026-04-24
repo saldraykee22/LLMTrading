@@ -463,21 +463,23 @@ def cmd_dashboard(args) -> int:
 def ana() -> int:
     """Ana CLI fonksiyonu."""
     parser = argparse.ArgumentParser(
-        description="LLM Trading System - Turkce Komut Satiri Arayuzu",
+        description="Aegis Intelligence Terminal - Otonom Alım-Satım Platformu",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ornekler:
-  python cli.py saglik                    # Saglik kontrolu
-  python cli.py calistir --sembol BTC/USDT     # Paper trading baslat
-  python cli.py calistir --sembol BTC/USDT --yurut  # Canli trading
-  python cli.py geriye-donuk-test --sembol BTC/USDT --gun 90
-  python cli.py portfoy                 # Portfoy durumu
-  python cli.py tarama                      # Piyasa taramasi
-  python cli.py durum                    # Sistem durumu
-  python cli.py kayitlar                      # Kayitlari goster
-  python cli.py testler                     # Test paketi
+  aegis saglik                    # Saglik kontrolu
+  aegis calistir --sembol BTC/USDT     # Paper trading baslat
+  aegis calistir --sembol BTC/USDT --yurut  # Canli trading
+  aegis geriye-donuk-test --sembol BTC/USDT --gun 90
+  aegis portfoy                 # Portfoy durumu
+  aegis tarama                      # Piyasa taramasi
+  aegis durum                    # Sistem durumu
+  aegis kayitlar                      # Kayitlari goster
+  aegis testler                     # Test paketi
         """,
     )
+    
+    parser.add_argument("--version", "-v", action="version", version="Aegis Terminal v1.0.0")
     
     alt_parserlar = parser.add_subparsers(dest="komut", help="Komutlar")
     
@@ -554,5 +556,10 @@ Ornekler:
     return args.func(args)
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for console script."""
     sys.exit(ana())
+
+
+if __name__ == "__main__":
+    main()
